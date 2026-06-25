@@ -1,0 +1,485 @@
+/* Extension capture popup — responsive, touch-friendly layout */
+
+.popup-app {
+  width: 100%;
+  min-width: 320px;
+  max-width: 100vw;
+}
+
+.popup-app .popup-scroll {
+  -webkit-overflow-scrolling: touch;
+}
+
+.popup-app #login-section,
+.popup-app #job-section {
+  width: 100%;
+  max-width: 680px;
+  margin: 0 auto;
+  padding: 16px 20px;
+  box-sizing: border-box;
+}
+
+.popup-app .job-summary {
+  margin-left: 0;
+  margin-right: 0;
+}
+
+.popup-app .job-fields-row {
+  margin-bottom: 0;
+}
+
+.popup-app .job-fields-row .field-group {
+  margin-bottom: var(--space-form-group);
+}
+
+.popup-app .field-group input,
+.popup-app .field-group textarea,
+.popup-app .field-group select {
+  font-size: 16px;
+}
+
+.popup-app .field-group-desc textarea.desc-textbox {
+  height: 140px;
+  min-height: 140px;
+  max-height: 140px;
+  resize: none;
+  overflow-y: auto;
+  overflow-x: hidden;
+  line-height: 1.5;
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
+
+.popup-app .field-group-desc textarea.desc-textbox::-webkit-scrollbar {
+  width: 8px;
+}
+
+.popup-app .field-group-desc textarea.desc-textbox::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 999px;
+}
+
+.popup-app .cand-header {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.popup-app .cand-filters {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  width: 100%;
+  min-width: 0;
+  gap: 8px;
+  align-items: center;
+}
+
+.popup-app .cand-stack-filter,
+.popup-app .cand-search {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  min-height: 36px;
+  padding: 6px 10px;
+  font-size: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.popup-app .cand-stack-filter {
+  background: #fff;
+  color: var(--text);
+}
+
+.popup-app .cand-search {
+  background: #fff;
+  color: var(--text);
+}
+
+.popup-app .cand-list {
+  gap: 6px;
+}
+
+.popup-app .field-group-desc {
+  margin-top: 12px;
+  margin-bottom: 0;
+}
+
+.popup-app .field-optional {
+  font-weight: 400;
+  color: var(--text-soft);
+  font-size: 11px;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.popup-app .popup-scroll-inner {
+  width: 100%;
+}
+
+.popup-app .cand-card {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0;
+  gap: 0;
+  border-radius: var(--radius-sm);
+  box-shadow: none;
+  overflow: hidden;
+  align-items: stretch;
+  justify-content: flex-start;
+}
+
+.popup-app .cand-card-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+.popup-app .cand-expand-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  grid-column: 1;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  overflow: hidden;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.popup-app .cand-expand-btn:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.popup-app .cand-expand-icon {
+  flex-shrink: 0;
+  width: 14px;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--text-muted);
+  transition: transform 0.15s ease;
+}
+
+.popup-app .cand-card.is-expanded .cand-expand-icon {
+  transform: rotate(90deg);
+}
+
+.popup-app .cand-card-details {
+  display: none;
+  padding: 8px 10px 10px 30px;
+  border-top: 1px solid var(--border);
+  background: #f8fafc;
+}
+
+.popup-app .cand-card.is-expanded .cand-card-details {
+  display: block;
+}
+
+.popup-app .cand-detail-row {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.popup-app .cand-detail-row + .cand-detail-row {
+  border-top: 1px solid #eef2f7;
+}
+
+.popup-app .cand-detail-label {
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.popup-app .cand-detail-value {
+  color: var(--text);
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.popup-app .cand-copyable {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  line-height: inherit;
+  text-align: left;
+  cursor: default;
+  text-decoration: none;
+  word-break: break-word;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.popup-app .cand-copyable:hover {
+  cursor: pointer;
+  background: rgba(15, 23, 42, 0.05);
+  border-radius: 3px;
+}
+
+.popup-app .cand-copyable:focus-visible {
+  outline: none;
+  background: rgba(15, 23, 42, 0.05);
+  border-radius: 3px;
+}
+
+.popup-app .cand-details-empty {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-soft);
+}
+
+.popup-app .cand-info {
+  min-width: 0;
+  flex: 1;
+}
+
+.popup-app .cand-name-line {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: baseline;
+  gap: 8px;
+  line-height: 1.3;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.popup-app .cand-name {
+  font-size: 13px;
+  font-weight: 700;
+  flex-shrink: 0;
+  word-break: break-word;
+}
+
+.popup-app .cand-stack {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.popup-app .cand-list > .cand-card {
+  width: 100%;
+}
+
+.popup-app .cand-status-wrap {
+  grid-column: 2;
+  justify-self: end;
+  align-self: center;
+  width: auto;
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: flex-end;
+  align-items: flex-end;
+  padding-top: 0;
+  pointer-events: auto;
+}
+
+.popup-app .status-toggle {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  width: auto;
+  min-width: 0;
+  padding: 0;
+  cursor: pointer;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.popup-app .status-toggle.is-locked {
+  cursor: not-allowed;
+}
+
+.popup-app .status-toggle-text {
+  display: block;
+  width: 100%;
+  font-size: 9px;
+  font-weight: 700;
+  min-height: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #64748b;
+  text-align: center;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.popup-app .status-toggle.is-on .status-toggle-text {
+  color: #15803d;
+}
+
+.popup-app .status-toggle-track {
+  width: 44px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+.popup-app .status-toggle-track::after {
+  width: 18px;
+  height: 18px;
+  top: 2px;
+  left: 2px;
+}
+
+.popup-app .status-toggle-input:checked + .status-toggle-track::after,
+.popup-app .status-toggle.is-locked .status-toggle-track::after {
+  transform: translateX(20px);
+}
+
+.popup-app .actions-bar {
+  padding: 12px 16px;
+  gap: 12px;
+  padding-bottom: max(12px, env(safe-area-inset-bottom, 0px));
+}
+
+.popup-app .actions-bar .btn {
+  min-height: 48px;
+  font-size: 15px;
+  border-radius: 10px;
+}
+
+.popup-app .session-logout {
+  min-height: 44px;
+  padding: 10px 14px;
+}
+
+.popup-app .session-bar {
+  padding: 10px 16px;
+}
+
+.popup-app .app-header {
+  padding: 12px 16px;
+}
+
+/* Wider screens — spread job fields side by side */
+@media (min-width: 520px) {
+  .popup-app .job-fields-row.two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+    align-items: start;
+  }
+
+  .popup-app .job-fields-row.two-col .field-group {
+    margin-bottom: 0;
+  }
+}
+
+/* Compact / mobile */
+@media (max-width: 519px) {
+  .popup-app #login-section,
+  .popup-app #job-section {
+    padding: 14px 14px;
+  }
+
+  .popup-app .app-header {
+    grid-template-columns: auto 1fr auto;
+    gap: 8px;
+    padding: 10px 12px;
+  }
+
+  .popup-app .app-logo-sm {
+    width: 44px;
+    height: 44px;
+  }
+
+  .popup-app .qts-pillar {
+    padding: 5px 9px;
+  }
+
+  .popup-app .qts-subline {
+    letter-spacing: 0.14em;
+    font-size: 8px;
+  }
+
+  .popup-app .status-pill {
+    padding: 8px 10px;
+  }
+
+  .popup-app .job-summary-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px 8px;
+  }
+
+  .popup-app .job-summary-item {
+    justify-content: flex-start;
+    text-align: left;
+  }
+}
+
+@media (max-width: 380px) {
+  .popup-app .actions-bar {
+    flex-direction: column;
+  }
+
+  .popup-app .actions-bar .btn {
+    width: 100%;
+  }
+}
+
+/* Toast alerts */
+.popup-app .qts-toast-host {
+  position: fixed;
+  top: 14px;
+  right: 14px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.popup-app .qts-toast {
+  max-width: min(340px, calc(100vw - 28px));
+  padding: 12px 16px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: #fff;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.22);
+  opacity: 0;
+  transform: translateY(-8px);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.popup-app .qts-toast.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.popup-app .qts-toast--success { background: #15803d; border: 1px solid #166534; }
+.popup-app .qts-toast--fail { background: #475569; border: 1px solid #334155; }
+.popup-app .qts-toast--error { background: #b91c1c; border: 1px solid #991b1b; }
+.popup-app .qts-toast--info { background: #1d4ed8; border: 1px solid #1e40af; }
+.popup-app .qts-toast--warn { background: #b45309; border: 1px solid #92400e; }

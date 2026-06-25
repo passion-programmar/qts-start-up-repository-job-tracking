@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>QTS Capture</title>
+  <link rel="stylesheet" href="../assets/theme.css">
+  <link rel="stylesheet" href="../assets/popup.css">
+  <style>
+    html,
+    body {
+      margin: 0;
+      overflow: hidden;
+      height: 100%;
+    }
+    body {
+      width: 100%;
+      font-size: 13px;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+    .popup-top {
+      flex-shrink: 0;
+      z-index: 20;
+    }
+    .popup-scroll {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-x: hidden;
+      overflow-y: auto;
+      scrollbar-width: thin;
+      scrollbar-color: #cbd5e1 transparent;
+    }
+    .popup-scroll::-webkit-scrollbar {
+      width: 8px;
+    }
+    .popup-scroll::-webkit-scrollbar-thumb {
+      background: #cbd5e1;
+      border-radius: 999px;
+    }
+    #f-desc {
+      display: block;
+      width: 100%;
+      box-sizing: border-box;
+      height: 140px;
+      min-height: 140px;
+      max-height: 140px;
+      resize: none;
+      overflow-x: hidden;
+      overflow-y: auto;
+      font-size: 12px;
+      line-height: 1.5;
+      scrollbar-width: thin;
+      scrollbar-color: #cbd5e1 transparent;
+    }
+    #f-desc::-webkit-scrollbar {
+      width: 8px;
+    }
+    #f-desc::-webkit-scrollbar-thumb {
+      background: #cbd5e1;
+      border-radius: 999px;
+    }
+    #login-alert:empty,
+    #main-alert:empty { display: none; }
+    .field-hint {
+      margin: 6px 0 0;
+      font-size: 11px;
+      line-height: 1.45;
+      color: #64748b;
+    }
+    .field-hint code {
+      font-size: 10px;
+      color: #334155;
+    }
+    .existing-job-notice {
+      background: #fef3c7;
+      border: 1px solid #fde68a;
+      border-radius: var(--radius-sm);
+      padding: var(--space-control);
+      margin-bottom: var(--space-inline);
+      font-size: 12px;
+    }
+    .existing-job-notice strong { display: block; margin-bottom: 4px; color: #92400e; }
+    .session-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 18px;
+      background: #1e293b;
+      color: #e2e8f0;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+      font-size: 12px;
+    }
+    .session-bar.hidden { display: none; }
+    .session-info {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+      flex: 1;
+    }
+    .session-org {
+      font-weight: 600;
+      color: #fff;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .session-user {
+      color: #94a3b8;
+      font-size: 11px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .session-user.hidden { display: none; }
+    .session-logout {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 12px;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.06);
+      color: #e2e8f0;
+      font-size: 12px;
+      font-weight: 600;
+      line-height: 1;
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+    }
+    .session-logout:hover {
+      background: rgba(248, 113, 113, 0.14);
+      border-color: rgba(248, 113, 113, 0.45);
+      color: #fecaca;
+    }
+    .session-logout-icon {
+      font-size: 14px;
+      line-height: 1;
+      opacity: 0.9;
+    }
+    #login-section { padding: 20px 18px; }
+    #login-section .auth-card { max-width: none; box-shadow: none; border: none; padding: 0; }
+    #job-section { padding: 14px 18px; }
+    #action-bar.hidden { display: none; }
+  </style>
+</head>
+<body class="popup-app">
+  <div class="popup-top">
+  <header class="app-header">
+    <div class="app-header-left">
+      <img id="header-logo" src="" alt="WYS" class="app-logo-sm">
+    </div>
+    <div class="app-header-center" aria-label="Quality, Time, Speed">
+      <div class="qts-tagline">
+        <span class="qts-pillar qts-pillar--quality">
+          <span class="qts-letter">Q</span>
+          <span class="qts-word">uality</span>
+        </span>
+        <span class="qts-plus" aria-hidden="true">+</span>
+        <span class="qts-pillar qts-pillar--time">
+          <span class="qts-letter">T</span>
+          <span class="qts-word">ime</span>
+        </span>
+        <span class="qts-plus" aria-hidden="true">+</span>
+        <span class="qts-pillar qts-pillar--speed">
+          <span class="qts-letter">S</span>
+          <span class="qts-word">peed</span>
+        </span>
+      </div>
+      <div class="qts-subline">Built for precision bidding</div>
+    </div>
+    <div class="app-header-right">
+      <div id="connection-status" class="status-pill status-checking">
+        <span class="status-dot"></span>
+        <span id="status-text">Checking…</span>
+      </div>
+    </div>
+  </header>
+
+  <div id="session-bar" class="session-bar hidden">
+    <div class="session-info">
+      <span class="session-org" id="session-bidder">—</span>
+      <span class="session-user" id="session-user">—</span>
+    </div>
+    <button class="session-logout" id="btn-logout" type="button" aria-label="Log out">
+      <span class="session-logout-icon" aria-hidden="true">⎋</span>
+      <span>Log out</span>
+    </button>
+  </div>
+  </div>
+
+  <div class="popup-scroll">
+    <div class="popup-scroll-inner">
+    <!-- Login -->
+    <div id="login-section" class="hidden">
+      <div class="auth-card">
+        <h2 class="card-title">Bidder Sign In</h2>
+        <p class="text-muted auth-intro">
+          Sign in with a bidder account created by your manager in QTS_Startup.
+        </p>
+        <div id="login-setup-hint" class="hidden alert alert-warn login-setup-hint">
+          No bidder accounts exist yet. A manager must add a bidder organization and login before you can sign in here.
+        </div>
+        <div id="login-alert"></div>
+        <div class="field-group">
+          <div class="field-label">API Server URL</div>
+          <input type="url" id="login-server-url" placeholder="http://192.168.130.58:1028" autocomplete="off" spellcheck="false">
+          <p class="field-hint">Base server URL only — no <code>/api/health</code>. MoreLogin: <code>http://192.168.130.58:1028</code>. Normal Chrome: <code>http://localhost:1028</code>.</p>
+        </div>
+        <div class="field-group">
+          <div class="field-label">Username</div>
+          <input type="text" id="login-user" value="bidder" autocomplete="username">
+        </div>
+        <div class="field-group">
+          <div class="field-label">Password</div>
+          <input type="password" id="login-pass" autocomplete="current-password">
+        </div>
+        <button class="btn btn-primary btn-block" id="btn-login" type="button">Log In</button>
+      </div>
+    </div>
+
+    <!-- Job Form -->
+    <div id="job-section" class="hidden">
+      <div id="main-alert"></div>
+
+      <div id="job-summary" class="job-summary">
+        <div class="job-summary-stats">
+          <span class="job-summary-item">
+            <span class="job-summary-stat-label">Source:</span>
+            <span class="job-summary-stat-value" id="summary-source">—</span>
+          </span>
+          <span class="job-summary-item">
+            <span class="job-summary-stat-label">Status:</span>
+            <span class="job-summary-status-pill is-new" id="summary-status">New</span>
+          </span>
+          <span class="job-summary-item">
+            <span class="job-summary-stat-label">Applied:</span>
+            <span class="job-summary-stat-value" id="summary-applied">0</span>
+          </span>
+          <span class="job-summary-item">
+            <span class="job-summary-stat-label">Not applied:</span>
+            <span class="job-summary-stat-value" id="summary-not-applied">0</span>
+          </span>
+        </div>
+      </div>
+
+      <div class="job-fields-row two-col">
+        <div class="field-group">
+          <div class="field-label">Job Title <span class="required">*</span></div>
+          <input type="text" id="f-title" placeholder="Senior Node.js Engineer">
+          <div class="field-error" id="err-title">Job title is required.</div>
+        </div>
+
+        <div class="field-group">
+          <div class="field-label">Company <span class="required">*</span></div>
+          <input type="text" id="f-company" placeholder="Example Company">
+          <div class="field-error" id="err-company">Company name is required.</div>
+        </div>
+      </div>
+
+      <div class="field-group">
+        <div class="field-label">URL <span class="required">*</span></div>
+        <input type="url" id="f-url" placeholder="https://example.com/jobs/123">
+        <div class="field-error" id="err-url">URL is required.</div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="cand-header">
+        <span class="cand-title">Candidates</span>
+        <div class="cand-filters">
+          <select class="cand-stack-filter" id="cand-stack-filter" aria-label="Filter by stack">
+            <option value="">All stacks</option>
+          </select>
+          <input class="cand-search" type="text" placeholder="Search name…" id="cand-filter">
+        </div>
+      </div>
+      <div class="cand-list" id="cand-list"></div>
+      <div id="cand-empty" class="hidden text-muted cand-empty">No active candidates. Add candidates in QTS_Startup.</div>
+
+      <div class="field-group field-group-desc">
+        <div class="field-label">Description <span class="field-optional">(optional)</span></div>
+        <textarea id="f-desc" class="desc-textbox" placeholder="Full job description…" spellcheck="true"></textarea>
+        <div class="field-error" id="err-desc">Could not save the description.</div>
+      </div>
+    </div>
+    </div>
+  </div>
+
+  <div class="actions-bar" id="action-bar">
+    <button class="btn btn-ghost" id="btn-refresh" type="button">↻ Refresh</button>
+    <button class="btn btn-primary" id="btn-save" type="button">Save Job</button>
+  </div>
+
+  <div id="qts-toast-host" class="qts-toast-host" aria-live="polite" aria-atomic="true"></div>
+
+  <script src="../shared/page-url.js"></script>
+  <script src="../shared/job-detect.js"></script>
+  <script src="../shared/candidate-colors.js"></script>
+  <script src="api-client.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

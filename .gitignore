@@ -1,0 +1,10 @@
+node_modules/
+server/node_modules/
+admin-web/node_modules/
+server/.env
+server/data/
+server/backups/
+admin-web/.next/
+release/
+*.log
+.DS_Store
