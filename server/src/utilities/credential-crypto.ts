@@ -17,9 +17,16 @@ export function decryptCredential(payload: string | null | undefined): string | 
   try {
     const [ivB64, tagB64, dataB64] = payload.split(':');
     if (!ivB64 || !tagB64 || !dataB64) return null;
-    const decipher = crypto.createDecipheriv(ALGO, KEY, Buffer.from(ivB64, 'base64'));
-    decipher.setAuthTag(Buffer.from(tagB64, 'base64'));
-    return decipher.update(Buffer.from(dataB64, 'base64'), undefined, 'utf8') + decipher.final('utf8');
+    const iv = Buffer.from(ivB64, 'base64');
+    const tag = Buffer.from(tagB64, 'base64');
+    const data = Buffer.from(dataB64, 'base64');
+    const decipher = crypto.createDecipheriv(ALGO, KEY, new Uint8Array(iv));
+    decipher.setAuthTag(new Uint8Array(tag));
+    const decrypted = Buffer.concat([
+      decipher.update(new Uint8Array(data)),
+      decipher.final(),
+    ]);
+    return decrypted.toString('utf8');
   } catch {
     return null;
   }

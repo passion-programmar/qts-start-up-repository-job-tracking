@@ -8,8 +8,8 @@ import { useAuth } from '@/components/AuthProvider';
 import { api } from '@/lib/api';
 import type { Bidder, Candidate } from '@/lib/types';
 import { formatDate } from '@/lib/utils';
-import { nextCandidateColor, normalizeCandidateColor } from '../../../shared/candidate-colors';
-import { parseCandidateStacks } from '../../../shared/candidate-stacks';
+import { nextCandidateColor, normalizeCandidateColor } from '../../shared/candidate-colors';
+import { parseCandidateStacks } from '../../shared/candidate-stacks';
 
 export function CandidatesView() {
   const { canWrite, canAddCandidates, user } = useAuth();

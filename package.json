@@ -16,6 +16,7 @@
     "db:clear-bidders": "npm run db:clear-bidders --prefix server"
   },
   "devDependencies": {
-    "concurrently": "^9.1.2"
+    "concurrently": "^9.1.2",
+    "vercel": "^54.17.1"
   }
 }

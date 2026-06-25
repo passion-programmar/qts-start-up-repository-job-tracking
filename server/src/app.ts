@@ -15,13 +15,24 @@ import { APP_NAME } from './config/branding';
 
 const app = express();
 
-const allowedOrigins = [
+const allowedOrigins: Array<string | RegExp> = [
   'http://localhost:1027',
   'http://127.0.0.1:1027',
   'http://localhost:1028',
   'http://127.0.0.1:1028',
   /^chrome-extension:\/\//,
+  /^https:\/\/.*\.vercel\.app$/,
+  /^https:\/\/.*\.trycloudflare\.com$/,
 ];
+
+try {
+  const adminOrigin = new URL(config.adminWebUrl).origin;
+  if (!allowedOrigins.includes(adminOrigin)) {
+    allowedOrigins.push(adminOrigin);
+  }
+} catch {
+  // ignore invalid ADMIN_WEB_URL
+}
 
 app.use(cors({
   origin: (origin, callback) => {

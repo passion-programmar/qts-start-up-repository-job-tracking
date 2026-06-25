@@ -23,7 +23,18 @@ const allowedOrigins = [
     'http://localhost:1028',
     'http://127.0.0.1:1028',
     /^chrome-extension:\/\//,
+    /^https:\/\/.*\.vercel\.app$/,
+    /^https:\/\/.*\.trycloudflare\.com$/,
 ];
+try {
+    const adminOrigin = new URL(env_1.config.adminWebUrl).origin;
+    if (!allowedOrigins.includes(adminOrigin)) {
+        allowedOrigins.push(adminOrigin);
+    }
+}
+catch {
+    // ignore invalid ADMIN_WEB_URL
+}
 app.use((0, cors_1.default)({
     origin: (origin, callback) => {
         if (!origin) {

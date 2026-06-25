@@ -1,10 +1,8 @@
 import type { NextConfig } from 'next';
-import path from 'node:path';
 
 const apiUrl = process.env.API_URL || 'http://127.0.0.1:1028';
 
 const nextConfig: NextConfig = {
-  outputFileTracingRoot: path.resolve(__dirname, '..'),
   async rewrites() {
     return [
       {

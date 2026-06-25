@@ -14,7 +14,7 @@ import {
   CANDIDATE_STACKS_SETTING_KEY,
   parseCandidateStacks,
   serializeCandidateStacks,
-} from '../../../shared/candidate-stacks';
+} from '../../shared/candidate-stacks';
 
 export function SettingsView() {
   const { setAdminUiMode, refreshAdminUiMode } = useAdminUiMode();

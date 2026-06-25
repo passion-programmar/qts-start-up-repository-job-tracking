@@ -1,6 +1,6 @@
 // API client for the extension popup
 
-const DEFAULT_SERVER = 'http://localhost:1028';
+const DEFAULT_SERVER = 'https://qts-job-tracking.vercel.app';
 
 function normalizeServerUrl(url) {
   let normalized = String(url || '').trim().replace(/\/+$/, '');

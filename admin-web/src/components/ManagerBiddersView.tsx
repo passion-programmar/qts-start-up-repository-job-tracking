@@ -11,8 +11,8 @@ import {
 } from '@/components/org-tree';
 import { api } from '@/lib/api';
 import type { Bidder, Candidate } from '@/lib/types';
-import { nextCandidateColor, normalizeCandidateColor } from '../../../shared/candidate-colors';
-import { parseCandidateStacks } from '../../../shared/candidate-stacks';
+import { nextCandidateColor, normalizeCandidateColor } from '../../shared/candidate-colors';
+import { parseCandidateStacks } from '../../shared/candidate-stacks';
 
 export function ManagerBiddersView() {
   const [bidders, setBidders] = useState<Bidder[]>([]);

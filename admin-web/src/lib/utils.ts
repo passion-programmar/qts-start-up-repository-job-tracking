@@ -1,5 +1,5 @@
 import type { PanelMode, UserRole } from '@/lib/types';
-import { normalizeCandidateColor } from '../../../shared/candidate-colors';
+import { normalizeCandidateColor } from '../../shared/candidate-colors';
 
 export function formatDate(ts?: string | null): string {
   if (!ts) return '—';

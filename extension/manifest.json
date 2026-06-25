@@ -7,6 +7,8 @@
   "host_permissions": [
     "http://localhost:1028/*",
     "http://127.0.0.1:1028/*",
+    "https://qts-job-tracking.vercel.app/*",
+    "https://*.vercel.app/*",
     "https://www.linkedin.com/*",
     "https://*.linkedin.com/*",
     "https://*.indeed.com/*",

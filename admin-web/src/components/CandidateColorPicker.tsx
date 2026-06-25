@@ -4,7 +4,7 @@ import {
   CANDIDATE_NAME_COLORS,
   normalizeCandidateColor,
   type CandidateColor,
-} from '../../../shared/candidate-colors';
+} from '../../shared/candidate-colors';
 
 export function CandidateColorPicker({
   value,
