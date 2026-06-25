@@ -1,0 +1,50 @@
+# Render Blueprint — deploy API from GitHub
+# Dashboard: New → Blueprint → connect qts-start-up-repository-job-tracking
+# Add Neon DATABASE_URL and secrets in Render after first deploy.
+
+services:
+  - type: web
+    name: qts-api
+    runtime: node
+    rootDir: server
+    plan: free
+    buildCommand: npm ci && npm run build
+    startCommand: node dist/server.js
+    healthCheckPath: /api/health
+    envVars:
+      - key: EMBEDDED_PG
+        value: "false"
+      - key: DATABASE_SSL
+        value: "true"
+      - key: PORT
+        value: "1028"
+      - key: HOST
+        value: 0.0.0.0
+      - key: NODE_ENV
+        value: production
+      - key: AUTO_OPEN_BROWSER
+        value: "false"
+      - key: JWT_EXPIRY
+        value: 24h
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ADMIN_USERNAME
+        value: admin
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: MANAGER_USERNAME
+        value: manager
+      - key: MANAGER_PASSWORD
+        sync: false
+      - key: BIDDER_USERNAME
+        value: bidder
+      - key: BIDDER_PASSWORD
+        sync: false
+      - key: CALLER_USERNAME
+        value: caller
+      - key: CALLER_PASSWORD
+        sync: false
+      - key: ADMIN_WEB_URL
+        sync: false
