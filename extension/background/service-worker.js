@@ -44,7 +44,8 @@ const EXTRACTOR_FILES = [
 const DETECT_TOAST_FILE = 'content/detect-toast.js';
 const JOB_PANEL_WATCH_FILE = 'content/job-panel-watch.js';
 const LINKEDIN_PANEL_WATCH_FILE = 'content/linkedin-panel-watch.js';
-const AUTO_DETECT_DELAY_MS = 700;
+const AUTO_DETECT_DELAY_MS = 250;
+const injectedExtractorTabs = new Set();
 
 async function getTab(tabId) {
   try {
@@ -64,16 +65,16 @@ async function canInjectIntoTab(tab) {
 async function injectExtractors(tabId) {
   const tab = await getTab(tabId);
   if (!(await canInjectIntoTab(tab))) return false;
+  if (injectedExtractorTabs.has(tabId)) return true;
 
-  for (const file of EXTRACTOR_FILES) {
-    try {
-      await chrome.scripting.executeScript({ target: { tabId }, files: [file] });
-    } catch (err) {
-      console.warn('[QTS_Startup] Skipped injection on', tab.url, file, err?.message || err);
-      return false;
-    }
+  try {
+    await chrome.scripting.executeScript({ target: { tabId }, files: EXTRACTOR_FILES });
+    injectedExtractorTabs.add(tabId);
+    return true;
+  } catch (err) {
+    console.warn('[QTS_Startup] Skipped injection on', tab.url, err?.message || err);
+    return false;
   }
-  return true;
 }
 
 async function injectJobPanelWatch(tabId, pageUrl) {
@@ -331,6 +332,8 @@ chrome.webNavigation.onHistoryStateUpdated.addListener((details) => {
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   lastAutoOpenKeyByTab.delete(tabId);
+  injectedExtractorTabs.delete(tabId);
+  detectGenerationByTab.delete(tabId);
   removeDetectedJobForTab(tabId).catch(() => {});
 });
 

@@ -2,6 +2,8 @@
 
 const DEFAULT_SERVER = 'https://qts-job-tracking.vercel.app';
 
+let cachedAuthToken = null;
+
 function normalizeServerUrl(url) {
   let normalized = String(url || '').trim().replace(/\/+$/, '');
   if (!normalized) return DEFAULT_SERVER;
@@ -12,22 +14,29 @@ function normalizeServerUrl(url) {
 }
 
 async function getServerUrl() {
-  return new Promise(resolve => {
-    chrome.storage.local.get(['serverUrl'], r => resolve(r.serverUrl || DEFAULT_SERVER));
-  });
+  return DEFAULT_SERVER;
 }
 
-async function setServerUrl(url) {
-  const normalized = normalizeServerUrl(url);
-  return new Promise(resolve => {
-    chrome.storage.local.set({ serverUrl: normalized }, () => resolve(normalized));
-  });
+async function ensureServerUrl() {
+  return DEFAULT_SERVER;
 }
 
 async function getToken() {
+  if (cachedAuthToken !== null) return cachedAuthToken;
   return new Promise(resolve => {
-    chrome.storage.local.get(['authToken'], r => resolve(r.authToken || ''));
+    chrome.storage.local.get(['authToken'], r => {
+      cachedAuthToken = r.authToken || '';
+      resolve(cachedAuthToken);
+    });
   });
+}
+
+function setCachedToken(token) {
+  cachedAuthToken = token || '';
+}
+
+function clearCachedToken() {
+  cachedAuthToken = null;
 }
 
 async function apiRequest(method, path, body) {
@@ -46,7 +55,7 @@ async function apiRequest(method, path, body) {
   try {
     response = await fetch(url, opts);
   } catch {
-    return { success: false, message: 'Cannot connect to the server. Check that it is running.' };
+    return { success: false, message: 'Cannot connect to the server. Check that it is running.', _httpStatus: 0 };
   }
 
   let data;
@@ -72,12 +81,16 @@ async function apiRequest(method, path, body) {
 }
 
 window.api = {
+  DEFAULT_SERVER,
   getServerUrl,
-  setServerUrl,
+  ensureServerUrl,
+  setCachedToken,
+  clearCachedToken,
   login: (username, password) =>
     apiRequest('POST', '/api/auth/login', { username, password, extension: true }),
   logout: () => apiRequest('POST', '/api/auth/logout'),
   me: () => apiRequest('GET', '/api/auth/me'),
+  extensionBootstrap: () => apiRequest('GET', '/api/auth/extension-bootstrap'),
   extensionStatus: () => apiRequest('GET', '/api/auth/extension-status'),
   health: () => apiRequest('GET', '/api/health'),
   getCandidates: () => apiRequest('GET', '/api/candidates?active=true'),

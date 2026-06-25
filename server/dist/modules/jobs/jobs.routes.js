@@ -52,25 +52,38 @@ async function upsertCandidateStatuses(jobId, statuses, client, bidderId) {
     }
     const activeResult = await exec(activeSql, activeParams);
     const activeCandidates = activeResult.rows;
+    if (!activeCandidates.length)
+        return;
+    const activeIds = activeCandidates.map((c) => c.id);
     const statusMap = new Map(statuses.map((s) => [s.candidateId, s.status]));
+    const existingResult = await exec(`SELECT candidate_id, status, applied_at
+     FROM candidate_jobs
+     WHERE job_id = $1 AND candidate_id = ANY($2::int[])`, [jobId, activeIds]);
+    const existingMap = new Map(existingResult.rows.map((row) => [row.candidate_id, { status: row.status, applied_at: row.applied_at }]));
+    const now = new Date().toISOString();
+    const candidateIds = [];
+    const statusesOut = [];
+    const appliedAts = [];
     for (const c of activeCandidates) {
-        const existingResult = await exec(`SELECT status, applied_at FROM candidate_jobs
-       WHERE candidate_id = $1 AND job_id = $2`, [c.id, jobId]);
-        const existing = existingResult.rows[0];
+        const existing = existingMap.get(c.id);
         const requested = statusMap.get(c.id) || 'none';
         let status = requested;
-        let appliedAt = requested === 'applied' ? new Date().toISOString() : null;
+        let appliedAt = requested === 'applied' ? now : null;
         if (existing?.status === 'applied') {
             status = 'applied';
             appliedAt = existing.applied_at;
         }
-        await exec(`INSERT INTO candidate_jobs (candidate_id, job_id, status, applied_at)
-       VALUES ($1, $2, $3, $4)
-       ON CONFLICT (candidate_id, job_id) DO UPDATE SET
-         status = EXCLUDED.status,
-         applied_at = EXCLUDED.applied_at,
-         updated_at = NOW()`, [c.id, jobId, status, appliedAt]);
+        candidateIds.push(c.id);
+        statusesOut.push(status);
+        appliedAts.push(appliedAt);
     }
+    await exec(`INSERT INTO candidate_jobs (candidate_id, job_id, status, applied_at)
+     SELECT cid, $2, st, at
+     FROM unnest($1::int[], $3::text[], $4::timestamptz[]) AS u(cid, st, at)
+     ON CONFLICT (candidate_id, job_id) DO UPDATE SET
+       status = EXCLUDED.status,
+       applied_at = EXCLUDED.applied_at,
+       updated_at = NOW()`, [candidateIds, jobId, statusesOut, appliedAts]);
 }
 router.get('/', auth_1.requireAuth, async (req, res) => {
     const search = req.query.search || '';
@@ -120,12 +133,15 @@ router.get('/by-url', auth_1.requireAuth, async (req, res) => {
         return;
     }
     const norm = (0, normalize_url_1.normalizeUrl)(raw);
-    const job = await (0, connection_1.queryOne)('SELECT id FROM jobs WHERE normalized_url = $1', [norm]);
-    if (!job) {
-        res.status(404).json({ success: false, message: 'Job not found.' });
-        return;
+    const scope = (0, scope_1.jobBidderFilter)(req, 'j', 2);
+    let accessQuery = 'SELECT j.* FROM jobs j WHERE j.normalized_url = $1';
+    const accessParams = [norm];
+    if (scope.clause) {
+        accessQuery += ` AND ${scope.clause}`;
+        accessParams.push(...scope.params);
     }
-    if (!(await (0, scope_1.jobAccessible)(req, job.id))) {
+    const job = await (0, connection_1.queryOne)(accessQuery, accessParams);
+    if (!job) {
         res.status(404).json({ success: false, message: 'Job not found.' });
         return;
     }

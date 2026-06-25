@@ -10,6 +10,7 @@ export interface AuthRequest extends Request {
   username?: string;
   role?: UserRole;
   bidderId?: number | null;
+  bidderName?: string | null;
   /** @deprecated Use userId */
   adminId?: number;
   /** @deprecated Use username */
@@ -30,13 +31,15 @@ export function requireAuth(req: AuthRequest, res: Response, next: NextFunction)
       username: string;
       role?: string;
       bidderId?: number | null;
+      bidderName?: string | null;
     };
     req.userId = payload.id;
     req.username = payload.username;
     req.adminId = payload.id;
     req.adminUsername = payload.username;
     req.role = normalizeRole(payload.role);
-    req.bidderId = payload.bidderId ?? null;
+    req.bidderId = payload.bidderId != null ? Number(payload.bidderId) : null;
+    req.bidderName = payload.bidderName ?? null;
     next();
   } catch {
     res.status(401).json({ success: false, message: 'Invalid or expired token. Please log in again.' });

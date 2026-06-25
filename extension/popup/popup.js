@@ -13,6 +13,43 @@ let currentUser = null;
 let candidateStacks = [];
 const expandedCandidateIds = new Set();
 
+const CANDIDATE_CACHE_TTL_MS = 5 * 60 * 1000;
+const CANDIDATE_CACHE_KEY = 'qtsCandidateCache';
+const SESSION_USER_KEY = 'qtsSessionUser';
+
+let loadingCount = 0;
+
+function showLoading(message = 'Loading…') {
+  loadingCount += 1;
+  const overlay = document.getElementById('loading-overlay');
+  const text = document.getElementById('loading-text');
+  if (text) text.textContent = message;
+  if (overlay) {
+    overlay.classList.add('is-visible');
+    overlay.setAttribute('aria-busy', 'true');
+  }
+}
+
+function hideLoading(force = false) {
+  if (force) loadingCount = 0;
+  else loadingCount = Math.max(0, loadingCount - 1);
+  if (loadingCount > 0) return;
+
+  const overlay = document.getElementById('loading-overlay');
+  if (!overlay) return;
+  overlay.classList.remove('is-visible');
+  overlay.setAttribute('aria-busy', 'false');
+}
+
+async function withLoading(task, message = 'Loading…') {
+  showLoading(message);
+  try {
+    return await task();
+  } finally {
+    hideLoading();
+  }
+}
+
 const POPUP_WINDOW_WIDTH = 660;
 const POPUP_WINDOW_HEIGHT_RATIO = 0.8;
 const POPUP_WINDOW_MIN_HEIGHT = 480;
@@ -67,17 +104,20 @@ document.addEventListener('DOMContentLoaded', async () => {
   const logoEl = document.getElementById('header-logo');
   if (logoEl) logoEl.src = chrome.runtime.getURL('assets/bidder-logo.png');
   targetTabId = getQueryTabId();
-  await loadServerUrlField();
-  await checkConnection();
-  await checkAuth();
+  showLoading('Starting…');
+  try {
+    await Promise.all([
+      window.api.ensureServerUrl(),
+      checkConnection(),
+    ]);
+    await checkAuth();
+  } finally {
+    hideLoading(true);
+  }
 
   document.getElementById('login-pass').addEventListener('keyup', e => { if (e.key === 'Enter') doLogin(); });
+  document.getElementById('login-user').addEventListener('keyup', e => { if (e.key === 'Enter') doLogin(); });
   document.getElementById('btn-login').addEventListener('click', doLogin);
-  const serverUrlInput = document.getElementById('login-server-url');
-  if (serverUrlInput) {
-    serverUrlInput.addEventListener('change', () => { saveServerUrlFromField().catch(() => {}); });
-    serverUrlInput.addEventListener('blur', () => { saveServerUrlFromField().catch(() => {}); });
-  }
   document.getElementById('btn-logout').addEventListener('click', doLogout);
   document.getElementById('btn-save').addEventListener('click', doSave);
   document.getElementById('btn-refresh').addEventListener('click', doRefresh);
@@ -109,38 +149,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 // ---- Connection ----
-async function loadServerUrlField() {
-  const input = document.getElementById('login-server-url');
-  if (!input) return;
-  input.value = await window.api.getServerUrl();
-}
-
-async function saveServerUrlFromField() {
-  const input = document.getElementById('login-server-url');
-  if (!input) return;
-  const raw = input.value.trim();
-  if (!raw) {
-    input.value = await window.api.getServerUrl();
-    return;
-  }
-  try {
-    const parsed = new URL(raw);
-    if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('invalid protocol');
-  } catch {
-    showAlert('login-alert', 'Enter a valid API URL, e.g. http://192.168.1.5:1028', 'error');
-    return;
-  }
-  const saved = await window.api.setServerUrl(raw);
-  input.value = saved;
-  if (/\/api(\/health)?\/?$/i.test(raw.trim())) {
-    showAlert('login-alert', 'Use the base server URL only (no /api/health). Saved as ' + saved, 'info');
-  }
-  await checkConnection();
-  if (document.getElementById('connection-status')?.classList.contains('status-connected')) {
-    clearAlert('login-alert');
-  }
-}
-
 async function checkConnection() {
   setStatus('checking');
   try {
@@ -160,7 +168,24 @@ function setStatus(state) {
 
 // ---- Auth ----
 function isBidderSession(user) {
-  return user && user.role === 'bidder' && user.bidderId;
+  if (!user || user.role !== 'bidder') return false;
+  const bidderId = Number(user.bidderId);
+  return Number.isFinite(bidderId) && bidderId > 0;
+}
+
+function normalizeCandidateRecord(candidate) {
+  if (!candidate) return null;
+  const id = Number(candidate.id);
+  if (!Number.isFinite(id)) return null;
+  const rawActive = candidate.is_active ?? candidate.isActive;
+  const isActive = rawActive !== false && rawActive !== 0 && rawActive !== 'f' && rawActive !== 'false';
+  return { ...candidate, id, is_active: isActive };
+}
+
+function normalizeCandidateList(list) {
+  return (list || [])
+    .map(normalizeCandidateRecord)
+    .filter((candidate) => candidate && candidate.is_active !== false);
 }
 
 function setSession(user) {
@@ -197,8 +222,7 @@ async function doLogout() {
   try {
     await window.api.logout();
   } catch { /* non-fatal */ }
-  await clearToken();
-  clearSession();
+  await clearAuthState();
   await showLogin();
 }
 
@@ -223,44 +247,108 @@ async function checkAuth() {
       await showLogin();
       return;
     }
-    const r = await window.api.me();
-    if (r.success && isBidderSession(r)) {
-      setSession(r);
-      showJobSection();
-      await loadAll();
-    } else {
-      clearToken();
-      clearSession();
-      await showLogin();
-      if (r.success && !isBidderSession(r)) {
-        showAlert(
-          'login-alert',
-          'The extension requires a bidder account. Use QTS_Startup web for admin or caller access.',
-          'error'
-        );
+
+    showLoading('Loading your account…');
+    try {
+      const workspace = await fetchWorkspaceData(false);
+      if (workspace?.success && workspace.user && isBidderSession(workspace.user)) {
+        await enterJobWorkspace(workspace.user);
+        return;
       }
+
+      const httpStatus = workspace?._httpStatus;
+      if (httpStatus === 401 || httpStatus === 403) {
+        await clearAuthState();
+        await showLogin();
+        if (workspace?.message) {
+          showAlert('login-alert', workspace.message, 'error');
+        }
+        return;
+      }
+
+      const sessionUser = await readSessionUser();
+      const cached = await readCandidateCache();
+      const fallbackUser = sessionUser || cached?.user;
+
+      if (fallbackUser && isBidderSession(fallbackUser)) {
+        const refreshed = await fetchWorkspaceData(true);
+        if (!refreshed?.success && Array.isArray(cached?.candidates) && cached.candidates.length) {
+          applyCandidatesData(cached.candidates, cached.stacks || []);
+        }
+        await enterJobWorkspace(fallbackUser);
+        if (!workspace?.success) {
+          showAlert('main-alert', 'Server unreachable. Using your saved session.', 'warn');
+        }
+        return;
+      }
+
+      const me = await window.api.me();
+      if (me.success && isBidderSession(me)) {
+        await storeSessionUser(me);
+        const loaded = await fetchWorkspaceData(true);
+        if (!loaded?.success) {
+          applyCandidatesData([], []);
+        }
+        await enterJobWorkspace(me);
+        return;
+      }
+
+      if (me._httpStatus === 401 || me._httpStatus === 403) {
+        await clearAuthState();
+      }
+      await showLogin();
+      if (!me.success && me._httpStatus !== 401 && me._httpStatus !== 403) {
+        showAlert('login-alert', 'Cannot reach server. Your login is saved — try again shortly.', 'warn');
+      }
+    } finally {
+      hideLoading();
     }
   } catch {
+    hideLoading(true);
+    const token = await getStoredToken();
+    const sessionUser = await readSessionUser();
+    if (token && sessionUser && isBidderSession(sessionUser)) {
+      const cached = await readCandidateCache();
+      if (Array.isArray(cached?.candidates) && cached.candidates.length) {
+        applyCandidatesData(cached.candidates, cached.stacks || []);
+      } else {
+        try {
+          await fetchWorkspaceData(true);
+        } catch { /* non-fatal */ }
+      }
+      await enterJobWorkspace(sessionUser);
+      return;
+    }
     await showLogin();
   }
 }
 
 async function doLogin() {
-  await saveServerUrlFromField();
+  await window.api.ensureServerUrl();
   const username = document.getElementById('login-user').value.trim();
   const password = document.getElementById('login-pass').value;
   if (!username || !password) {
     showAlert('login-alert', 'Username and password are required.', 'error');
     return;
   }
+
+  const loginBtn = document.getElementById('btn-login');
+  showLoading('Signing in…');
+  if (loginBtn) loginBtn.disabled = true;
   try {
     const r = await window.api.login(username, password);
     if (r.success && isBidderSession(r)) {
       await storeToken(r.token);
+      await storeSessionUser(r);
       setSession(r);
       clearAlert('login-alert');
       showJobSection();
-      await loadAll();
+      try {
+        await fetchWorkspaceData(true);
+      } catch { /* session already saved */ }
+      await loadCurrentTab();
+      updateJobSummary();
+      scheduleFitPopup();
     } else if (r.success) {
       showAlert(
         'login-alert',
@@ -271,13 +359,16 @@ async function doLogin() {
       showAlert('login-alert', r.message || 'Login failed.', 'error');
     }
   } catch {
-    showAlert('login-alert', 'Cannot connect to the server. Check API Server URL and that QTS_Startup is running.', 'error');
+    showAlert('login-alert', 'Cannot connect to the server. Ask your admin to run start-server.bat.', 'error');
+  } finally {
+    if (loginBtn) loginBtn.disabled = false;
+    hideLoading(true);
   }
 }
 
 // ---- Load all data ----
-async function loadAll() {
-  await loadCandidates();
+async function loadAll(forceRefreshCandidates = false) {
+  await fetchWorkspaceData(forceRefreshCandidates);
   await loadCurrentTab();
   updateJobSummary();
   scheduleFitPopup();
@@ -291,25 +382,174 @@ async function switchSourceTab(tabId) {
   document.getElementById('main-alert').innerHTML = '';
   existingJobId = null;
   jobSavedInBackend = false;
-  await loadAll();
+  await withLoading(() => loadAll(true), 'Loading job…');
 }
 
-async function loadCandidates() {
-  try {
-    const [candidatesRes, stacksRes] = await Promise.all([
-      window.api.getCandidates(),
-      window.api.getCandidateStacks(),
-    ]);
-    candidates = (candidatesRes.candidates || []).filter((c) => c.is_active);
-    candidateStacks = stacksRes?.stacks || [];
-    candidateStatuses = {};
-    candidateAppliedAt = {};
-    candidateLocked = {};
-    for (const c of candidates) {
-      candidateStatuses[c.id] = 'none';
-      candidateLocked[c.id] = false;
+function applyCandidatesData(nextCandidates, nextStacks) {
+  candidates = normalizeCandidateList(nextCandidates);
+  candidateStacks = nextStacks || [];
+  candidateStatuses = {};
+  candidateAppliedAt = {};
+  candidateLocked = {};
+  for (const c of candidates) {
+    candidateStatuses[c.id] = 'none';
+    candidateLocked[c.id] = false;
+  }
+  populateStackFilter();
+  renderCandidates();
+}
+
+async function fetchWorkspaceFromApi() {
+  const boot = await window.api.extensionBootstrap();
+  if (boot.success && boot.user) {
+    return {
+      success: true,
+      user: boot.user,
+      candidates: normalizeCandidateList(boot.candidates),
+      stacks: boot.stacks || [],
+      _httpStatus: boot._httpStatus,
+    };
+  }
+
+  const [meRes, candidatesRes, stacksRes] = await Promise.all([
+    window.api.me(),
+    window.api.getCandidates(),
+    window.api.getCandidateStacks(),
+  ]);
+
+  if (!meRes.success || !isBidderSession(meRes)) {
+    return {
+      success: false,
+      message: boot.message || meRes.message || 'Could not load bidder workspace.',
+      _httpStatus: boot._httpStatus || meRes._httpStatus,
+    };
+  }
+
+  return {
+    success: true,
+    user: meRes,
+    candidates: normalizeCandidateList(candidatesRes.success ? candidatesRes.candidates : []),
+    stacks: stacksRes.success ? (stacksRes.stacks || []) : [],
+    _httpStatus: 200,
+  };
+}
+
+async function fetchWorkspaceData(forceRefresh = false) {
+  if (!forceRefresh) {
+    const cached = await readCandidateCache();
+    if (cached?.user && Array.isArray(cached.candidates) && cached.candidates.length > 0) {
+      applyCandidatesData(cached.candidates, cached.stacks || []);
+      return { success: true, user: cached.user, fromCache: true };
     }
-    populateStackFilter();
+  }
+
+  const workspace = await fetchWorkspaceFromApi();
+  if (!workspace.success) return workspace;
+
+  applyCandidatesData(workspace.candidates, workspace.stacks);
+  if (workspace.user) await storeSessionUser(workspace.user);
+  if (workspace.candidates.length) {
+    await writeCandidateCache(workspace.candidates, workspace.stacks, workspace.user);
+  } else {
+    await clearCandidateCache();
+  }
+  return workspace;
+}
+
+async function readCandidateCache() {
+  return new Promise(resolve => {
+    chrome.storage.local.get([CANDIDATE_CACHE_KEY], (result) => {
+      const cache = result[CANDIDATE_CACHE_KEY];
+      if (!cache || !cache.savedAt) {
+        resolve(null);
+        return;
+      }
+      if (Date.now() - cache.savedAt > CANDIDATE_CACHE_TTL_MS) {
+        resolve(null);
+        return;
+      }
+      resolve(cache);
+    });
+  });
+}
+
+async function writeCandidateCache(nextCandidates, nextStacks, user) {
+  return new Promise(resolve => {
+    chrome.storage.local.set({
+      [CANDIDATE_CACHE_KEY]: {
+        savedAt: Date.now(),
+        user: user || null,
+        candidates: nextCandidates || [],
+        stacks: nextStacks || [],
+      },
+    }, resolve);
+  });
+}
+
+async function clearCandidateCache() {
+  return new Promise(resolve => {
+    chrome.storage.local.remove([CANDIDATE_CACHE_KEY], resolve);
+  });
+}
+
+async function enterJobWorkspace(user) {
+  setSession(user);
+  showJobSection();
+  await loadCurrentTab();
+  updateJobSummary();
+  renderCandidates();
+  scheduleFitPopup();
+}
+
+async function persistSession(user, nextCandidates, nextStacks) {
+  if (user) await storeSessionUser(user);
+  if (Array.isArray(nextCandidates)) {
+    const normalized = normalizeCandidateList(nextCandidates);
+    applyCandidatesData(normalized, nextStacks || []);
+    if (normalized.length) {
+      await writeCandidateCache(normalized, nextStacks || [], user);
+    }
+  }
+}
+
+async function readSessionUser() {
+  return new Promise(resolve => {
+    chrome.storage.local.get([SESSION_USER_KEY], (result) => {
+      resolve(result[SESSION_USER_KEY] || null);
+    });
+  });
+}
+
+async function storeSessionUser(user) {
+  if (!user) return;
+  const snapshot = {
+    id: user.id,
+    username: user.username,
+    role: user.role,
+    bidderId: user.bidderId != null ? Number(user.bidderId) : null,
+    bidderName: user.bidderName ?? null,
+  };
+  return new Promise(resolve => {
+    chrome.storage.local.set({ [SESSION_USER_KEY]: snapshot }, resolve);
+  });
+}
+
+async function clearSessionUser() {
+  return new Promise(resolve => {
+    chrome.storage.local.remove([SESSION_USER_KEY], resolve);
+  });
+}
+
+async function clearAuthState() {
+  await clearToken();
+  await clearSessionUser();
+  await clearCandidateCache();
+  clearSession();
+}
+
+async function loadCandidates(forceRefresh = false) {
+  try {
+    await loadWorkspaceData(forceRefresh);
   } catch { /* non-fatal */ }
 }
 
@@ -366,10 +606,7 @@ async function loadCurrentTab() {
     currentTabUrl = tab.url || '';
     document.getElementById('f-url').value = currentTabUrl;
 
-    const saved = await findSavedJobByUrls([
-      document.getElementById('f-url').value.trim(),
-      currentTabUrl,
-    ]);
+    const saved = await findSavedJobByUrls([currentTabUrl, document.getElementById('f-url').value.trim()]);
 
     if (saved) {
       loadExistingJob(saved);
@@ -420,10 +657,16 @@ async function applyDetectedJobForTab(tabId, pageUrl) {
 
 async function findSavedJobByUrls(urls) {
   const seen = new Set();
+  const uniqueUrls = [];
   for (const raw of urls) {
     const url = (raw || '').trim();
-    if (!url || !url.startsWith('http') || seen.has(url)) continue;
-    seen.add(url);
+    if (!url || !url.startsWith('http')) continue;
+    const key = typeof normalizeJobUrl === 'function' ? normalizeJobUrl(url) : url;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    uniqueUrls.push(url);
+  }
+  for (const url of uniqueUrls) {
     const saved = await fetchJobByUrl(url);
     if (saved) return saved;
   }
@@ -820,13 +1063,17 @@ async function doSave() {
 
   const saveBtn = document.getElementById('btn-save');
   const wasUpdate = !!existingJobId;
+  const refreshBtn = document.getElementById('btn-refresh');
 
+  showLoading(wasUpdate ? 'Updating job…' : 'Saving job…');
   try {
     saveBtn.disabled = true;
+    if (refreshBtn) refreshBtn.disabled = true;
     const r = await window.api.upsertJob(payload);
 
     if (r.success) {
       showAlert('main-alert', wasUpdate ? 'Job updated!' : 'Job saved!', 'success');
+      await clearCandidateCache();
       if (r.job) {
         existingJobId = r.job.id;
         jobSavedInBackend = true;
@@ -844,22 +1091,35 @@ async function doSave() {
     showAlert('main-alert', 'The local server is not available. Check that it is running.', 'error');
   } finally {
     saveBtn.disabled = false;
+    if (refreshBtn) refreshBtn.disabled = false;
+    hideLoading(true);
   }
 }
 
 async function doRefresh() {
-  existingJobId = null;
-  jobSavedInBackend = false;
-  candidateStatuses = {};
-  candidateAppliedAt = {};
-  candidateLocked = {};
-  currentSource = '';
-  clearErrors();
-  clearAlert('main-alert');
-  document.getElementById('btn-save').textContent = 'Save Job';
-  ['f-title', 'f-company', 'f-url', 'f-desc'].forEach(id => document.getElementById(id).value = '');
-  updateJobSummary();
-  await loadAll();
+  const refreshBtn = document.getElementById('btn-refresh');
+  const saveBtn = document.getElementById('btn-save');
+  showLoading('Refreshing…');
+  if (refreshBtn) refreshBtn.disabled = true;
+  if (saveBtn) saveBtn.disabled = true;
+  try {
+    existingJobId = null;
+    jobSavedInBackend = false;
+    candidateStatuses = {};
+    candidateAppliedAt = {};
+    candidateLocked = {};
+    currentSource = '';
+    clearErrors();
+    clearAlert('main-alert');
+    document.getElementById('btn-save').textContent = 'Save Job';
+    ['f-title', 'f-company', 'f-url', 'f-desc'].forEach(id => document.getElementById(id).value = '');
+    updateJobSummary();
+    await loadAll(true);
+  } finally {
+    if (refreshBtn) refreshBtn.disabled = false;
+    if (saveBtn) saveBtn.disabled = false;
+    hideLoading(true);
+  }
 }
 
 // ---- UI helpers ----
@@ -952,13 +1212,19 @@ function escAttr(s) {
 }
 
 function storeToken(token) {
+  window.api.setCachedToken(token);
   return new Promise(res => chrome.storage.local.set({ authToken: token }, res));
 }
 
 function getStoredToken() {
-  return new Promise(res => chrome.storage.local.get(['authToken'], r => res(r.authToken || '')));
+  return new Promise(res => chrome.storage.local.get(['authToken'], r => {
+    const token = r.authToken || '';
+    window.api.setCachedToken(token);
+    res(token);
+  }));
 }
 
 function clearToken() {
+  window.api.clearCachedToken();
   return new Promise(res => chrome.storage.local.remove(['authToken'], res));
 }

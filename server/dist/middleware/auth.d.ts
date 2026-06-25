@@ -6,6 +6,7 @@ export interface AuthRequest extends Request {
     username?: string;
     role?: UserRole;
     bidderId?: number | null;
+    bidderName?: string | null;
     /** @deprecated Use userId */
     adminId?: number;
     /** @deprecated Use username */

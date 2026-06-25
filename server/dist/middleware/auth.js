@@ -28,7 +28,8 @@ function requireAuth(req, res, next) {
         req.adminId = payload.id;
         req.adminUsername = payload.username;
         req.role = (0, roles_1.normalizeRole)(payload.role);
-        req.bidderId = payload.bidderId ?? null;
+        req.bidderId = payload.bidderId != null ? Number(payload.bidderId) : null;
+        req.bidderName = payload.bidderName ?? null;
         next();
     }
     catch {

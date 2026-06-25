@@ -3,7 +3,9 @@
 A Chrome/Edge extension with a local Node.js server for capturing job postings and tracking candidates, bidders, and interviews with **QTS_Startup**.
 
 > **Requirements & planning:** see [REQUIREMENTS.md](REQUIREMENTS.md) for full product, technical, and feature requirements.  
-> **Build & deploy:** see [BUILD.md](BUILD.md) for environment setup and operations.
+> **Build & deploy:** see [BUILD.md](BUILD.md) for environment setup and operations.  
+> **Extension (bidders):** see [QTS-JOB-TRACKING-EXTENSION-GUIDE.md](QTS-JOB-TRACKING-EXTENSION-GUIDE.md) for install, login, and job capture workflow.  
+> **Performance:** see [QTS-JOB-TRACKING-PERFORMANCE-GUIDE.md](QTS-JOB-TRACKING-PERFORMANCE-GUIDE.md) for speed optimization (Vercel, extension, API).
 
 ## Features
 
@@ -70,15 +72,14 @@ npm start
 
 ## Install the extension
 
+Full step-by-step guide: **[QTS-JOB-TRACKING-EXTENSION-GUIDE.md](QTS-JOB-TRACKING-EXTENSION-GUIDE.md)**
+
 1. Open `chrome://extensions` or `edge://extensions`.
 2. Enable **Developer mode**.
 3. Click **Load unpacked** and select the `extension` folder.
-4. The extension connects to `http://localhost:1028` by default.
-5. Log in with the default bidder account (`bidder` / `user`) or another bidder account created in the admin panel.
-6. Add candidates in QTS_Startup (admin or bidder panel).
-7. Open a job listing in your browser and click the **QTS_Startup** extension icon.
-
-   This opens a **capture window** (not a small toolbar popup). Keep it open beside the job page while you extract details, mark candidates, and save. The window stays open when you click back on the listing. Click the icon again on another job tab to switch the source page.
+4. Log in with the bidder account from your manager (username and password from QTS).
+5. Add candidates in QTS_Startup (admin or bidder panel).
+6. Open a job listing in your browser and click the **QTS_Startup** extension icon.
 
 ## Panels
 

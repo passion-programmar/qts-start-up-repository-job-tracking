@@ -325,6 +325,8 @@ Each role only sees data in their scope.
 
 ## 8. Chrome extension usage
 
+> **Full bidder guide:** see **`QTS-JOB-TRACKING-EXTENSION-GUIDE.md`** for install, login, capture workflow, supported sites, and troubleshooting.
+
 ### Who should use it
 
 **Bidders only.** Admin, manager, and caller accounts are rejected at extension login.
@@ -471,6 +473,8 @@ Admin → Dashboard (stats)
 | Guide | Purpose |
 |-------|---------|
 | `QTS-JOB-TRACKING-PROJECT-SETUP-GUIDE.md` | Install, deploy, start server, Vercel, Neon |
+| `QTS-JOB-TRACKING-EXTENSION-GUIDE.md` | Chrome extension — install, login, capture jobs |
+| `QTS-JOB-TRACKING-PERFORMANCE-GUIDE.md` | Speed optimization — Vercel, extension, API |
 | `BUILD.md` | Developer build reference |
 | `REQUIREMENTS.md` | Full technical requirements |
 

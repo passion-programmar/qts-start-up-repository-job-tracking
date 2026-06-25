@@ -9,6 +9,7 @@ const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const zod_1 = require("zod");
 const connection_1 = require("../../database/connection");
 const env_1 = require("../../config/env");
+const candidate_stacks_1 = require("../../config/candidate-stacks");
 const auth_1 = require("../../middleware/auth");
 const roles_1 = require("../../lib/roles");
 const logger_1 = require("../../utilities/logger");
@@ -21,18 +22,27 @@ const LoginSchema = zod_1.z.object({
 async function validateBidderAccount(user) {
     const role = (0, roles_1.normalizeRole)(user.role);
     if (role !== 'bidder')
-        return null;
+        return { error: null, bidderName: null };
     if (!user.bidder_id) {
-        return 'This account is not linked to a bidder organization. Ask your admin to create it in QTS_Startup.';
+        return {
+            error: 'This account is not linked to a bidder organization. Ask your admin to create it in QTS_Startup.',
+            bidderName: null,
+        };
     }
-    const bidder = await (0, connection_1.queryOne)('SELECT is_active FROM bidders WHERE id = $1', [user.bidder_id]);
+    const bidder = await (0, connection_1.queryOne)('SELECT is_active, name FROM bidders WHERE id = $1', [user.bidder_id]);
     if (!bidder) {
-        return 'Bidder organization not found. Ask your admin to set up your account in QTS_Startup.';
+        return {
+            error: 'Bidder organization not found. Ask your admin to set up your account in QTS_Startup.',
+            bidderName: null,
+        };
     }
     if (!bidder.is_active) {
-        return 'This bidder organization is inactive. Contact your admin.';
+        return {
+            error: 'This bidder organization is inactive. Contact your admin.',
+            bidderName: null,
+        };
     }
-    return null;
+    return { error: null, bidderName: bidder.name ?? null };
 }
 router.post('/login', async (req, res) => {
     try {
@@ -58,18 +68,20 @@ router.post('/login', async (req, res) => {
             });
             return;
         }
-        const bidderError = await validateBidderAccount(user);
-        if (bidderError) {
+        const bidderCheck = await validateBidderAccount(user);
+        if (bidderCheck.error) {
             logger_1.logger.warn('Login failed: bidder account not ready', { username });
-            res.status(403).json({ success: false, message: bidderError });
+            res.status(403).json({ success: false, message: bidderCheck.error });
             return;
         }
-        let bidderName = null;
-        if (user.bidder_id) {
-            const bidder = await (0, connection_1.queryOne)('SELECT name FROM bidders WHERE id = $1', [user.bidder_id]);
-            bidderName = bidder?.name ?? null;
-        }
-        const token = jsonwebtoken_1.default.sign({ id: user.id, username: user.username, role, bidderId: user.bidder_id }, env_1.config.jwtSecret, { expiresIn: env_1.config.jwtExpiry });
+        const bidderName = bidderCheck.bidderName;
+        const token = jsonwebtoken_1.default.sign({
+            id: user.id,
+            username: user.username,
+            role,
+            bidderId: user.bidder_id,
+            bidderName,
+        }, env_1.config.jwtSecret, { expiresIn: env_1.config.jwtExpiry });
         logger_1.logger.info('Login success', { username, role });
         res.json({
             success: true,
@@ -93,19 +105,45 @@ router.post('/logout', auth_1.requireAuth, (req, res) => {
     logger_1.logger.info('Logout', { username: req.username });
     res.json({ success: true, message: 'Logged out.' });
 });
-router.get('/me', auth_1.requireAuth, async (req, res) => {
-    let bidderName = null;
-    if (req.bidderId) {
-        const bidder = await (0, connection_1.queryOne)('SELECT name FROM bidders WHERE id = $1', [req.bidderId]);
-        bidderName = bidder?.name ?? null;
-    }
+router.get('/me', auth_1.requireAuth, (req, res) => {
     res.json({
         success: true,
         username: req.username,
         id: req.userId,
         role: req.role || 'bidder',
         bidderId: req.bidderId ?? null,
-        bidderName,
+        bidderName: req.bidderName ?? null,
+    });
+});
+router.get('/extension-bootstrap', auth_1.requireAuth, async (req, res) => {
+    const role = (0, roles_1.normalizeRole)(req.role);
+    const bidderId = req.bidderId != null ? Number(req.bidderId) : null;
+    if (role !== 'bidder' || !bidderId) {
+        res.status(403).json({
+            success: false,
+            message: 'The extension requires a bidder account linked to a bidder organization.',
+        });
+        return;
+    }
+    const [candidates, stacks] = await Promise.all([
+        (0, connection_1.queryAll)(`SELECT c.*, b.name AS bidder_name
+       FROM candidates c
+       LEFT JOIN bidders b ON b.id = c.bidder_id
+       WHERE c.is_active = TRUE AND c.bidder_id = $1
+       ORDER BY c.name ASC`, [bidderId]),
+        (0, candidate_stacks_1.getCandidateStacks)(),
+    ]);
+    res.json({
+        success: true,
+        user: {
+            id: req.userId,
+            username: req.username,
+            role: req.role,
+            bidderId,
+            bidderName: req.bidderName ?? null,
+        },
+        candidates,
+        stacks,
     });
 });
 router.get('/extension-status', async (_req, res) => {

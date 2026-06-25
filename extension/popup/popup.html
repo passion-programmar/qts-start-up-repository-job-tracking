@@ -63,16 +63,6 @@
     }
     #login-alert:empty,
     #main-alert:empty { display: none; }
-    .field-hint {
-      margin: 6px 0 0;
-      font-size: 11px;
-      line-height: 1.45;
-      color: #64748b;
-    }
-    .field-hint code {
-      font-size: 10px;
-      color: #334155;
-    }
     .existing-job-notice {
       background: #fef3c7;
       border: 1px solid #fde68a;
@@ -142,8 +132,7 @@
       line-height: 1;
       opacity: 0.9;
     }
-    #login-section { padding: 20px 18px; }
-    #login-section .auth-card { max-width: none; box-shadow: none; border: none; padding: 0; }
+    #login-section { padding: 0; }
     #job-section { padding: 14px 18px; }
     #action-bar.hidden { display: none; }
   </style>
@@ -197,29 +186,33 @@
     <div class="popup-scroll-inner">
     <!-- Login -->
     <div id="login-section" class="hidden">
-      <div class="auth-card">
-        <h2 class="card-title">Bidder Sign In</h2>
-        <p class="text-muted auth-intro">
-          Sign in with a bidder account created by your manager in QTS_Startup.
-        </p>
-        <div id="login-setup-hint" class="hidden alert alert-warn login-setup-hint">
-          No bidder accounts exist yet. A manager must add a bidder organization and login before you can sign in here.
+      <div class="login-shell">
+        <div class="login-card">
+          <div class="login-brand">
+            <div class="login-badge" aria-hidden="true">QTS</div>
+            <h2 class="login-title">Bidder Sign In</h2>
+            <p class="login-subtitle">Sign in to capture jobs from LinkedIn, Indeed, and more</p>
+          </div>
+
+          <div id="login-setup-hint" class="hidden alert alert-warn login-setup-hint">
+            No bidder accounts exist yet. A manager must add a bidder organization and login before you can sign in here.
+          </div>
+          <div id="login-alert"></div>
+
+          <div class="login-form">
+            <div class="login-field">
+              <label class="login-label" for="login-user">Username</label>
+              <input type="text" id="login-user" class="login-input" placeholder="Type name from qts" autocomplete="username">
+            </div>
+            <div class="login-field">
+              <label class="login-label" for="login-pass">Password</label>
+              <input type="password" id="login-pass" class="login-input" placeholder="Type password qts" autocomplete="current-password">
+            </div>
+            <button class="btn btn-primary btn-block login-submit" id="btn-login" type="button">Log In</button>
+          </div>
+
+          <p class="login-footer">Use the bidder account your manager created in QTS_Startup</p>
         </div>
-        <div id="login-alert"></div>
-        <div class="field-group">
-          <div class="field-label">API Server URL</div>
-          <input type="url" id="login-server-url" placeholder="https://qts-job-tracking.vercel.app" autocomplete="off" spellcheck="false">
-          <p class="field-hint">Production: <code>https://qts-job-tracking.vercel.app</code>. Local dev: <code>http://localhost:1028</code>. MoreLogin LAN: your PC IP on port 1028.</p>
-        </div>
-        <div class="field-group">
-          <div class="field-label">Username</div>
-          <input type="text" id="login-user" value="bidder" autocomplete="username">
-        </div>
-        <div class="field-group">
-          <div class="field-label">Password</div>
-          <input type="password" id="login-pass" autocomplete="current-password">
-        </div>
-        <button class="btn btn-primary btn-block" id="btn-login" type="button">Log In</button>
       </div>
     </div>
 
@@ -280,7 +273,7 @@
         </div>
       </div>
       <div class="cand-list" id="cand-list"></div>
-      <div id="cand-empty" class="hidden text-muted cand-empty">No active candidates. Add candidates in QTS_Startup.</div>
+      <div id="cand-empty" class="hidden text-muted cand-empty">No active candidates for your bidder account. Ask your manager to add candidates under your bidder organization in QTS_Startup.</div>
 
       <div class="field-group field-group-desc">
         <div class="field-label">Description <span class="field-optional">(optional)</span></div>
@@ -297,6 +290,22 @@
   </div>
 
   <div id="qts-toast-host" class="qts-toast-host" aria-live="polite" aria-atomic="true"></div>
+
+  <div id="loading-overlay" class="loading-overlay is-visible" aria-live="polite" aria-busy="true">
+    <div class="loading-panel">
+      <div class="loading-spinner" role="status" aria-label="Loading">
+        <span class="loading-bar"></span>
+        <span class="loading-bar"></span>
+        <span class="loading-bar"></span>
+        <span class="loading-bar"></span>
+        <span class="loading-bar"></span>
+        <span class="loading-bar"></span>
+        <span class="loading-bar"></span>
+        <span class="loading-bar"></span>
+      </div>
+      <p class="loading-text" id="loading-text">Loading…</p>
+    </div>
+  </div>
 
   <script src="../shared/page-url.js"></script>
   <script src="../shared/job-detect.js"></script>
