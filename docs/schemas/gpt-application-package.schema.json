@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qts-job-tracking.local/schemas/gpt-application-package.json",
+  "title": "QTS GPT Application Package",
+  "description": "Payload for POST /api/application-tasks/{taskId}/package. taskId is in the URL path. When getTaskContext.fileFields is non-empty, include resume JSON (resume-document.schema.json) tailored to jobContext.jobDescription.",
+  "type": "object",
+  "required": ["answers"],
+  "properties": {
+    "answers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["stableFieldId", "answer"],
+        "properties": {
+          "stableFieldId": { "type": "string" },
+          "answer": { "type": "string" }
+        }
+      }
+    },
+    "resume": { "$ref": "resume-document.schema.json" },
+    "coverLetter": { "$ref": "cover-letter-document.schema.json" },
+    "remainingFields": {
+      "type": "array",
+      "description": "Optional extra field fills (checkboxes, selects) GPT decided",
+      "items": {
+        "type": "object",
+        "required": ["stableFieldId", "answer"],
+        "properties": {
+          "stableFieldId": { "type": "string" },
+          "answer": { "type": "string" }
+        }
+      }
+    },
+    "notes": { "type": "string" }
+  }
+}

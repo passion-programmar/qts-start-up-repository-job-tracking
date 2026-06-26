@@ -235,6 +235,85 @@ async function runMigrations() {
     await execute('CREATE INDEX IF NOT EXISTS idx_candidate_jobs_job ON candidate_jobs(job_id)');
     await execute('CREATE INDEX IF NOT EXISTS idx_candidate_jobs_status ON candidate_jobs(status)');
     await execute('CREATE INDEX IF NOT EXISTS idx_candidate_jobs_applied_at ON candidate_jobs(applied_at)');
+    await execute(`
+    CREATE TABLE IF NOT EXISTS application_sessions (
+      id SERIAL PRIMARY KEY,
+      candidate_id INTEGER NOT NULL REFERENCES candidates(id) ON DELETE CASCADE,
+      job_id INTEGER REFERENCES jobs(id) ON DELETE SET NULL,
+      user_id INTEGER NOT NULL REFERENCES admins(id) ON DELETE CASCADE,
+      bidder_id INTEGER NOT NULL REFERENCES bidders(id) ON DELETE CASCADE,
+      job_url TEXT NOT NULL,
+      normalized_url TEXT,
+      job_title TEXT,
+      company TEXT,
+      job_description TEXT,
+      platform TEXT,
+      current_step TEXT NOT NULL DEFAULT 'init',
+      discovered_pages JSONB NOT NULL DEFAULT '[]',
+      generated_answers JSONB NOT NULL DEFAULT '{}',
+      status TEXT NOT NULL DEFAULT 'active'
+        CHECK (status IN ('active', 'scanning', 'filling', 'awaiting_ai', 'completed', 'abandoned', 'error')),
+      metadata JSONB NOT NULL DEFAULT '{}',
+      started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      last_activity_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      completed_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+    await execute(`
+    CREATE TABLE IF NOT EXISTS application_session_fields (
+      id SERIAL PRIMARY KEY,
+      session_id INTEGER NOT NULL REFERENCES application_sessions(id) ON DELETE CASCADE,
+      stable_field_id TEXT NOT NULL,
+      label TEXT,
+      field_type TEXT NOT NULL,
+      required BOOLEAN NOT NULL DEFAULT FALSE,
+      options JSONB,
+      current_value TEXT,
+      placeholder TEXT,
+      section_heading TEXT,
+      page_step TEXT,
+      page_url TEXT,
+      name_attr TEXT,
+      autocomplete_attr TEXT,
+      validation_message TEXT,
+      selector_hints JSONB,
+      field_fingerprint TEXT NOT NULL,
+      category TEXT NOT NULL DEFAULT 'unknown'
+        CHECK (category IN ('candidate_profile', 'saved_answer', 'ai_generation', 'document_upload', 'unknown')),
+      profile_key TEXT,
+      saved_answer_key TEXT,
+      document_slot TEXT,
+      fill_value TEXT,
+      fill_status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (fill_status IN ('pending', 'filled', 'skipped', 'awaiting_answer', 'error', 'manual')),
+      generated_answer TEXT,
+      discovered_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (session_id, stable_field_id)
+    )
+  `);
+    await execute(`
+    CREATE TABLE IF NOT EXISTS candidate_saved_answers (
+      id SERIAL PRIMARY KEY,
+      candidate_id INTEGER NOT NULL REFERENCES candidates(id) ON DELETE CASCADE,
+      answer_key TEXT NOT NULL,
+      answer_value TEXT NOT NULL,
+      approved BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (candidate_id, answer_key)
+    )
+  `);
+    await execute('CREATE INDEX IF NOT EXISTS idx_app_sessions_candidate ON application_sessions(candidate_id)');
+    await execute('CREATE INDEX IF NOT EXISTS idx_app_sessions_job ON application_sessions(job_id)');
+    await execute('CREATE INDEX IF NOT EXISTS idx_app_sessions_bidder ON application_sessions(bidder_id)');
+    await execute('CREATE INDEX IF NOT EXISTS idx_app_sessions_user ON application_sessions(user_id)');
+    await execute('CREATE INDEX IF NOT EXISTS idx_app_sessions_status ON application_sessions(status)');
+    await execute('CREATE INDEX IF NOT EXISTS idx_app_session_fields_session ON application_session_fields(session_id)');
+    await execute('CREATE INDEX IF NOT EXISTS idx_app_session_fields_category ON application_session_fields(category)');
+    await execute('CREATE INDEX IF NOT EXISTS idx_candidate_saved_answers_candidate ON candidate_saved_answers(candidate_id)');
     await migrateSchema();
     logger_1.logger.info('Database migrations complete');
 }
@@ -276,6 +355,18 @@ async function migrateSchema() {
     if (!(await columnExists('admins', 'is_active'))) {
         await execute(`ALTER TABLE admins ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT TRUE`);
     }
+    if (!(await columnExists('application_session_fields', 'document_slot'))) {
+        await execute(`ALTER TABLE application_session_fields ADD COLUMN document_slot TEXT`);
+    }
+    await execute(`
+    ALTER TABLE application_session_fields
+    DROP CONSTRAINT IF EXISTS application_session_fields_category_check
+  `);
+    await execute(`
+    ALTER TABLE application_session_fields
+    ADD CONSTRAINT application_session_fields_category_check
+    CHECK (category IN ('candidate_profile', 'saved_answer', 'ai_generation', 'document_upload', 'unknown'))
+  `);
     await execute(`UPDATE admins SET role = 'bidder' WHERE role = 'user'`);
     await execute('CREATE INDEX IF NOT EXISTS idx_candidates_bidder ON candidates(bidder_id)');
     await execute('CREATE INDEX IF NOT EXISTS idx_jobs_bidder ON jobs(bidder_id)');
@@ -326,7 +417,7 @@ function runPgDump(destination) {
     });
 }
 async function runLogicalBackup(destination) {
-    const tables = ['bidders', 'admins', 'candidates', 'jobs', 'candidate_jobs', 'interview_processes', 'settings'];
+    const tables = ['bidders', 'admins', 'candidates', 'jobs', 'candidate_jobs', 'interview_processes', 'settings', 'application_sessions', 'application_session_fields', 'candidate_saved_answers'];
     const lines = [
         `-- ${branding_1.APP_NAME} PostgreSQL logical backup`,
         `-- Generated: ${new Date().toISOString()}`,

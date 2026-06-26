@@ -43,5 +43,7 @@ exports.config = {
     nodeEnv: process.env.NODE_ENV || 'development',
     autoOpenBrowser: String(process.env.AUTO_OPEN_BROWSER || 'true').toLowerCase() === 'true',
     adminWebUrl: process.env.ADMIN_WEB_URL || 'http://localhost:1027/login',
+    /** Static Bearer secret for Custom GPT Actions (not OpenAI key, not JWT). */
+    gptActionApiKey: process.env.GPT_ACTION_API_KEY || '',
 };
 //# sourceMappingURL=env.js.map

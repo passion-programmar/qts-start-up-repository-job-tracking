@@ -5,6 +5,7 @@ A Chrome/Edge extension with a local Node.js server for capturing job postings a
 > **Requirements & planning:** see [REQUIREMENTS.md](REQUIREMENTS.md) for full product, technical, and feature requirements.  
 > **Build & deploy:** see [BUILD.md](BUILD.md) for environment setup and operations.  
 > **Extension (bidders):** see [QTS-JOB-TRACKING-EXTENSION-GUIDE.md](QTS-JOB-TRACKING-EXTENSION-GUIDE.md) for install, login, and job capture workflow.  
+> **Custom GPT automation:** see [QTS-JOB-TRACKING-CUSTOM-GPT-GUIDE.md](QTS-JOB-TRACKING-CUSTOM-GPT-GUIDE.md) for resume/cover letter JSON, Actions, and PDF pipeline.  
 > **Performance:** see [QTS-JOB-TRACKING-PERFORMANCE-GUIDE.md](QTS-JOB-TRACKING-PERFORMANCE-GUIDE.md) for speed optimization (Vercel, extension, API).
 
 ## Features

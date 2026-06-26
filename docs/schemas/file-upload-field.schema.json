@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qts-job-tracking.local/schemas/file-upload-field.json",
+  "title": "QTS File Upload Field (for Custom GPT)",
+  "description": "Describes a file input on the job application form. GPT uses jobContext.jobDescription + candidate to produce JSON matching outputSchema, then submitTaskPackage; server renders PDF and extension uploads it.",
+  "type": "object",
+  "required": ["stableFieldId", "label", "documentSlot", "outputSchema"],
+  "properties": {
+    "stableFieldId": {
+      "type": "string",
+      "description": "Stable DOM id for this upload control — use in submitTaskPackage.remainingFields if needed"
+    },
+    "label": { "type": "string" },
+    "fieldType": { "type": "string", "const": "file" },
+    "required": { "type": "boolean" },
+    "category": { "type": "string", "const": "document_upload" },
+    "documentSlot": {
+      "type": "string",
+      "enum": ["resume", "cover_letter"],
+      "description": "Which document package key to generate"
+    },
+    "suggestedDocument": {
+      "type": "string",
+      "enum": ["resume", "cover_letter"]
+    },
+    "placeholder": { "type": "string" },
+    "nameAttr": { "type": "string" },
+    "sectionHeading": { "type": "string" },
+    "acceptedMimeTypes": {
+      "type": "array",
+      "items": { "type": "string" },
+      "examples": [["application/pdf", "application/msword"]]
+    },
+    "acceptedExtensions": {
+      "type": "array",
+      "items": { "type": "string" },
+      "examples": [["pdf", "doc", "docx"]]
+    },
+    "selectorHints": {
+      "type": "object",
+      "description": "DOM locator hints captured by the extension"
+    },
+    "outputSchema": {
+      "type": "object",
+      "required": ["schemaId"],
+      "properties": {
+        "schemaId": {
+          "type": "string",
+          "description": "JSON Schema file id the GPT must output for this slot",
+          "examples": ["resume-document.schema.json", "cover-letter-document.schema.json"]
+        },
+        "$id": { "type": "string" },
+        "packageKey": {
+          "type": "string",
+          "enum": ["resume", "coverLetter"],
+          "description": "Key on submitTaskPackage body for the generated JSON"
+        }
+      }
+    },
+    "generateFromJobDescription": {
+      "type": "boolean",
+      "default": true,
+      "description": "When true, tailor document content to jobContext.jobDescription"
+    }
+  }
+}

@@ -8,6 +8,8 @@ import biddersRoutes from './modules/bidders/bidders.routes';
 import usersRoutes from './modules/users/users.routes';
 import interviewsRoutes from './modules/interviews/interviews.routes';
 import settingsRoutes from './modules/settings/settings.routes';
+import applicationSessionsRoutes from './modules/application-sessions/application-sessions.routes';
+import applicationTasksRoutes from './modules/application-sessions/application-tasks.routes';
 import { errorHandler } from './middleware/error-handler';
 import { getBidderLogoPath, getLogoPath } from './config/paths';
 import { config } from './config/env';
@@ -60,12 +62,20 @@ app.use('/api/bidders', biddersRoutes);
 app.use('/api/users', usersRoutes);
 app.use('/api/interviews', interviewsRoutes);
 app.use('/api/settings', settingsRoutes);
+app.use('/api/application-sessions', applicationSessionsRoutes);
+app.use('/api/application-tasks', applicationTasksRoutes);
 
 app.get('/api/health', (_req, res) => {
   res.json({
     success: true,
     status: 'online',
     timestamp: new Date().toISOString(),
+    apiVersion: '1.6.0',
+    features: {
+      documentUploadCategory: true,
+      applicationDocuments: true,
+      applicationTasks: true,
+    },
   });
 });
 

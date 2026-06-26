@@ -12,6 +12,14 @@ let jobSavedInBackend = false;
 let currentUser = null;
 let candidateStacks = [];
 const expandedCandidateIds = new Set();
+let activeApplicationId = null;
+let activeTaskId = null;
+let detectedApplyTemplate = null;
+let gptPipelineRunning = false;
+let lastGptTaskStatus = null;
+let gptDispatchSent = false;
+let gptAppliedToForm = false;
+let lastDevCapture = null;
 
 const CANDIDATE_CACHE_TTL_MS = 5 * 60 * 1000;
 const CANDIDATE_CACHE_KEY = 'qtsCandidateCache';
@@ -100,19 +108,48 @@ function getQueryTabId() {
 }
 
 // ---- Init ----
+function applyGptDispatchResult(msg) {
+  const handoff = msg.handoff || {};
+  if (!msg.ok) {
+    const detail = handoff.error || msg.error || 'Could not send PROCESS_TASK to Custom GPT.';
+    setGptPipelineState('error', detail);
+    showAlert('main-alert', detail, 'error');
+    return { ok: false, error: detail };
+  }
+  if (!handoff.sent) {
+    const prompt = window.__qtsCustomGpt?.buildPrompt?.(msg.taskId || activeTaskId);
+    if (prompt) copyTextToClipboard(prompt);
+    if (handoff.needsManualSend || handoff.method === 'composer_paste' || handoff.method === 'main_paste_only' || handoff.method === 'inline_paste' || handoff.method === 'clipboard_fallback' || handoff.method === 'debugger_insertText') {
+      setGptPipelineState('waiting', 'PROCESS_TASK is in the GPT composer — press Enter, then click Allow.');
+      const pasteHint = handoff.method === 'clipboard_fallback'
+        ? 'PROCESS_TASK copied. In the GPT tab, click the QTS overlay (or Ask anything), paste, Enter, then Allow.'
+        : handoff.method === 'debugger_insertText' && !handoff.sent
+          ? 'PROCESS_TASK was typed in the GPT tab. Press Enter, then click Allow for Actions.'
+          : 'PROCESS_TASK was placed in the Custom GPT tab. Press Enter to send, then click Allow for Actions.';
+      showAlert('main-alert', pasteHint, 'warn');
+    } else {
+      setGptPipelineState('waiting', 'Paste PROCESS_TASK in the pinned Custom GPT tab.');
+      showAlert('main-alert', 'PROCESS_TASK copied — paste it in the pinned Custom GPT tab (Ctrl+V, Enter).', 'warn');
+    }
+  } else {
+    setGptPipelineState('waiting', 'Waiting for Custom GPT. Click Allow when ChatGPT prompts for Actions.');
+    showAlert('main-alert', 'PROCESS_TASK sent to Custom GPT. Click Allow when prompted.', 'success');
+  }
+  updateCustomGptButton();
+  return { ok: true, handoff };
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
   const logoEl = document.getElementById('header-logo');
   if (logoEl) logoEl.src = chrome.runtime.getURL('assets/bidder-logo.png');
   targetTabId = getQueryTabId();
-  showLoading('Starting…');
   try {
-    await Promise.all([
-      window.api.ensureServerUrl(),
-      checkConnection(),
-    ]);
-    await checkAuth();
-  } finally {
+    await window.api.ensureServerUrl();
+    await bootstrapPopupFast();
+    checkConnection().catch(() => {});
+  } catch {
     hideLoading(true);
+    await showLogin();
   }
 
   document.getElementById('login-pass').addEventListener('keyup', e => { if (e.key === 'Enter') doLogin(); });
@@ -121,6 +158,53 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('btn-logout').addEventListener('click', doLogout);
   document.getElementById('btn-save').addEventListener('click', doSave);
   document.getElementById('btn-refresh').addEventListener('click', doRefresh);
+  document.getElementById('btn-refresh-application')?.addEventListener('click', () => {
+    refreshApplicationStatus().catch(() => {
+      showAlert('main-alert', 'Could not refresh application session.', 'error');
+    });
+  });
+  document.getElementById('application-session-id')?.addEventListener('click', () => {
+    if (activeApplicationId) copyTextToClipboard(String(activeApplicationId));
+  });
+  document.getElementById('application-task-id')?.addEventListener('click', () => {
+    if (activeTaskId && window.__qtsCustomGpt?.buildPrompt) {
+      copyTextToClipboard(window.__qtsCustomGpt.buildPrompt(activeTaskId));
+    }
+  });
+  document.getElementById('btn-open-custom-gpt')?.addEventListener('click', () => {
+    dispatchGptTask(activeApplicationId, { pollAndApply: true }).catch((e) => {
+      console.error('dispatchGptTask error:', e);
+      showAlert('main-alert', e?.message || 'Could not send task to Custom GPT.', 'error');
+    });
+  });
+  document.getElementById('btn-apply-gpt-package')?.addEventListener('click', () => {
+    chrome.runtime.sendMessage({
+      type: 'APPLY_GPT_PACKAGE_TO_TAB',
+      applicationId: activeApplicationId,
+      jobTabId: targetTabId,
+    }).then((res) => {
+      if (!res?.ok) {
+        throw new Error(res?.error || 'Could not apply GPT package.');
+      }
+      gptAppliedToForm = true;
+      const uploadNote = res.uploadedCount ? ` Uploaded ${res.uploadedCount} PDF(s).` : '';
+      setGptPipelineState('ready', `Applied ${res.filledCount || 0} field(s) to the form.${uploadNote} Review before submit.`);
+      renderGptActionSteps(lastGptTaskStatus);
+      showAlert('main-alert', `Applied ${res.filledCount || 0} field(s).${uploadNote} Review the form before submitting.`, 'success');
+      refreshApplicationStatus().catch(() => {});
+    }).catch((e) => {
+      console.error('applyGptAnswersToForm error:', e);
+      showAlert('main-alert', e?.message || 'Could not apply GPT answers.', 'error');
+    });
+  });
+  document.getElementById('btn-copy-dev-summary')?.addEventListener('click', () => {
+    const el = document.getElementById('dev-capture-summary');
+    if (el?.value) copyTextToClipboard(el.value);
+  });
+  document.getElementById('btn-copy-dev-raw')?.addEventListener('click', () => {
+    const el = document.getElementById('dev-capture-raw');
+    if (el?.value) copyTextToClipboard(el.value);
+  });
   document.getElementById('cand-filter').addEventListener('input', () => filterCandidates());
   document.getElementById('cand-stack-filter').addEventListener('change', () => filterCandidates());
   document.getElementById('cand-list').addEventListener('change', onCandidateStatusChange);
@@ -131,22 +215,133 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('f-desc').addEventListener('input', updateJobSummary);
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (msg.type === 'GPT_DISPATCH_FINISHED') {
+      if (msg.taskId && activeTaskId && msg.taskId !== activeTaskId) {
+        sendResponse?.({ ok: true, ignored: true });
+        return;
+      }
+      applyGptDispatchResult(msg);
+      sendResponse?.({ ok: true });
+      return;
+    }
+    if (msg.type === 'GPT_ACTION_APPROVAL_NEEDED') {
+      setGptPipelineState('waiting', msg.message || 'Open the pinned Custom GPT tab and click Allow.');
+      showAlert('main-alert', msg.message || 'Custom GPT needs Action approval — open the pinned GPT tab and click Allow.', 'warn');
+      sendResponse?.({ ok: true });
+      return;
+    }
+    if (msg.type === 'GPT_APPLY_FINISHED') {
+      if (msg.taskId && activeTaskId && msg.taskId !== activeTaskId) {
+        sendResponse?.({ ok: true, ignored: true });
+        return;
+      }
+      if (msg.success) {
+        gptAppliedToForm = true;
+        const uploadNote = msg.uploadedCount ? ` Uploaded ${msg.uploadedCount} PDF(s).` : '';
+        setGptPipelineState('ready', `Applied ${msg.filledCount || 0} field(s) to the form.${uploadNote} Review before submit.`);
+        renderGptActionSteps(lastGptTaskStatus);
+        showAlert('main-alert', `GPT package applied to the job form.${uploadNote}`, 'success');
+        refreshApplicationStatus().catch(() => {});
+      } else if (msg.error) {
+        setGptPipelineState('error', msg.error);
+        showAlert('main-alert', msg.error, 'error');
+      }
+      sendResponse?.({ ok: true });
+      return;
+    }
     if (msg.type === 'SET_SOURCE_TAB' && msg.tabId) {
-      switchSourceTab(msg.tabId)
-        .then(() => sendResponse({ ok: true }))
-        .catch((e) => sendResponse({ ok: false, error: e?.message || 'Failed' }));
+      chrome.tabs.get(msg.tabId).then((tab) => {
+        const gptId = window.__qtsCustomGpt?.CUSTOM_GPT_ID;
+        if (gptId && tab?.url?.includes(gptId)) {
+          sendResponse({ ok: false, ignored: true });
+          return;
+        }
+        return switchSourceTab(msg.tabId)
+          .then(() => sendResponse({ ok: true }))
+          .catch((e) => sendResponse({ ok: false, error: e?.message || 'Failed' }));
+      }).catch((e) => sendResponse({ ok: false, error: e?.message || 'Failed' }));
       return true;
     }
-    if (msg.type === 'JOB_DETECTED_UPDATE' && msg.tabId) {
+    if (msg.type === 'APPLY_TEMPLATE_DETECTED' && msg.tabId) {
       if (Number(msg.tabId) === Number(targetTabId)) {
-        loadCurrentTab()
+        loadApplyTemplateForTab(msg.tabId)
           .then(() => sendResponse({ ok: true }))
           .catch((e) => sendResponse({ ok: false, error: e?.message || 'Failed' }));
         return true;
       }
+      sendResponse({ ok: false, ignored: true });
+      return false;
+    }
+    if (msg.type === 'JOB_DETECTED_UPDATE' && msg.tabId) {
+      if (Number(msg.tabId) === Number(targetTabId)) {
+        loadCurrentTab({ preferCache: true, allowExtract: false })
+          .then(() => sendResponse({ ok: true }))
+          .catch((e) => sendResponse({ ok: false, error: e?.message || 'Failed' }));
+        return true;
+      }
+      sendResponse({ ok: false, ignored: true });
+      return false;
     }
   });
 });
+
+async function bootstrapPopupFast() {
+  const token = await getStoredToken();
+  if (!token) {
+    hideLoading(true);
+    await showLogin();
+    return;
+  }
+
+  const [sessionUser, cache] = await Promise.all([readSessionUser(), readCandidateCache()]);
+  if (sessionUser && isBidderSession(sessionUser)) {
+    if (Array.isArray(cache?.candidates) && cache.candidates.length) {
+      applyCandidatesData(cache.candidates, cache.stacks || []);
+    }
+    setSession(sessionUser);
+    showJobSection();
+    hideLoading(true);
+    await loadCurrentTab({ preferCache: true, allowExtract: false });
+    updateJobSummary();
+    scheduleFitPopup();
+    refreshWorkspaceInBackground();
+    return;
+  }
+
+  showLoading('Loading your account…');
+  try {
+    await checkAuth();
+  } finally {
+    hideLoading(true);
+  }
+}
+
+async function refreshWorkspaceInBackground() {
+  try {
+    const workspace = await fetchWorkspaceData(true);
+    if (workspace?.success && workspace.user) {
+      renderCandidates();
+      updateJobSummary();
+    }
+  } catch { /* non-fatal */ }
+}
+
+async function verifySavedJobOnServer(urls, { silent = false } = {}) {
+  const saved = await findSavedJobByUrls(urls, { skipCache: true, showSpinner: true });
+  if (!saved) return false;
+
+  const currentUrl = document.getElementById('f-url')?.value?.trim() || currentTabUrl;
+  const savedUrl = saved.url || '';
+  if (currentUrl && savedUrl && prefetchSavedJobKey(currentUrl) !== prefetchSavedJobKey(savedUrl)) {
+    return false;
+  }
+
+  loadExistingJob(saved, { silent });
+  renderCandidates();
+  updateJobSummary();
+  scheduleFitPopup();
+  return true;
+}
 
 // ---- Connection ----
 async function checkConnection() {
@@ -252,7 +447,7 @@ async function checkAuth() {
     try {
       const workspace = await fetchWorkspaceData(false);
       if (workspace?.success && workspace.user && isBidderSession(workspace.user)) {
-        await enterJobWorkspace(workspace.user);
+        await enterJobWorkspace(workspace.user, { skipBackgroundRefresh: true });
         return;
       }
 
@@ -275,7 +470,7 @@ async function checkAuth() {
         if (!refreshed?.success && Array.isArray(cached?.candidates) && cached.candidates.length) {
           applyCandidatesData(cached.candidates, cached.stacks || []);
         }
-        await enterJobWorkspace(fallbackUser);
+        await enterJobWorkspace(fallbackUser, { skipBackgroundRefresh: Boolean(refreshed?.success) });
         if (!workspace?.success) {
           showAlert('main-alert', 'Server unreachable. Using your saved session.', 'warn');
         }
@@ -289,7 +484,7 @@ async function checkAuth() {
         if (!loaded?.success) {
           applyCandidatesData([], []);
         }
-        await enterJobWorkspace(me);
+        await enterJobWorkspace(me, { skipBackgroundRefresh: true });
         return;
       }
 
@@ -316,7 +511,7 @@ async function checkAuth() {
           await fetchWorkspaceData(true);
         } catch { /* non-fatal */ }
       }
-      await enterJobWorkspace(sessionUser);
+      await enterJobWorkspace(sessionUser, { skipBackgroundRefresh: false });
       return;
     }
     await showLogin();
@@ -346,7 +541,8 @@ async function doLogin() {
       try {
         await fetchWorkspaceData(true);
       } catch { /* session already saved */ }
-      await loadCurrentTab();
+      hideLoading(true);
+      await loadCurrentTab({ preferCache: true, allowExtract: false });
       updateJobSummary();
       scheduleFitPopup();
     } else if (r.success) {
@@ -382,7 +578,10 @@ async function switchSourceTab(tabId) {
   document.getElementById('main-alert').innerHTML = '';
   existingJobId = null;
   jobSavedInBackend = false;
-  await withLoading(() => loadAll(true), 'Loading job…');
+  await loadCurrentTab({ preferCache: true, allowExtract: false });
+  await loadApplyTemplateForTab(tabId);
+  updateJobSummary();
+  scheduleFitPopup();
 }
 
 function applyCandidatesData(nextCandidates, nextStacks) {
@@ -492,13 +691,17 @@ async function clearCandidateCache() {
   });
 }
 
-async function enterJobWorkspace(user) {
+async function enterJobWorkspace(user, { skipBackgroundRefresh = false } = {}) {
   setSession(user);
   showJobSection();
-  await loadCurrentTab();
+  hideLoading(true);
+  await loadCurrentTab({ preferCache: true, allowExtract: false });
   updateJobSummary();
   renderCandidates();
   scheduleFitPopup();
+  if (!skipBackgroundRefresh) {
+    refreshWorkspaceInBackground();
+  }
 }
 
 async function persistSession(user, nextCandidates, nextStacks) {
@@ -549,7 +752,7 @@ async function clearAuthState() {
 
 async function loadCandidates(forceRefresh = false) {
   try {
-    await loadWorkspaceData(forceRefresh);
+    await fetchWorkspaceData(forceRefresh);
   } catch { /* non-fatal */ }
 }
 
@@ -592,7 +795,7 @@ function candidateMatchesFilters(candidate, filters) {
   return matchesStack && matchesText;
 }
 
-async function loadCurrentTab() {
+async function loadCurrentTab({ preferCache = false, allowExtract = true } = {}) {
   try {
     let tab = null;
     if (targetTabId) {
@@ -606,56 +809,77 @@ async function loadCurrentTab() {
     currentTabUrl = tab.url || '';
     document.getElementById('f-url').value = currentTabUrl;
 
-    const saved = await findSavedJobByUrls([currentTabUrl, document.getElementById('f-url').value.trim()]);
+    const urlCandidates = [currentTabUrl, document.getElementById('f-url').value.trim()];
 
-    if (saved) {
-      loadExistingJob(saved);
-      renderCandidates();
-      return;
-    }
-
-    jobSavedInBackend = false;
-    existingJobId = null;
-    candidateLocked = {};
-    for (const c of candidates) {
-      candidateStatuses[c.id] = 'none';
-      candidateAppliedAt[c.id] = null;
-      candidateLocked[c.id] = false;
-    }
-
-    if (isExtractablePageUrl(currentTabUrl)) {
-      await applyDetectedJobForTab(tab.id, currentTabUrl);
+    if (preferCache) {
+      const cachedSaved = await findSavedJobByUrls(urlCandidates, { cacheOnly: true });
+      if (cachedSaved) {
+        loadExistingJob(cachedSaved, { silent: true });
+        renderCandidates();
+      }
     } else {
-      showAlert('main-alert', restrictedPageMessage(currentTabUrl), 'info');
+      const saved = await findSavedJobByUrls(urlCandidates, { showSpinner: true });
+      if (saved) {
+        loadExistingJob(saved);
+        renderCandidates();
+        return;
+      }
+    }
+
+    if (!existingJobId) {
+      jobSavedInBackend = false;
+      candidateLocked = {};
+      for (const c of candidates) {
+        candidateStatuses[c.id] = 'none';
+        candidateAppliedAt[c.id] = null;
+        candidateLocked[c.id] = false;
+      }
+
+      if (isExtractablePageUrl(currentTabUrl)) {
+        const applied = await applyDetectedJobForTab(tab.id, currentTabUrl, { allowExtract, silent: preferCache });
+        if (!applied) {
+          extractFromPage(tab.id, currentTabUrl).catch(() => {});
+        }
+      } else {
+        showAlert('main-alert', restrictedPageMessage(currentTabUrl), 'info');
+      }
     }
 
     renderCandidates();
-    document.getElementById('btn-save').textContent = 'Save Job';
+    document.getElementById('btn-save').textContent = existingJobId ? 'Update Job' : 'Save Job';
+
+    await loadApplyTemplateForTab(tab.id);
+
+    if (preferCache && urlCandidates.some((url) => url && url.startsWith('http'))) {
+      await verifySavedJobOnServer(urlCandidates, { silent: true });
+    }
   } catch (e) {
     console.error('loadCurrentTab error:', e);
     showAlert('main-alert', 'Could not read the current page. Try clicking Refresh.', 'error');
   }
 }
 
-async function applyDetectedJobForTab(tabId, pageUrl) {
+async function applyDetectedJobForTab(tabId, pageUrl, { allowExtract = true, silent = false } = {}) {
   const normalizedPageUrl = normalizeJobUrl(pageUrl);
   const detected = await getDetectedJobForTab(tabId);
   if (detected && detected.url === normalizedPageUrl) {
     if (detected.valid && detected.data) {
       populateForm(detected.data);
-      showAlert('main-alert', DETECT_SUCCESS_MESSAGE, 'success');
+      if (!silent) showAlert('main-alert', DETECT_SUCCESS_MESSAGE, 'success');
       onJobDetected();
-      return;
+      return true;
     }
-    showAlert('main-alert', DETECT_FAIL_MESSAGE, 'fail');
+    if (!silent) showAlert('main-alert', DETECT_FAIL_MESSAGE, 'fail');
     onJobDetected();
-    return;
+    return true;
   }
 
+  if (!allowExtract) return false;
   await extractFromPage(tabId, pageUrl);
+  return true;
 }
 
-async function findSavedJobByUrls(urls) {
+async function findSavedJobByUrls(urls, { cacheOnly = false, skipCache = false, showSpinner = false } = {}) {
   const seen = new Set();
   const uniqueUrls = [];
   for (const raw of urls) {
@@ -666,11 +890,33 @@ async function findSavedJobByUrls(urls) {
     seen.add(key);
     uniqueUrls.push(url);
   }
-  for (const url of uniqueUrls) {
-    const saved = await fetchJobByUrl(url);
-    if (saved) return saved;
+
+  if (!skipCache) {
+    for (const url of uniqueUrls) {
+      const cached = await readSavedJobFromCache(url);
+      if (cached) return cached;
+    }
+    if (cacheOnly) return null;
   }
-  return null;
+
+  if (!uniqueUrls.length) return null;
+
+  if (showSpinner) showLoading('Checking if this job is saved…');
+  try {
+    for (const url of uniqueUrls) {
+      const saved = await fetchJobByUrl(url);
+      if (saved) {
+        await writeSavedJobToCache(url, saved);
+        return saved;
+      }
+      if (!cacheOnly) {
+        await writeSavedJobToCache(url, null);
+      }
+    }
+    return null;
+  } finally {
+    if (showSpinner) hideLoading();
+  }
 }
 
 async function fetchJobByUrl(url) {
@@ -727,7 +973,7 @@ function populateForm(data) {
   updateJobSummary();
 }
 
-function loadExistingJob(job) {
+function loadExistingJob(job, { silent = false } = {}) {
   existingJobId = job.id;
   jobSavedInBackend = true;
   document.getElementById('f-title').value = job.title || '';
@@ -738,16 +984,18 @@ function loadExistingJob(job) {
   syncCandidateStatusesFromJob(job.candidateStatuses || []);
   updateJobSummary();
 
-  const appliedCount = Object.values(candidateStatuses).filter(s => s === 'applied').length;
-  const editableCount = candidates.length - appliedCount;
-  let msg = 'This job is already saved in the database.';
-  if (appliedCount > 0) {
-    msg += ` ${appliedCount} candidate(s) already applied (locked).`;
+  if (!silent) {
+    const appliedCount = Object.values(candidateStatuses).filter(s => s === 'applied').length;
+    const editableCount = candidates.length - appliedCount;
+    let msg = 'This job is already saved in the database.';
+    if (appliedCount > 0) {
+      msg += ` ${appliedCount} candidate(s) already applied (locked).`;
+    }
+    if (editableCount > 0) {
+      msg += ` You can mark the remaining ${editableCount} as applied.`;
+    }
+    showAlert('main-alert', msg, 'info');
   }
-  if (editableCount > 0) {
-    msg += ` You can mark the remaining ${editableCount} as applied.`;
-  }
-  showAlert('main-alert', msg, 'info');
   document.getElementById('btn-save').textContent = 'Update Job';
 }
 
@@ -770,10 +1018,40 @@ function isCandidateLocked(candidateId) {
   return !!candidateLocked[candidateId];
 }
 
+function updateApplyTemplateSummary() {
+  const el = document.getElementById('summary-apply-template');
+  if (!el) return;
+  if (!detectedApplyTemplate?.templateName) {
+    el.textContent = '—';
+    el.title = '';
+    return;
+  }
+  const formNote = detectedApplyTemplate.formOpen ? ' · form open' : '';
+  el.textContent = `${detectedApplyTemplate.templateName}${formNote}`;
+  el.title = detectedApplyTemplate.templateDescription || detectedApplyTemplate.templateId || '';
+}
+
+async function loadApplyTemplateForTab(tabId) {
+  if (!tabId) {
+    detectedApplyTemplate = null;
+    updateApplyTemplateSummary();
+    return null;
+  }
+  try {
+    const res = await chrome.runtime.sendMessage({ type: 'GET_APPLY_TEMPLATE', tabId });
+    detectedApplyTemplate = res?.detection || null;
+  } catch {
+    detectedApplyTemplate = null;
+  }
+  updateApplyTemplateSummary();
+  return detectedApplyTemplate;
+}
+
 function updateJobSummary() {
   const summary = document.getElementById('job-summary');
   summary.classList.remove('hidden');
   document.getElementById('summary-source').textContent = currentSource || '—';
+  updateApplyTemplateSummary();
 
   const isSaved = !!existingJobId;
   const statusEl = document.getElementById('summary-status');
@@ -869,6 +1147,356 @@ async function copyTextToClipboard(text) {
   }
 }
 
+async function dispatchGptTask(applicationId, { pollAndApply = false, taskId: explicitTaskId } = {}) {
+  const gpt = window.__qtsCustomGpt;
+  if (!gpt?.buildPrompt) {
+    throw new Error('Custom GPT helper not loaded.');
+  }
+  const id = Number(applicationId);
+  if (!id) {
+    throw new Error('No application session yet. Click Start Application first.');
+  }
+
+  activeTaskId = explicitTaskId || activeTaskId;
+  if (!activeTaskId) {
+    throw new Error('No GPT task ID yet. Click Start Application first.');
+  }
+  const taskId = activeTaskId;
+  const prompt = gpt.buildPrompt(taskId);
+  await copyTextToClipboard(prompt);
+
+  if (targetTabId) {
+    await chrome.storage.local.set({ qtsJobSourceTabId: targetTabId });
+  }
+
+  const dispatchRes = await window.api.dispatchApplicationTask(taskId);
+  if (!dispatchRes.success) {
+    throw new Error(dispatchRes.message || 'Could not register GPT task on server.');
+  }
+
+  setGptPipelineState('dispatching', `Sending ${taskId} to Custom GPT tab…`);
+  gptDispatchSent = true;
+  renderGptActionSteps(lastGptTaskStatus);
+  showLoading(`Opening Custom GPT and sending ${taskId}…`);
+
+  let handoffResult;
+  try {
+    handoffResult = await chrome.runtime.sendMessage({
+      type: 'DISPATCH_GPT_TASK',
+      taskId,
+      prompt,
+      jobTabId: targetTabId,
+      applicationId: id,
+      pollAndApply,
+    });
+  } finally {
+    hideLoading(true);
+  }
+
+  if (!handoffResult?.ok) {
+    throw new Error(handoffResult?.handoff?.error || handoffResult?.error || 'GPT handoff failed.');
+  }
+
+  applyGptDispatchResult({ ...handoffResult, taskId });
+  updateCustomGptButton();
+
+  return { taskId, prompt, ...handoffResult };
+}
+
+async function pollTaskUntilReady(taskId, { timeoutMs = 180000, intervalMs = 3000 } = {}) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const status = await window.api.getApplicationTaskStatus(taskId);
+    if (!status.success) {
+      throw new Error(status.message || 'Could not read GPT task status.');
+    }
+    if (status.gptTaskStatus === 'ready' || status.readyToApply) {
+      lastGptTaskStatus = status;
+      renderGptActionSteps(status);
+      updateCustomGptButton(status);
+      return status;
+    }
+    if (status.gptTaskStatus === 'error') {
+      lastGptTaskStatus = status;
+      renderGptActionSteps(status);
+      throw new Error(status.error || 'GPT task failed on server.');
+    }
+    lastGptTaskStatus = status;
+    renderGptActionSteps(status);
+    setGptPipelineState('waiting', `GPT Actions: getTaskContext → submitTaskPackage (${taskId})…`);
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  throw new Error('Timed out waiting for Custom GPT. Check the pinned GPT tab and try again.');
+}
+
+function inferFileDocumentType(field) {
+  const slot = String(field.generatedAnswer || field.documentSlot || field.fillValue || '').toLowerCase();
+  if (slot.includes('cover')) return 'cover-letter';
+  const text = `${field.label || ''} ${field.nameAttr || ''} ${field.placeholder || ''}`.toLowerCase();
+  if (/cover|message|letter/.test(text)) return 'cover-letter';
+  return 'resume';
+}
+
+async function buildFileUploadFields(applicationId, fields) {
+  const fileFields = (fields || []).filter((field) => field.fieldType === 'file');
+  if (!fileFields.length) return [];
+
+  const uploads = [];
+  for (const field of fileFields) {
+    const docType = inferFileDocumentType(field);
+    const doc = await window.api.fetchApplicationDocument(applicationId, docType);
+    if (!doc.success) {
+      throw new Error(doc.message || `Could not load ${docType} PDF from server.`);
+    }
+    uploads.push({
+      ...field,
+      category: 'document_upload',
+      fillStatus: 'filled',
+      fillValue: doc.fileName,
+      upload: {
+        fileName: doc.fileName,
+        mimeType: doc.mimeType,
+        base64: doc.base64,
+      },
+    });
+  }
+  return uploads;
+}
+
+async function applyGptAnswersToForm(applicationId, { skipPreview = false } = {}) {
+  const id = Number(applicationId);
+  if (!id) throw new Error('No application session to apply.');
+
+  showLoading('Applying GPT answers to form…');
+  try {
+    const stored = await chrome.storage.local.get(['qtsJobSourceTabId']);
+    const jobTabId = stored.qtsJobSourceTabId || targetTabId;
+    if (jobTabId) {
+      try {
+        await chrome.tabs.update(jobTabId, { active: true });
+        targetTabId = jobTabId;
+      } catch {
+        // keep current targetTabId
+      }
+    }
+
+    const result = await window.api.getApplicationResult(id);
+    if (!result.success) {
+      throw new Error(result.message || 'Could not load application result.');
+    }
+
+    const fillFields = (result.fields || [])
+      .filter((field) => field.category === 'ai_generation' && field.generatedAnswer)
+      .map((field) => ({
+        ...field,
+        fillValue: field.generatedAnswer,
+        fillStatus: 'filled',
+      }));
+
+    const HUMAN_REVIEW_SAVED_KEYS = new Set([
+      'terms_accepted', 'gdpr_consent', 'marketing_opt_in', 'cover_message',
+    ]);
+    const remainingFields = (result.fields || [])
+      .filter((field) => field.fieldType !== 'file'
+        && field.category !== 'ai_generation'
+        && field.category !== 'candidate_profile'
+        && !HUMAN_REVIEW_SAVED_KEYS.has(field.savedAnswerKey)
+        && field.generatedAnswer
+        && field.fillStatus !== 'filled')
+      .map((field) => ({
+        ...field,
+        fillValue: field.generatedAnswer,
+        fillStatus: 'filled',
+      }));
+
+    const allFill = [...fillFields, ...remainingFields];
+    const fileUploadFields = await buildFileUploadFields(id, result.fields || []);
+    const payload = [...allFill, ...fileUploadFields];
+
+    if (!payload.length) {
+      throw new Error('No GPT answers or documents found on server yet.');
+    }
+
+    await chrome.runtime.sendMessage({
+      type: 'SCAN_APPLICATION_FORM',
+      tabId: targetTabId,
+      openApplyForm: true,
+    });
+
+    let confirmedPayload = payload;
+    if (!skipPreview) {
+      const previewFields = payload.map((field) => ({
+        ...field,
+        category: field.category || (field.upload ? 'document_upload' : 'ai_generation'),
+        label: field.label || field.stableFieldId,
+      }));
+      const previewResult = await showApplicationPreview(
+        { flowType: 'modal', warnings: ['GPT package ready — confirm before writing to the job form.'] },
+        previewFields
+      );
+      if (!previewResult.confirmed || !previewResult.fields) {
+        throw new Error('Apply cancelled — form was not updated.');
+      }
+      confirmedPayload = previewResult.fields;
+    }
+
+    const fillResponse = await chrome.runtime.sendMessage({
+      type: 'FILL_APPLICATION_FORM',
+      tabId: targetTabId,
+      fields: confirmedPayload,
+    });
+
+    if (fillResponse?.error) {
+      throw new Error(fillResponse.error);
+    }
+
+    const filledCount = fillResponse?.fill?.results?.filter((item) => item.ok)?.length || 0;
+    const uploadedCount = fillResponse?.fill?.results?.filter((item) => item.ok && fileUploadFields.some((f) => f.stableFieldId === item.stableFieldId))?.length || 0;
+    gptAppliedToForm = true;
+    const uploadNote = uploadedCount ? ` Uploaded ${uploadedCount} PDF(s).` : '';
+    setGptPipelineState('ready', `Applied ${filledCount} field(s) to the form.${uploadNote} Review before submit.`);
+    renderGptActionSteps(lastGptTaskStatus);
+    showAlert('main-alert', `Applied ${filledCount} field(s).${uploadNote} Review the form before submitting.`, 'success');
+    await refreshApplicationStatus();
+    return fillResponse;
+  } finally {
+    hideLoading(true);
+  }
+}
+
+async function runGptTaskPipeline(applicationId, taskId) {
+  if (gptPipelineRunning) return;
+  gptPipelineRunning = true;
+  try {
+    setGptPipelineState('waiting', `Waiting for Custom GPT to finish ${taskId}…`);
+    await pollTaskUntilReady(taskId);
+    setGptPipelineState('applying', `GPT package ready — filling form…`);
+    await applyGptAnswersToForm(applicationId);
+  } finally {
+    gptPipelineRunning = false;
+    chrome.runtime.sendMessage({ type: 'STOP_GPT_APPROVAL_WATCH' }).catch(() => {});
+  }
+}
+
+function setGptPipelineState(state, message) {
+  const el = document.getElementById('application-gpt-pipeline');
+  if (!el) return;
+  if (!message) {
+    el.classList.add('hidden');
+    el.textContent = '';
+    return;
+  }
+  el.classList.remove('hidden');
+  el.textContent = message;
+  el.dataset.state = state || '';
+}
+
+function formatGptTaskStatusLabel(status) {
+  const map = {
+    waiting_for_gpt: 'Waiting for GPT',
+    pending_gpt: 'Pending GPT',
+    ready: 'Ready',
+    error: 'Error',
+  };
+  return map[status] || (status ? String(status) : '—');
+}
+
+function resolveGptActionStepState(stepId, taskStatus) {
+  const gptStatus = taskStatus?.gptTaskStatus || lastGptTaskStatus?.gptTaskStatus;
+  const ready = taskStatus?.readyToApply || gptStatus === 'ready';
+  const errored = gptStatus === 'error';
+
+  switch (stepId) {
+    case 'dispatch':
+      if (errored && !gptDispatchSent) return 'error';
+      return gptDispatchSent ? 'done' : 'pending';
+    case 'getTaskContext':
+      if (errored) return gptDispatchSent ? 'error' : 'pending';
+      if (ready) return 'done';
+      return gptDispatchSent ? 'active' : 'pending';
+    case 'submitTaskPackage':
+      if (errored) return gptDispatchSent ? 'error' : 'pending';
+      if (ready) return 'done';
+      return gptDispatchSent ? 'active' : 'pending';
+    case 'getTaskStatus':
+      if (errored) return 'error';
+      if (ready) return 'done';
+      return gptDispatchSent ? 'active' : 'pending';
+    case 'apply':
+      if (gptAppliedToForm) return 'done';
+      if (ready) return 'active';
+      return 'pending';
+    default:
+      return 'pending';
+  }
+}
+
+function renderGptActionSteps(taskStatus) {
+  const wrap = document.getElementById('application-gpt-steps');
+  const list = document.getElementById('application-gpt-steps-list');
+  const steps = window.__qtsCustomGpt?.ACTION_STEPS || [];
+  if (!wrap || !list || !activeTaskId || !steps.length) {
+    wrap?.classList.add('hidden');
+    if (list) list.innerHTML = '';
+    return;
+  }
+
+  const iconFor = (state) => {
+    if (state === 'done') return '✓';
+    if (state === 'active') return '…';
+    if (state === 'error') return '✕';
+    return '○';
+  };
+
+  list.innerHTML = steps.map((step) => {
+    const state = resolveGptActionStepState(step.id, taskStatus);
+    const actor = step.actor === 'gpt' ? 'GPT Action' : 'Extension';
+    return `<li class="application-gpt-step is-${state}">
+      <span class="application-gpt-step-icon">${iconFor(state)}</span>
+      <span><strong>${escHtml(step.label)}</strong> <span class="text-muted">(${escHtml(actor)})</span></span>
+    </li>`;
+  }).join('');
+
+  wrap.classList.remove('hidden');
+}
+
+function syncTaskIdDisplay() {
+  const taskEl = document.getElementById('application-task-id');
+  if (!taskEl) return;
+  if (activeTaskId) {
+    taskEl.textContent = activeTaskId;
+    taskEl.title = `Click to copy: PROCESS_TASK: ${activeTaskId}`;
+  } else if (activeApplicationId) {
+    taskEl.textContent = '…';
+    taskEl.title = 'Task ID loads after session is created';
+  } else {
+    taskEl.textContent = '—';
+    taskEl.title = 'Task id appears after Start Application';
+  }
+}
+
+async function fetchAndSyncGptTaskStatus() {
+  if (!activeTaskId) return null;
+  const status = await window.api.getApplicationTaskStatus(activeTaskId);
+  if (status?.success) {
+    lastGptTaskStatus = status;
+    renderGptActionSteps(status);
+    updateCustomGptButton(status);
+  }
+  return status;
+}
+
+function updateCustomGptButton(taskStatus) {
+  const openBtn = document.getElementById('btn-open-custom-gpt');
+  const applyBtn = document.getElementById('btn-apply-gpt-package');
+  const visible = Boolean(activeApplicationId);
+  const ready = taskStatus?.readyToApply || taskStatus?.gptTaskStatus === 'ready'
+    || lastGptTaskStatus?.readyToApply || lastGptTaskStatus?.gptTaskStatus === 'ready';
+
+  openBtn?.classList.toggle('hidden', !visible);
+  applyBtn?.classList.toggle('hidden', !visible || !ready);
+}
+
 function renderCandidates() {
   const list = document.getElementById('cand-list');
   const empty = document.getElementById('cand-empty');
@@ -932,6 +1560,11 @@ function renderCandidates() {
         </div>
         <div class="cand-card-details">
           ${formatCandidateDetails(c, status, appliedAt, locked)}
+          <div class="cand-actions">
+            <button type="button" class="btn btn-primary btn-start-application" data-cid="${c.id}">
+              Start Application
+            </button>
+          </div>
         </div>
       </div>`;
   }).join('');
@@ -940,6 +1573,20 @@ function renderCandidates() {
 
 function onCandidateCardClick(event) {
   if (event.target.closest('.status-toggle')) return;
+
+  const startBtn = event.target.closest('.btn-start-application');
+  if (startBtn) {
+    event.stopPropagation();
+    event.preventDefault();
+    const candidateId = parseInt(startBtn.dataset.cid, 10);
+    if (Number.isFinite(candidateId)) {
+      startApplication(candidateId).catch((e) => {
+        console.error('startApplication error:', e);
+        showAlert('main-alert', 'Could not start application workflow.', 'error');
+      });
+    }
+    return;
+  }
 
   const copyBtn = event.target.closest('.cand-copyable');
   if (copyBtn) {
@@ -1033,6 +1680,591 @@ function formatApiError(response) {
   return response?.message || 'Could not save the job.';
 }
 
+function detectPlatformFromUrl(url) {
+  try {
+    const host = new URL(url).hostname.replace(/^www\./, '').toLowerCase();
+    if (host.includes('linkedin.com')) return 'linkedin';
+    if (host.includes('indeed.com')) return 'indeed';
+    if (host.includes('glassdoor.com')) return 'glassdoor';
+    if (host.includes('greenhouse.io')) return 'greenhouse';
+    if (host.includes('lever.co')) return 'lever';
+    if (host.includes('workable.com')) return 'workable';
+    if (host.includes('smartrecruiters.com')) return 'smartrecruiters';
+    if (host.includes('ashbyhq.com')) return 'ashby';
+    if (host.includes('justjoin.it')) return 'justjoin';
+    return host;
+  } catch {
+    return currentSource || 'unknown';
+  }
+}
+
+function renderApplicationStatus(result, taskStatus) {
+  const panel = document.getElementById('application-status');
+  const sessionIdEl = document.getElementById('application-session-id');
+  const gridEl = document.getElementById('application-status-grid');
+  const pendingWrap = document.getElementById('application-pending-wrap');
+  const pendingList = document.getElementById('application-pending-list');
+  const hintEl = document.getElementById('application-status-hint');
+  if (!panel || !gridEl || !sessionIdEl) return;
+
+  const summary = result?.summary || {};
+  const session = result?.session || {};
+  const pendingAiFields = result?.pendingAiFields || [];
+  const ts = taskStatus || lastGptTaskStatus;
+
+  activeApplicationId = session.applicationId || activeApplicationId;
+  if (taskStatus?.taskId) {
+    activeTaskId = taskStatus.taskId;
+  }
+  sessionIdEl.textContent = activeApplicationId ? `#${activeApplicationId}` : '—';
+  syncTaskIdDisplay();
+
+  const gptLabel = formatGptTaskStatusLabel(ts?.gptTaskStatus);
+  gridEl.innerHTML = [
+    ['Filled', summary.filled ?? 0],
+    ['AI pending', summary.aiPending ?? 0],
+    ['GPT status', gptLabel],
+  ].map(([label, value]) => `
+    <div class="application-stat">
+      <span class="application-stat-value">${escHtml(String(value))}</span>
+      <span class="application-stat-label">${escHtml(label)}</span>
+    </div>`).join('');
+
+  if (pendingAiFields.length && pendingList && pendingWrap) {
+    pendingWrap.classList.remove('hidden');
+    pendingList.innerHTML = pendingAiFields.map((field) => {
+      const label = field.label || field.stableFieldId || 'Untitled question';
+      const required = field.required ? ' (required)' : '';
+      return `<li>${escHtml(label)}${escHtml(required)}</li>`;
+    }).join('');
+  } else if (pendingWrap) {
+    pendingWrap.classList.add('hidden');
+    if (pendingList) pendingList.innerHTML = '';
+  }
+
+  if (hintEl) {
+    if (ts?.readyToApply || ts?.gptTaskStatus === 'ready') {
+      hintEl.textContent = 'GPT Actions complete (submitTaskPackage). Click Apply answers or wait for auto-fill.';
+    } else if ((summary.aiPending ?? 0) > 0) {
+      hintEl.textContent = `Extension sends PROCESS_TASK: ${activeTaskId || 'task_?'} → GPT runs getTaskContext + submitTaskPackage.`;
+    } else if ((summary.totalFields ?? 0) > 0) {
+      hintEl.textContent = 'All detected fields were profile/saved answers, or no narrative AI questions were found on this page.';
+    } else {
+      hintEl.textContent = 'No fields were saved for this session.';
+    }
+  }
+
+  renderGptActionSteps(ts);
+  updateCustomGptButton(ts);
+  panel.classList.remove('hidden');
+  scheduleFitPopup();
+}
+
+function formatDevFieldLine(field, index) {
+  const category = field.category || 'unknown';
+  const status = field.fillStatus || 'pending';
+  const type = field.fieldType || '?';
+  const label = (field.label || field.placeholder || field.stableFieldId || 'no label').slice(0, 80);
+  const required = field.required ? 'required' : 'optional';
+  const parts = [
+    `[${index + 1}] ${category}`,
+    status.toUpperCase(),
+    type,
+    `"${label}"`,
+    required,
+  ];
+  if (field.profileKey) parts.push(`profile→${field.profileKey}`);
+  if (field.savedAnswerKey) parts.push(`saved→${field.savedAnswerKey}`);
+  if (field.fillValue) parts.push(`fill→${String(field.fillValue).slice(0, 60)}`);
+  if (field.currentValue) parts.push(`page→${String(field.currentValue).slice(0, 40)}`);
+  if (field.stableFieldId) parts.push(`id:${field.stableFieldId}`);
+  return parts.join(' | ');
+}
+
+function buildDevCaptureSummary(capture) {
+  if (!capture) return '';
+  const lines = [];
+  lines.push(`Session #${capture.applicationId ?? '—'} | ${capture.platform || 'unknown'} | ${capture.pageUrl || '—'}`);
+  lines.push(`Scanned: ${capture.scannedCount ?? 0} | Saved to server: ${capture.fields?.length ?? 0}`);
+  lines.push(`Filled: ${capture.counts?.filled ?? 0} | AI pending: ${capture.counts?.aiPending ?? 0} | Unknown: ${capture.counts?.unknown ?? 0} | Errors: ${capture.counts?.errors ?? 0}`);
+  lines.push('---');
+  (capture.fields || []).forEach((field, index) => {
+    lines.push(formatDevFieldLine(field, index));
+  });
+  if (!capture.fields?.length) {
+    lines.push('(no fields captured)');
+  }
+  return lines.join('\n');
+}
+
+function renderDevCaptureDebug(capture) {
+  const panel = document.getElementById('dev-capture-debug');
+  const summaryEl = document.getElementById('dev-capture-summary');
+  const rawEl = document.getElementById('dev-capture-raw');
+  if (!panel || !summaryEl || !rawEl) return;
+
+  if (!capture) {
+    panel.classList.add('hidden');
+    summaryEl.value = '';
+    rawEl.value = '';
+    return;
+  }
+
+  lastDevCapture = capture;
+  summaryEl.value = buildDevCaptureSummary(capture);
+  rawEl.value = JSON.stringify(capture, null, 2);
+  panel.classList.remove('hidden');
+  scheduleFitPopup();
+}
+
+function buildDevCaptureFromWorkflow({
+  applicationId,
+  platform,
+  scanMeta,
+  scannedFields,
+  classifiedFields,
+  fillResults,
+  serverResult,
+  discovery,
+}) {
+  const fields = serverResult?.fields || classifiedFields || [];
+  const counts = {
+    filled: fields.filter((f) => f.fillStatus === 'filled').length,
+    aiPending: fields.filter(
+      (f) => (f.category === 'ai_generation' || f.category === 'document_upload')
+        && (f.fillStatus === 'pending' || f.fillStatus === 'awaiting_answer')
+    ).length,
+    unknown: fields.filter((f) => f.category === 'unknown').length,
+    errors: fields.filter((f) => f.fillStatus === 'error').length,
+    profile: fields.filter((f) => f.category === 'candidate_profile').length,
+    saved: fields.filter((f) => f.category === 'saved_answer').length,
+    ai: fields.filter((f) => f.category === 'ai_generation').length,
+    upload: fields.filter((f) => f.category === 'document_upload' || f.fieldType === 'file').length,
+  };
+
+  return {
+    capturedAt: new Date().toISOString(),
+    applicationId,
+    platform,
+    flowType: discovery?.flowType || null,
+    pageUrl: scanMeta?.pageUrl || null,
+    pageTitle: scanMeta?.pageTitle || null,
+    pageStep: scanMeta?.pageStep || null,
+    scannedCount: scannedFields?.length ?? 0,
+    counts,
+    fields,
+    discovery: discovery || null,
+    fillResults: fillResults || [],
+    serverSummary: serverResult?.summary || null,
+    _devNote: 'Temporary debug payload — remove dev-capture-debug UI before production',
+  };
+}
+
+function showApplicationPreview(discovery, classifiedFields, fillPolicy = null, fillPolicyContext = null) {
+  const preview = window.__qtsApplicationPreview;
+  return new Promise((resolve) => {
+    const panel = document.getElementById('application-preview');
+    const flowEl = document.getElementById('application-preview-flow');
+    const statsEl = document.getElementById('application-preview-stats');
+    const warningsEl = document.getElementById('application-preview-warnings');
+    const bodyEl = document.getElementById('application-preview-body');
+    const confirmBtn = document.getElementById('btn-preview-confirm');
+    const cancelBtn = document.getElementById('btn-preview-cancel');
+    if (!panel || !bodyEl || !confirmBtn || !cancelBtn) {
+      resolve({ confirmed: true, fields: classifiedFields });
+      return;
+    }
+
+    const flow = window.__qtsApplicationFlow;
+    const counts = flow?.summarizeDiscoveryCounts(classifiedFields) || { total: classifiedFields.length };
+    if (flowEl) {
+      const templateLabel = discovery?.templateName ? `${discovery.templateName} · ` : '';
+      flowEl.textContent = `${templateLabel}${flow?.formatFlowType(discovery?.flowType) || 'Application form'}`;
+    }
+    if (statsEl) {
+      statsEl.innerHTML = [
+        `<span class="application-preview-stat">${counts.total} fields</span>`,
+        `<span class="application-preview-stat">${counts.required || 0} required</span>`,
+        `<span class="application-preview-stat">${counts.profile || 0} profile</span>`,
+        `<span class="application-preview-stat">${counts.upload || 0} uploads</span>`,
+        `<span class="application-preview-stat">${counts.ai || 0} AI</span>`,
+      ].join('');
+    }
+
+    const warnings = discovery?.warnings || [];
+    if (warningsEl) {
+      if (warnings.length) {
+        warningsEl.innerHTML = warnings.map((w) => `<li>${escHtml(w)}</li>`).join('');
+        warningsEl.classList.remove('hidden');
+      } else {
+        warningsEl.innerHTML = '';
+        warningsEl.classList.add('hidden');
+      }
+    }
+
+    bodyEl.innerHTML = classifiedFields.map((field, index) => {
+      const label = escHtml((field.label || field.placeholder || field.stableFieldId || 'Field').slice(0, 100));
+      const type = escHtml(flow?.formatFieldType(field.fieldType) || field.fieldType || 'Field');
+      const category = escHtml(flow?.formatCategory(field.category) || field.category || 'Unknown');
+      const required = field.required ? ' *' : '';
+      const valueCell = preview?.renderPreviewInput(field, index, escHtml, escAttr)
+        || `<span class="application-preview-readonly">—</span>`;
+      return `<tr>
+        <td>${label}${required}</td>
+        <td>${type}</td>
+        <td>${category}</td>
+        <td>${valueCell}</td>
+      </tr>`;
+    }).join('');
+
+    if (!classifiedFields.length) {
+      bodyEl.innerHTML = `<tr><td colspan="4" class="application-preview-readonly">No fields captured yet. ${escHtml(discovery?.externalUrl ? `Open external apply page: ${discovery.externalUrl}` : 'Open the apply form on the job tab and try again.')}</td></tr>`;
+    }
+
+    const cleanup = () => {
+      panel.classList.add('hidden');
+      panel.setAttribute('aria-hidden', 'true');
+      confirmBtn.removeEventListener('click', onConfirm);
+      cancelBtn.removeEventListener('click', onCancel);
+    };
+
+    const onCancel = () => {
+      cleanup();
+      resolve({ confirmed: false, fields: null });
+    };
+
+    const onConfirm = () => {
+      let nextFields = preview?.applyPreviewEdits(classifiedFields) || classifiedFields;
+      if (fillPolicy && window.__qtsFillPolicy?.applyFillPolicy) {
+        nextFields = window.__qtsFillPolicy.applyFillPolicy(nextFields, fillPolicy, fillPolicyContext || {});
+      }
+      cleanup();
+      resolve({ confirmed: true, fields: nextFields });
+    };
+
+    confirmBtn.addEventListener('click', onConfirm);
+    cancelBtn.addEventListener('click', onCancel);
+    panel.classList.remove('hidden');
+    panel.setAttribute('aria-hidden', 'false');
+    scheduleFitPopup();
+  });
+}
+
+async function refreshApplicationStatus() {
+  if (!activeApplicationId) {
+    showAlert('main-alert', 'No application session yet. Click Start Application first.', 'info');
+    return;
+  }
+  showLoading('Checking application session…');
+  try {
+    const [result, taskStatus] = await Promise.all([
+      window.api.getApplicationResult(activeApplicationId),
+      activeTaskId ? window.api.getApplicationTaskStatus(activeTaskId) : Promise.resolve(null),
+    ]);
+    if (!result.success) {
+      showAlert('main-alert', result.message || 'Could not load application session.', 'error');
+      return;
+    }
+    if (taskStatus?.success) {
+      lastGptTaskStatus = taskStatus;
+    }
+    renderApplicationStatus(result, taskStatus?.success ? taskStatus : null);
+    if (lastDevCapture) {
+      renderDevCaptureDebug(buildDevCaptureFromWorkflow({
+        applicationId: activeApplicationId,
+        platform: lastDevCapture.platform,
+        scanMeta: {
+          pageUrl: lastDevCapture.pageUrl,
+          pageTitle: lastDevCapture.pageTitle,
+          pageStep: lastDevCapture.pageStep,
+        },
+        scannedFields: lastDevCapture.fields,
+        classifiedFields: result.fields,
+        fillResults: lastDevCapture.fillResults,
+        serverResult: result,
+      }));
+    } else {
+      renderDevCaptureDebug(buildDevCaptureFromWorkflow({
+        applicationId: activeApplicationId,
+        platform: result.session?.platform,
+        scanMeta: { pageUrl: result.session?.jobUrl },
+        classifiedFields: result.fields,
+        serverResult: result,
+      }));
+    }
+    const pending = result.summary?.aiPending ?? 0;
+    const filled = result.summary?.filled ?? 0;
+    const gpt = lastGptTaskStatus?.gptTaskStatus ? `, GPT ${lastGptTaskStatus.gptTaskStatus}` : '';
+    showAlert('main-alert', `Session #${activeApplicationId} (${activeTaskId || '—'}): ${filled} filled, ${pending} AI pending${gpt}.`, 'success');
+  } finally {
+    hideLoading(true);
+  }
+}
+
+async function startApplication(candidateId) {
+  const candidate = candidates.find((c) => Number(c.id) === Number(candidateId));
+  if (!candidate) {
+    showAlert('main-alert', 'Candidate not found.', 'error');
+    return;
+  }
+
+  const jobUrl = document.getElementById('f-url')?.value?.trim() || currentTabUrl;
+  const jobTitle = document.getElementById('f-title')?.value?.trim();
+  const company = document.getElementById('f-company')?.value?.trim();
+  const jobDescription = document.getElementById('f-desc')?.value?.trim() || '';
+
+  if (!jobUrl || !jobUrl.startsWith('http')) {
+    showAlert('main-alert', 'Open a job application page and ensure the URL is filled in first.', 'error');
+    return;
+  }
+
+  showLoading('Loading candidate profile…');
+  try {
+    if (targetTabId) {
+      await chrome.storage.local.set({ qtsJobSourceTabId: targetTabId });
+    }
+
+    const profileRes = await window.api.getCandidate(candidateId);
+    if (!profileRes.success || !profileRes.candidate) {
+      showAlert('main-alert', window.api.formatApiMessage(profileRes, 'Could not load candidate profile.'), 'error');
+      return;
+    }
+
+    const fullCandidate = profileRes.candidate;
+    showLoading('Creating application session…');
+    const sessionRes = await window.api.createApplicationSession({
+      candidateId,
+      jobId: existingJobId || null,
+      jobUrl,
+      jobTitle: jobTitle || null,
+      company: company || null,
+      jobDescription,
+      platform: detectPlatformFromUrl(jobUrl),
+      currentStep: 'scan',
+      metadata: {
+        sourceTabId: targetTabId,
+        extensionVersion: chrome.runtime.getManifest().version,
+      },
+    });
+
+    if (!sessionRes.success || !sessionRes.session) {
+      showAlert('main-alert', window.api.formatApiMessage(sessionRes, 'Could not create application session.'), 'error');
+      return;
+    }
+
+    activeApplicationId = sessionRes.session.applicationId;
+    activeTaskId = sessionRes.taskId
+      || sessionRes.session?.metadata?.publicTaskId
+      || sessionRes.session?.metadata?.taskId
+      || null;
+    if (!activeTaskId) {
+      console.warn('Server did not return taskId for session', activeApplicationId);
+    }
+    gptDispatchSent = false;
+    gptAppliedToForm = false;
+    lastGptTaskStatus = null;
+    const savedAnswers = sessionRes.savedAnswers || [];
+
+    showLoading('Discovering application form…');
+    hideLoading(true);
+    const discoverResponse = await chrome.runtime.sendMessage({
+      type: 'DISCOVER_APPLICATION_FORM',
+      tabId: targetTabId,
+      openApplyForm: true,
+      expandDynamic: false,
+    });
+
+    if (discoverResponse?.error) {
+      const debugNote = discoverResponse.debug
+        ? ` (${JSON.stringify(discoverResponse.debug)})`
+        : '';
+      showAlert('main-alert', `${discoverResponse.error}${debugNote}`, 'error');
+      return;
+    }
+
+    await chrome.runtime.sendMessage({ type: 'DETECT_APPLY_TEMPLATE', tabId: targetTabId }).catch(() => {});
+    await loadApplyTemplateForTab(targetTabId);
+
+    const discovery = discoverResponse.discovery || {};
+    const scanMeta = discoverResponse.scan || discovery.scanMeta || {};
+    const scannedFields = discoverResponse.scan?.fields || discovery.fields || [];
+
+    if (discovery.flowType === 'external_redirect' && discovery.externalUrl) {
+      showAlert(
+        'main-alert',
+        `This job applies on an external site: ${discovery.externalUrl}. Open that page and run Start Application there.`,
+        'warn'
+      );
+      return;
+    }
+
+    if (!scannedFields.length) {
+      const applyFlow = discovery.applyFlow || discoverResponse.applyFlow;
+      if (applyFlow?.clicked && applyFlow?.formAppeared === false) {
+        showAlert(
+          'main-alert',
+          'Clicked Apply but no application form appeared. Open the job page, click Apply to show the form, then try Start Application again.',
+          'warn'
+        );
+      } else if (applyFlow?.reason === 'no_apply_button') {
+        showAlert(
+          'main-alert',
+          'No Apply button found on this page. Open the application form manually and try again.',
+          'warn'
+        );
+      } else {
+        showAlert('main-alert', 'No application fields detected on this page. Open the apply form and try again.', 'warn');
+      }
+      return;
+    }
+
+    let classifiedFields = window.__qtsFieldClassifier.classifyFields(scannedFields);
+    classifiedFields = window.__qtsCandidateMatcher.applyFieldClassificationFill(
+      classifiedFields,
+      fullCandidate,
+      savedAnswers
+    );
+
+    const fillPolicy = window.__qtsFillPolicy?.getFillPolicyForTemplate?.(discovery.templateId);
+    const fillPolicyContext = { candidate: fullCandidate, savedAnswers };
+    if (fillPolicy) {
+      classifiedFields = window.__qtsFillPolicy.applyFillPolicy(
+        classifiedFields,
+        fillPolicy,
+        fillPolicyContext
+      );
+    }
+
+    const previewResult = await showApplicationPreview(
+      discovery,
+      classifiedFields,
+      fillPolicy,
+      fillPolicyContext
+    );
+    if (!previewResult.confirmed || !previewResult.fields) {
+      showAlert('main-alert', 'Application cancelled — nothing was filled on the job page.', 'info');
+      return;
+    }
+    classifiedFields = previewResult.fields;
+
+    const fillableFields = classifiedFields.filter(
+      (field) => field.category !== 'ai_generation'
+        && field.category !== 'document_upload'
+        && field.fillValue
+        && field.fillStatus === 'filled'
+    );
+
+    showLoading('Filling confirmed fields…');
+    const fillResponse = await chrome.runtime.sendMessage({
+      type: 'FILL_APPLICATION_FORM',
+      tabId: targetTabId,
+      fields: fillableFields,
+    });
+
+    const fillResults = fillResponse?.fill?.results || [];
+    const fillResultById = new Map(fillResults.map((item) => [item.stableFieldId, item]));
+
+    classifiedFields = classifiedFields.map((field) => {
+      if (field.category === 'ai_generation' || field.category === 'document_upload') return field;
+      const outcome = fillResultById.get(field.stableFieldId);
+      if (!outcome) return field;
+      if (outcome.ok) return { ...field, fillStatus: 'filled' };
+      return { ...field, fillStatus: 'error' };
+    });
+
+    showLoading('Saving discovered fields…');
+    const healthRes = await window.api.health();
+    if (healthRes?.success && healthRes.features?.documentUploadCategory !== true) {
+      showAlert(
+        'main-alert',
+        'Server is missing document upload support. Run stop-server.bat then start-server.bat (do not skip — old server must restart).',
+        'error'
+      );
+      return;
+    }
+
+    const patchRes = await window.api.patchApplicationSessionFields(activeApplicationId, {
+      fields: classifiedFields,
+      currentStep: scanMeta.pageStep || 'scan',
+      discoveredPages: (discovery.pages || [{
+        pageUrl: scanMeta.pageUrl || jobUrl,
+        pageTitle: scanMeta.pageTitle || '',
+        pageStep: scanMeta.pageStep || '',
+        scannedAt: scanMeta.scannedAt || new Date().toISOString(),
+        fieldCount: classifiedFields.length,
+        flowType: discovery.flowType,
+      }]).map((page) => ({
+        ...page,
+        flowType: discovery.flowType,
+      })),
+      status: 'awaiting_ai',
+    });
+
+    if (!patchRes.success) {
+      showAlert('main-alert', window.api.formatApiMessage(patchRes, 'Could not save application fields.'), 'error');
+      return;
+    }
+
+    const pendingRes = await window.api.getPendingApplicationFields(activeApplicationId);
+    const pendingCount = pendingRes?.pendingFields?.length || patchRes.pendingAiCount || 0;
+    const filledCount = classifiedFields.filter((field) => field.fillStatus === 'filled').length;
+
+    const resultRes = await window.api.getApplicationResult(activeApplicationId);
+    const taskStatusRes = activeTaskId
+      ? await window.api.getApplicationTaskStatus(activeTaskId)
+      : null;
+    if (taskStatusRes?.success) lastGptTaskStatus = taskStatusRes;
+    if (resultRes?.success) {
+      renderApplicationStatus(resultRes, taskStatusRes?.success ? taskStatusRes : null);
+      renderDevCaptureDebug(buildDevCaptureFromWorkflow({
+        applicationId: activeApplicationId,
+        platform: detectPlatformFromUrl(jobUrl),
+        scanMeta,
+        scannedFields,
+        classifiedFields,
+        fillResults,
+        serverResult: resultRes,
+        discovery,
+      }));
+    } else {
+      renderDevCaptureDebug(buildDevCaptureFromWorkflow({
+        applicationId: activeApplicationId,
+        platform: detectPlatformFromUrl(jobUrl),
+        scanMeta,
+        scannedFields,
+        classifiedFields,
+        fillResults,
+        discovery,
+      }));
+    }
+
+    const pendingUploadCount = (pendingRes?.pendingFields || []).filter(
+      (field) => field.category === 'document_upload' || field.fieldType === 'file'
+    ).length;
+    const pendingTextCount = pendingCount - pendingUploadCount;
+
+    if (pendingCount > 0) {
+      try {
+        await dispatchGptTask(activeApplicationId, { pollAndApply: true, taskId: activeTaskId });
+      } catch (e) {
+        showAlert(
+          'main-alert',
+          `Session #${activeApplicationId} created, but GPT handoff failed: ${e?.message || e}. Use "Send to Custom GPT".`,
+          'warn'
+        );
+      }
+    } else {
+      showAlert(
+        'main-alert',
+        `Session #${activeApplicationId}: filled ${filledCount}. No AI questions on this page.`,
+        'success'
+      );
+    }
+  } finally {
+    hideLoading(true);
+  }
+}
+
 // ---- Save / Update ----
 async function doSave() {
   clearErrors();
@@ -1073,12 +2305,12 @@ async function doSave() {
 
     if (r.success) {
       showAlert('main-alert', wasUpdate ? 'Job updated!' : 'Job saved!', 'success');
-      await clearCandidateCache();
       if (r.job) {
         existingJobId = r.job.id;
         jobSavedInBackend = true;
         syncCandidateStatusesFromJob(r.job.candidateStatuses || []);
         currentSource = r.job.source || currentSource;
+        await writeSavedJobToCache(r.job.url || url, r.job);
         renderCandidates();
         updateJobSummary();
       }
@@ -1140,6 +2372,7 @@ function showJobSection() {
 }
 
 let toastHideTimer = null;
+const TOAST_AUTO_HIDE_MS = 1250;
 
 function normalizeToastType(type) {
   const value = String(type || 'info').toLowerCase();
@@ -1164,7 +2397,7 @@ function showToast(msg, type = 'info') {
   toastHideTimer = setTimeout(() => {
     toast.classList.remove('is-visible');
     setTimeout(() => toast.remove(), 220);
-  }, 2800);
+  }, TOAST_AUTO_HIDE_MS);
 }
 
 function showAlert(id, msg, type = 'info') {

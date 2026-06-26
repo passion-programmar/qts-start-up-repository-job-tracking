@@ -227,6 +227,10 @@
             <span class="job-summary-stat-value" id="summary-source">—</span>
           </span>
           <span class="job-summary-item">
+            <span class="job-summary-stat-label">Apply template:</span>
+            <span class="job-summary-stat-value" id="summary-apply-template" title="">—</span>
+          </span>
+          <span class="job-summary-item">
             <span class="job-summary-stat-label">Status:</span>
             <span class="job-summary-status-pill is-new" id="summary-status">New</span>
           </span>
@@ -239,6 +243,84 @@
             <span class="job-summary-stat-value" id="summary-not-applied">0</span>
           </span>
         </div>
+      </div>
+
+      <div id="application-status" class="application-status hidden" aria-live="polite">
+        <div class="application-status-head">
+          <span class="application-status-title">Application session</span>
+          <button type="button" class="btn btn-ghost btn-xs" id="btn-refresh-application">↻ Check</button>
+        </div>
+        <div class="application-status-meta">
+          <span class="application-status-label">Session ID</span>
+          <button type="button" class="application-session-id" id="application-session-id" title="Click to copy session number">—</button>
+        </div>
+        <div class="application-status-meta">
+          <span class="application-status-label">GPT task</span>
+          <button type="button" class="application-task-id" id="application-task-id" title="Click to copy PROCESS_TASK message">—</button>
+        </div>
+        <div class="application-gpt-steps hidden" id="application-gpt-steps" aria-label="Custom GPT action sync">
+          <div class="application-gpt-steps-title">Custom GPT Actions</div>
+          <ol class="application-gpt-steps-list" id="application-gpt-steps-list"></ol>
+        </div>
+        <div class="application-status-grid" id="application-status-grid"></div>
+        <div class="application-pending-wrap hidden" id="application-pending-wrap">
+          <div class="application-pending-title">AI questions sent to server</div>
+          <ul class="application-pending-list" id="application-pending-list"></ul>
+        </div>
+        <p class="application-status-hint" id="application-status-hint"></p>
+        <p class="application-gpt-pipeline hidden" id="application-gpt-pipeline"></p>
+        <button type="button" class="btn btn-primary application-gpt-btn hidden" id="btn-open-custom-gpt">
+          Send PROCESS_TASK
+        </button>
+        <button type="button" class="btn btn-ghost application-gpt-btn hidden" id="btn-apply-gpt-package">
+          Apply answers (extension)
+        </button>
+      </div>
+
+      <div id="application-preview" class="application-preview hidden" aria-hidden="true">
+        <div class="application-preview-panel" role="dialog" aria-labelledby="application-preview-title">
+          <div class="application-preview-head">
+            <span class="application-preview-title" id="application-preview-title">Review application fields</span>
+            <span class="application-preview-flow" id="application-preview-flow"></span>
+          </div>
+          <p class="application-preview-note" id="application-preview-note">
+            Extension fills the form only — you submit manually on the job site. Nothing is submitted automatically.
+          </p>
+          <div class="application-preview-stats" id="application-preview-stats"></div>
+          <ul class="application-preview-warnings hidden" id="application-preview-warnings"></ul>
+          <div class="application-preview-table-wrap">
+            <table class="application-preview-table" id="application-preview-table">
+              <thead>
+                <tr>
+                  <th>Field</th>
+                  <th>Type</th>
+                  <th>Source</th>
+                  <th>Proposed value</th>
+                </tr>
+              </thead>
+              <tbody id="application-preview-body"></tbody>
+            </table>
+          </div>
+          <div class="application-preview-actions">
+            <button type="button" class="btn btn-primary" id="btn-preview-confirm">Confirm &amp; fill form</button>
+            <button type="button" class="btn btn-ghost" id="btn-preview-cancel">Cancel</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- DEV ONLY: temporary field-capture inspector — remove before production GPT handoff -->
+      <div id="dev-capture-debug" class="dev-capture-debug hidden" aria-label="Development capture debug">
+        <div class="dev-capture-head">
+          <span class="dev-capture-title">DEV · captured fields (temporary)</span>
+          <div class="dev-capture-actions">
+            <button type="button" class="btn btn-ghost btn-xs" id="btn-copy-dev-summary">Copy summary</button>
+            <button type="button" class="btn btn-ghost btn-xs" id="btn-copy-dev-raw">Copy JSON</button>
+          </div>
+        </div>
+        <label class="dev-capture-label" for="dev-capture-summary">Readable check — what was caught &amp; classified</label>
+        <textarea id="dev-capture-summary" class="dev-capture-textarea" readonly spellcheck="false" rows="8"></textarea>
+        <label class="dev-capture-label" for="dev-capture-raw">Raw JSON — scan + classify + server state</label>
+        <textarea id="dev-capture-raw" class="dev-capture-textarea dev-capture-textarea-raw" readonly spellcheck="false" rows="6"></textarea>
       </div>
 
       <div class="job-fields-row two-col">
@@ -291,7 +373,7 @@
 
   <div id="qts-toast-host" class="qts-toast-host" aria-live="polite" aria-atomic="true"></div>
 
-  <div id="loading-overlay" class="loading-overlay is-visible" aria-live="polite" aria-busy="true">
+  <div id="loading-overlay" class="loading-overlay" aria-live="polite" aria-busy="false">
     <div class="loading-panel">
       <div class="loading-spinner" role="status" aria-label="Loading">
         <span class="loading-bar"></span>
@@ -307,9 +389,16 @@
     </div>
   </div>
 
+  <script src="../shared/application-flow.js"></script>
+  <script src="../shared/application-preview-render.js"></script>
   <script src="../shared/page-url.js"></script>
   <script src="../shared/job-detect.js"></script>
+  <script src="../shared/api-prefetch.js"></script>
   <script src="../shared/candidate-colors.js"></script>
+  <script src="../shared/field-classifier.js"></script>
+  <script src="../shared/candidate-matcher.js"></script>
+  <script src="../shared/fill-policy.js"></script>
+  <script src="../shared/custom-gpt.js"></script>
   <script src="api-client.js"></script>
   <script src="popup.js"></script>
 </body>

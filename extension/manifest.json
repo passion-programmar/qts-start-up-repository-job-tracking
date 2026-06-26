@@ -1,10 +1,12 @@
 {
   "manifest_version": 3,
   "name": "QTS_Startup",
-  "version": "1.3.6",
+  "version": "1.8.7",
   "description": "Capture job postings with QTS_Startup.",
-  "permissions": ["activeTab", "storage", "tabs", "scripting", "windows", "webNavigation"],
+  "permissions": ["activeTab", "storage", "tabs", "scripting", "windows", "webNavigation", "debugger"],
   "host_permissions": [
+    "https://chatgpt.com/*",
+    "https://chat.openai.com/*",
     "http://localhost:1028/*",
     "http://127.0.0.1:1028/*",
     "https://qts-job-tracking.vercel.app/*",
@@ -25,6 +27,19 @@
   "background": {
     "service_worker": "background/service-worker.js"
   },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*"
+      ],
+      "js": [
+        "shared/chatgpt-composer-handoff.js",
+        "content/chatgpt-handoff.js"
+      ],
+      "run_at": "document_end"
+    }
+  ],
   "action": {
     "default_title": "QTS_Startup",
     "default_icon": {

@@ -5,7 +5,7 @@
 
   const TOAST_HOST_ID = 'qts-toast-host';
   const STYLE_ID = 'qts-toast-style';
-  const AUTO_HIDE_MS = 2800;
+  const AUTO_HIDE_MS = 1250;
 
   function normalizeToastType(typeOrSuccess) {
     if (typeof typeOrSuccess === 'boolean') {

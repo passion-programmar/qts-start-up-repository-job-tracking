@@ -17,8 +17,8 @@ if errorlevel 1 (
   goto end
 )
 
-REM Only skip start when API + tunnel are both running.
-powershell -NoProfile -ExecutionPolicy Bypass -Command "try { $api = Invoke-WebRequest 'http://127.0.0.1:1028/api/health' -UseBasicParsing -TimeoutSec 3; $tunnel = Get-Process cloudflared -ErrorAction SilentlyContinue; if ($api.StatusCode -eq 200 -and $tunnel) { exit 0 } else { exit 1 } } catch { exit 1 }" >nul 2>&1
+REM Only skip start when API + tunnel are both running AND API supports document uploads.
+powershell -NoProfile -ExecutionPolicy Bypass -Command "try { $api = Invoke-RestMethod 'http://127.0.0.1:1028/api/health' -TimeoutSec 3; $tunnel = Get-Process cloudflared -ErrorAction SilentlyContinue; $ok = ($api.success -eq $true) -and ($api.features.documentUploadCategory -eq $true) -and $tunnel; if ($ok) { exit 0 } else { exit 1 } } catch { exit 1 }" >nul 2>&1
 if not errorlevel 1 (
   echo  GOOD NEWS: Server is already running on this PC.
   echo.

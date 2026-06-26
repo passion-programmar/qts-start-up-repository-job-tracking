@@ -12,6 +12,8 @@ const bidders_routes_1 = __importDefault(require("./modules/bidders/bidders.rout
 const users_routes_1 = __importDefault(require("./modules/users/users.routes"));
 const interviews_routes_1 = __importDefault(require("./modules/interviews/interviews.routes"));
 const settings_routes_1 = __importDefault(require("./modules/settings/settings.routes"));
+const application_sessions_routes_1 = __importDefault(require("./modules/application-sessions/application-sessions.routes"));
+const application_tasks_routes_1 = __importDefault(require("./modules/application-sessions/application-tasks.routes"));
 const error_handler_1 = require("./middleware/error-handler");
 const paths_1 = require("./config/paths");
 const env_1 = require("./config/env");
@@ -57,11 +59,19 @@ app.use('/api/bidders', bidders_routes_1.default);
 app.use('/api/users', users_routes_1.default);
 app.use('/api/interviews', interviews_routes_1.default);
 app.use('/api/settings', settings_routes_1.default);
+app.use('/api/application-sessions', application_sessions_routes_1.default);
+app.use('/api/application-tasks', application_tasks_routes_1.default);
 app.get('/api/health', (_req, res) => {
     res.json({
         success: true,
         status: 'online',
         timestamp: new Date().toISOString(),
+        apiVersion: '1.6.0',
+        features: {
+            documentUploadCategory: true,
+            applicationDocuments: true,
+            applicationTasks: true,
+        },
     });
 });
 app.get('/logo.png', (_req, res) => {

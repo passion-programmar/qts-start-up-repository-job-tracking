@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qts-job-tracking.local/schemas/cover-letter-document.json",
+  "title": "QTS Cover Letter Document",
+  "type": "object",
+  "required": ["candidate", "targetRole", "targetCompany", "bodyParagraphs"],
+  "properties": {
+    "candidate": {
+      "type": "object",
+      "required": ["fullName", "email"],
+      "properties": {
+        "fullName": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "linkedinUrl": { "type": "string" }
+      }
+    },
+    "targetRole": { "type": "string" },
+    "targetCompany": { "type": "string" },
+    "date": { "type": "string", "description": "ISO date or display date" },
+    "salutation": { "type": "string", "default": "Dear Hiring Manager," },
+    "bodyParagraphs": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 5,
+      "items": { "type": "string", "maxLength": 300 }
+    },
+    "closing": { "type": "string", "default": "Sincerely," },
+    "signatureName": { "type": "string" }
+  }
+}

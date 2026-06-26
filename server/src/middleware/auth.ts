@@ -15,6 +15,8 @@ export interface AuthRequest extends Request {
   adminId?: number;
   /** @deprecated Use username */
   adminUsername?: string;
+  /** Set when request authenticates with GPT_ACTION_API_KEY (Custom GPT Actions). */
+  gptServiceAuth?: boolean;
 }
 
 export function requireAuth(req: AuthRequest, res: Response, next: NextFunction): void {
@@ -25,6 +27,43 @@ export function requireAuth(req: AuthRequest, res: Response, next: NextFunction)
   }
 
   const token = header.slice(7);
+  try {
+    const payload = jwt.verify(token, config.jwtSecret) as {
+      id: number;
+      username: string;
+      role?: string;
+      bidderId?: number | null;
+      bidderName?: string | null;
+    };
+    req.userId = payload.id;
+    req.username = payload.username;
+    req.adminId = payload.id;
+    req.adminUsername = payload.username;
+    req.role = normalizeRole(payload.role);
+    req.bidderId = payload.bidderId != null ? Number(payload.bidderId) : null;
+    req.bidderName = payload.bidderName ?? null;
+    next();
+  } catch {
+    res.status(401).json({ success: false, message: 'Invalid or expired token. Please log in again.' });
+  }
+}
+
+/** Accepts bidder/admin JWT or the static GPT_ACTION_API_KEY for Custom GPT Actions. */
+export function requireAuthOrGptActionKey(req: AuthRequest, res: Response, next: NextFunction): void {
+  const header = req.headers.authorization;
+  if (!header?.startsWith('Bearer ')) {
+    res.status(401).json({ success: false, message: 'Authentication required.' });
+    return;
+  }
+
+  const token = header.slice(7);
+  if (config.gptActionApiKey && token === config.gptActionApiKey) {
+    req.gptServiceAuth = true;
+    req.role = 'admin';
+    next();
+    return;
+  }
+
   try {
     const payload = jwt.verify(token, config.jwtSecret) as {
       id: number;

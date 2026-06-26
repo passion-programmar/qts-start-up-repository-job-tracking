@@ -1,0 +1,294 @@
+openapi: 3.1.0
+info:
+  title: QTS Job Application API (Custom GPT Actions)
+  description: |
+    The QTS Chrome extension sends PROCESS_TASK: task_<uuid> to this GPT.
+    Call getTaskContext, generate answers and document JSON, then submitTaskPackage.
+    The extension polls getTaskStatus and applies the package to the job form.
+  version: 1.1.0
+servers:
+  - url: https://qts-job-tracking.vercel.app
+    description: Production (proxies to PC API when start-server.bat is running)
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: APIKey
+
+  schemas:
+    PendingField:
+      type: object
+      properties:
+        stableFieldId:
+          type: string
+        label:
+          type: string
+        fieldType:
+          type: string
+        required:
+          type: boolean
+        category:
+          type: string
+
+    FileUploadField:
+      description: |
+        File input on the job form. GPT reads jobContext.jobDescription and outputs JSON
+        per outputSchema; server renders PDF; extension uploads to stableFieldId.
+      type: object
+      required: [stableFieldId, label, documentSlot, outputSchema]
+      properties:
+        stableFieldId: { type: string }
+        label: { type: string }
+        fieldType: { type: string, const: file }
+        required: { type: boolean }
+        category: { type: string, const: document_upload }
+        documentSlot: { type: string, enum: [resume, cover_letter] }
+        suggestedDocument: { type: string, enum: [resume, cover_letter] }
+        placeholder: { type: string }
+        nameAttr: { type: string }
+        sectionHeading: { type: string }
+        acceptedMimeTypes:
+          type: array
+          items: { type: string }
+        acceptedExtensions:
+          type: array
+          items: { type: string }
+        selectorHints: { type: object }
+        outputSchema:
+          type: object
+          required: [schemaId, packageKey]
+          properties:
+            schemaId:
+              type: string
+              examples: [resume-document.schema.json]
+            $id: { type: string }
+            packageKey:
+              type: string
+              enum: [resume, coverLetter]
+        generateFromJobDescription: { type: boolean, default: true }
+
+    DocumentGenerationSpec:
+      type: object
+      properties:
+        required: { type: boolean }
+        schemaId: { type: string }
+        $id: { type: string }
+        packageKey: { type: string, enum: [resume, coverLetter] }
+        instructions: { type: string }
+
+    AnswerItem:
+      type: object
+      required: [stableFieldId, answer]
+      properties:
+        stableFieldId:
+          type: string
+        answer:
+          type: string
+
+    ResumeDocument:
+      type: object
+      required: [candidate, targetRole, sections]
+      properties:
+        candidate:
+          type: object
+          required: [fullName, email]
+          properties:
+            fullName: { type: string }
+            email: { type: string }
+            phone: { type: string }
+            linkedinUrl: { type: string }
+            location: { type: string }
+            headline: { type: string }
+        targetRole: { type: string }
+        targetCompany: { type: string }
+        summary: { type: string }
+        sections:
+          type: array
+          items:
+            type: object
+            properties:
+              title: { type: string }
+              items:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    heading: { type: string }
+                    subheading: { type: string }
+                    dateRange: { type: string }
+                    bullets:
+                      type: array
+                      items: { type: string }
+
+    CoverLetterDocument:
+      type: object
+      required: [candidate, targetRole, targetCompany, bodyParagraphs]
+      properties:
+        candidate:
+          type: object
+          required: [fullName, email]
+          properties:
+            fullName: { type: string }
+            email: { type: string }
+            phone: { type: string }
+            linkedinUrl: { type: string }
+        targetRole: { type: string }
+        targetCompany: { type: string }
+        date: { type: string }
+        salutation: { type: string }
+        bodyParagraphs:
+          type: array
+          items: { type: string }
+        closing: { type: string }
+        signatureName: { type: string }
+
+    GptApplicationPackage:
+      type: object
+      description: |
+        Request body for submitTaskPackage. taskId is in the URL path only.
+      required: [answers]
+      properties:
+        answers:
+          type: array
+          items:
+            $ref: '#/components/schemas/AnswerItem'
+        resume:
+          $ref: '#/components/schemas/ResumeDocument'
+        coverLetter:
+          $ref: '#/components/schemas/CoverLetterDocument'
+        remainingFields:
+          type: array
+          items:
+            $ref: '#/components/schemas/AnswerItem'
+        notes:
+          type: string
+
+security:
+  - BearerAuth: []
+
+paths:
+  /api/application-tasks/{taskId}/context:
+    get:
+      operationId: getTaskContext
+      summary: Get full task context for PROCESS_TASK
+      description: |
+        Call when user message matches PROCESS_TASK: task_<id>.
+        Returns JD, company, role, candidate, pending AI fields, and file upload slots
+        with JSON Schema refs for resume/cover letter generation.
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+            example: task_7f84c21e-2f34-4fd2-96e1-1f4216f3ad92
+      responses:
+        '200':
+          description: Task context loaded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  taskId: { type: string }
+                  applicationId: { type: integer }
+                  jobContext:
+                    type: object
+                    properties:
+                      jobTitle: { type: string }
+                      company: { type: string }
+                      jobDescription: { type: string }
+                      jobUrl: { type: string }
+                      platform: { type: string }
+                  candidate:
+                    type: object
+                  pendingAiFields:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PendingField'
+                  fileFields:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/FileUploadField'
+                  documentGeneration:
+                    type: object
+                    properties:
+                      resume:
+                        $ref: '#/components/schemas/DocumentGenerationSpec'
+                      coverLetter:
+                        $ref: '#/components/schemas/DocumentGenerationSpec'
+                  packageSchema:
+                    type: object
+                    properties:
+                      schemaId: { type: string }
+                      $id: { type: string }
+                  documentRequirements:
+                    type: object
+                    properties:
+                      resumeRequired: { type: boolean }
+                      coverLetterRecommended: { type: boolean }
+
+  /api/application-tasks/{taskId}/package:
+    post:
+      operationId: submitTaskPackage
+      summary: Submit answers + resume JSON + cover letter JSON
+      description: |
+        Server stores answers, renders resume.pdf and cover-letter.pdf on disk,
+        and marks task ready for extension apply step.
+        REQUIRED: include resume JSON when fileFields is non-empty (CV upload on form).
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+            example: task_7f84c21e-2f34-4fd2-96e1-1f4216f3ad92
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GptApplicationPackage'
+      responses:
+        '200':
+          description: Package accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  taskId: { type: string }
+                  applicationId: { type: integer }
+                  answersStored: { type: integer }
+                  gptTaskStatus: { type: string }
+                  documents: { type: object }
+
+  /api/application-tasks/{taskId}/status:
+    get:
+      operationId: getTaskStatus
+      summary: Poll task status (extension uses this)
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+            example: task_7f84c21e-2f34-4fd2-96e1-1f4216f3ad92
+      responses:
+        '200':
+          description: Task status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  taskId: { type: string }
+                  gptTaskStatus: { type: string }
+                  readyToApply: { type: boolean }
+                  aiPending: { type: integer }
+                  documents: { type: object }

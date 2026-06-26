@@ -20,5 +20,7 @@ export declare const config: {
     nodeEnv: string;
     autoOpenBrowser: boolean;
     adminWebUrl: string;
+    /** Static Bearer secret for Custom GPT Actions (not OpenAI key, not JWT). */
+    gptActionApiKey: string;
 };
 //# sourceMappingURL=env.d.ts.map

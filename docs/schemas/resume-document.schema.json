@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qts-job-tracking.local/schemas/resume-document.json",
+  "title": "QTS Resume Document",
+  "type": "object",
+  "required": ["candidate", "targetRole", "sections"],
+  "properties": {
+    "candidate": {
+      "type": "object",
+      "required": ["fullName", "email"],
+      "properties": {
+        "fullName": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "linkedinUrl": { "type": "string" },
+        "location": { "type": "string" },
+        "headline": { "type": "string" }
+      }
+    },
+    "targetRole": { "type": "string", "description": "Job title being applied for" },
+    "targetCompany": { "type": "string" },
+    "summary": { "type": "string", "maxLength": 1200 },
+    "sections": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["title", "items"],
+        "properties": {
+          "title": { "type": "string", "examples": ["Experience", "Skills", "Education"] },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "heading": { "type": "string" },
+                "subheading": { "type": "string" },
+                "dateRange": { "type": "string" },
+                "bullets": { "type": "array", "items": { "type": "string" } }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

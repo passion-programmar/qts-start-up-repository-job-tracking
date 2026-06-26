@@ -55,8 +55,8 @@ function Test-ApiHealth {
     $prev = $ErrorActionPreference
     $ErrorActionPreference = "SilentlyContinue"
     try {
-        $r = Invoke-WebRequest -Uri "http://127.0.0.1:$ListenPort/api/health" -UseBasicParsing -TimeoutSec 3
-        return ($r.StatusCode -eq 200)
+        $body = Invoke-RestMethod -Uri "http://127.0.0.1:$ListenPort/api/health" -TimeoutSec 3
+        return ($body.success -eq $true -and $body.features.documentUploadCategory -eq $true)
     } catch {
         return $false
     } finally {
@@ -79,7 +79,29 @@ function Stop-PortListener([int]$listenPort) {
 }
 
 function Test-NeedsApiBuild {
-    return -not (Test-Path (Join-Path $ServerDir "dist/server.js"))
+    $distEntry = Join-Path $ServerDir "dist/server.js"
+    if (-not (Test-Path $distEntry)) { return $true }
+
+    $featureRoute = Join-Path $ServerDir "dist/modules/application-sessions/application-sessions.routes.js"
+    if (-not (Test-Path $featureRoute)) { return $true }
+
+    $tasksRoute = Join-Path $ServerDir "dist/modules/application-sessions/application-tasks.routes.js"
+    if (-not (Test-Path $tasksRoute)) { return $true }
+
+    $sessionsRoute = Join-Path $ServerDir "dist/modules/application-sessions/application-sessions.routes.js"
+    if (Test-Path $sessionsRoute) {
+        $routeText = Get-Content $sessionsRoute -Raw
+        if ($routeText -notmatch 'document_upload') { return $true }
+    }
+
+    $srcApp = Join-Path $ServerDir "src/app.ts"
+    if (Test-Path $srcApp) {
+        $srcTime = (Get-Item $srcApp).LastWriteTimeUtc
+        $distTime = (Get-Item $distEntry).LastWriteTimeUtc
+        if ($srcTime -gt $distTime) { return $true }
+    }
+
+    return $false
 }
 
 function Start-ApiServer {
