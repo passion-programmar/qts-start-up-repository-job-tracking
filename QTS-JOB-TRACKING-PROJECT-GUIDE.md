@@ -1,5 +1,7 @@
 # QTS Job Tracking â€” Project Usage Guide (Accounts & Roles)
 
+> **Current system (June 2026):** See [docs/CURRENT-SYSTEM.md](docs/CURRENT-SYSTEM.md) — extension v1.13.25+, job sites, one-step auto-apply.
+
 This guide explains **who uses the system**, **how accounts are organized**, and **how to set up your team** from first login to daily work.
 
 For technical setup (server, Vercel, Neon), see **`QTS-JOB-TRACKING-PROJECT-SETUP-GUIDE.md`**.

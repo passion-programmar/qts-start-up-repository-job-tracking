@@ -275,17 +275,20 @@
   }
 
   function trySubmit(editor) {
+    let submitAttempted = false;
     spinWait(() => Boolean(findSendButton()), 3000);
     const sendBtn = findSendButton();
     if (sendBtn) {
+      submitAttempted = true;
       sendBtn.click();
-      spinWait(() => readEditorText(editor) === '', 1500);
+      spinWait(() => readEditorText(editor) === '', 2000);
       if (readEditorText(editor) === '') {
-        return { sent: true, method: 'unified_send_button' };
+        return { sent: true, method: 'unified_send_button', submitAttempted: true };
       }
     }
 
     editor.focus();
+    submitAttempted = true;
     for (const eventType of ['keydown', 'keypress', 'keyup']) {
       editor.dispatchEvent(new KeyboardEvent(eventType, {
         key: 'Enter',
@@ -300,19 +303,20 @@
 
     spinWait(() => readEditorText(editor) === '', 1000);
     if (readEditorText(editor) === '') {
-      return { sent: true, method: 'unified_enter_key' };
+      return { sent: true, method: 'unified_enter_key', submitAttempted: true };
     }
 
     const form = editor.closest('form[data-type="unified-composer"]');
     if (form instanceof HTMLFormElement && typeof form.requestSubmit === 'function') {
+      submitAttempted = true;
       form.requestSubmit();
       spinWait(() => readEditorText(editor) === '', 1000);
       if (readEditorText(editor) === '') {
-        return { sent: true, method: 'unified_form_submit' };
+        return { sent: true, method: 'unified_form_submit', submitAttempted: true };
       }
     }
 
-    return { sent: false, method: 'unified_needs_manual_send' };
+    return { sent: false, method: 'unified_needs_manual_send', submitAttempted };
   }
 
   function runUnifiedComposerHandoff(text) {
@@ -332,19 +336,23 @@
       };
     }
 
-    if (!insertIntoProseMirror(editor, message)) {
-      return {
-        ok: false,
-        sent: false,
-        phase: 'insert_failed',
-        error: 'Could not type into ProseMirror composer.',
-        pageUrl: location.href,
-        editorText: readEditorText(editor),
-      };
+    const prefix = message.slice(0, 8);
+    const before = readEditorText(editor);
+    if (!before.includes(prefix)) {
+      if (!insertIntoProseMirror(editor, message)) {
+        return {
+          ok: false,
+          sent: false,
+          phase: 'insert_failed',
+          error: 'Could not type into ProseMirror composer.',
+          pageUrl: location.href,
+          editorText: readEditorText(editor),
+        };
+      }
     }
 
     const after = readEditorText(editor);
-    if (!after.includes(message.slice(0, 8))) {
+    if (!after.includes(prefix)) {
       return {
         ok: false,
         sent: false,
@@ -357,7 +365,15 @@
 
     const submit = trySubmit(editor);
     if (submit.sent) {
-      return { ok: true, sent: true, method: submit.method, phase: 'typed_and_sent', pageUrl: location.href };
+      spinWait(() => readEditorText(editor) === '', 2500);
+      return {
+        ok: true,
+        sent: true,
+        method: submit.method,
+        phase: 'typed_and_sent',
+        submitAttempted: true,
+        pageUrl: location.href,
+      };
     }
 
     return {
@@ -366,6 +382,7 @@
       needsManualSend: true,
       method: submit.method,
       phase: 'typed_needs_enter',
+      submitAttempted: Boolean(submit.submitAttempted),
       editorText: after,
       pageUrl: location.href,
     };

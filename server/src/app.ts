@@ -11,6 +11,7 @@ import settingsRoutes from './modules/settings/settings.routes';
 import applicationSessionsRoutes from './modules/application-sessions/application-sessions.routes';
 import applicationTasksRoutes from './modules/application-sessions/application-tasks.routes';
 import adminRecordsRoutes from './modules/admin-records/admin-records.routes';
+import jobSitesRoutes from './modules/job-sites/job-sites.routes';
 import { errorHandler } from './middleware/error-handler';
 import { getBidderLogoPath, getLogoPath } from './config/paths';
 import { config } from './config/env';
@@ -66,6 +67,7 @@ app.use('/api/settings', settingsRoutes);
 app.use('/api/application-sessions', applicationSessionsRoutes);
 app.use('/api/application-tasks', applicationTasksRoutes);
 app.use('/api/admin-records', adminRecordsRoutes);
+app.use('/api/job-sites', jobSitesRoutes);
 
 app.get('/api/health', (_req, res) => {
   res.json({

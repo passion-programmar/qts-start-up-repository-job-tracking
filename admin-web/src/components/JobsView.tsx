@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Modal } from '@/components/Modal';
 import { useAuth } from '@/components/AuthProvider';
 import { api } from '@/lib/api';
-import type { Job } from '@/lib/types';
+import type { BidderJobSiteAdmission, Job } from '@/lib/types';
 import { formatDate } from '@/lib/utils';
 
 interface StatusDraft {
@@ -15,10 +15,13 @@ interface StatusDraft {
 }
 
 export function JobsView() {
-  const { canWrite } = useAuth();
+  const { canWrite, user } = useAuth();
+  const isBidder = user?.role === 'bidder';
   const [search, setSearch] = useState('');
   const [query, setQuery] = useState('');
+  const [siteFilter, setSiteFilter] = useState('');
   const [jobs, setJobs] = useState<Job[]>([]);
+  const [admissions, setAdmissions] = useState<BidderJobSiteAdmission[]>([]);
   const [loading, setLoading] = useState(true);
 
   const [modal, setModal] = useState<'detail' | 'delete' | null>(null);
@@ -33,19 +36,36 @@ export function JobsView() {
     description: '',
   });
 
-  const load = useCallback(async (q = '') => {
+  const load = useCallback(async (q = '', jobSiteId = '') => {
     setLoading(true);
+    const params = new URLSearchParams();
+    if (q) params.set('search', q);
+    if (jobSiteId) params.set('jobSiteId', jobSiteId);
+    const qs = params.toString();
     const r = await api<{ success: boolean; jobs?: Job[] }>(
       'GET',
-      `/api/jobs${q ? `?search=${encodeURIComponent(q)}` : ''}`
+      `/api/jobs${qs ? `?${qs}` : ''}`
     );
     setJobs(r.jobs || []);
     setLoading(false);
   }, []);
 
+  const loadAdmissions = useCallback(async () => {
+    if (!isBidder) return;
+    const r = await api<{ success: boolean; admissions?: BidderJobSiteAdmission[] }>(
+      'GET',
+      '/api/job-sites/my-admissions'
+    );
+    setAdmissions(r.admissions || []);
+  }, [isBidder]);
+
   useEffect(() => {
-    void load(query);
-  }, [load, query]);
+    void loadAdmissions();
+  }, [loadAdmissions]);
+
+  useEffect(() => {
+    void load(query, siteFilter);
+  }, [load, query, siteFilter]);
 
   async function openDetail(id: number) {
     const r = await api<{ success: boolean; job?: Job }>('GET', `/api/jobs/${id}`);
@@ -102,7 +122,7 @@ export function JobsView() {
     const r = await api<{ success: boolean; message?: string }>('PUT', `/api/jobs/${selected.id}`, body);
     if (r.success) {
       setModal(null);
-      void load(query);
+      void load(query, siteFilter);
     } else {
       setFormError(r.message || 'Could not update job.');
     }
@@ -113,7 +133,7 @@ export function JobsView() {
     const r = await api<{ success: boolean; message?: string }>('DELETE', `/api/jobs/${selected.id}`);
     if (r.success) {
       setModal(null);
-      void load(query);
+      void load(query, siteFilter);
     } else {
       alert(r.message || 'Could not delete job.');
     }
@@ -121,7 +141,33 @@ export function JobsView() {
 
   return (
     <>
-      <div className="search-row">
+      {isBidder && admissions.length > 0 && (
+        <div className="card" style={{ marginBottom: 12 }}>
+          <strong>Your admitted job sites</strong>
+          <div className="table-scroll" style={{ marginTop: 8 }}>
+            <table>
+              <thead>
+                <tr>
+                  <th>Site</th>
+                  <th>Platform</th>
+                  <th>Default candidate</th>
+                </tr>
+              </thead>
+              <tbody>
+                {admissions.map((a) => (
+                  <tr key={a.id}>
+                    <td>{a.name}</td>
+                    <td><code>{a.platform_key}</code></td>
+                    <td>{a.default_candidate_name || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      <div className="search-row" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         <input
           type="text"
           placeholder="Search jobs…"
@@ -131,6 +177,18 @@ export function JobsView() {
             if (e.key === 'Enter') setQuery(search);
           }}
         />
+        {isBidder && admissions.length > 0 && (
+          <select
+            value={siteFilter}
+            onChange={(e) => setSiteFilter(e.target.value)}
+            aria-label="Filter by job site"
+          >
+            <option value="">All admitted sites</option>
+            {admissions.map((a) => (
+              <option key={a.id} value={String(a.id)}>{a.name}</option>
+            ))}
+          </select>
+        )}
       </div>
 
       <div className="card">

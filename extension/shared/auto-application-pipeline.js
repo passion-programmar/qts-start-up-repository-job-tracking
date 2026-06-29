@@ -48,7 +48,11 @@
   }
 
   async function readSessionUser() {
-    const stored = await chrome.storage.local.get([SESSION_USER_KEY]);
+    if (global.__qtsBidderAuth?.readWorkerSessionUser) {
+      return global.__qtsBidderAuth.readWorkerSessionUser();
+    }
+    const stored = await chrome.storage.local.get([SESSION_USER_KEY, 'authExpiresAt']);
+    if (stored.authExpiresAt && Date.now() >= Number(stored.authExpiresAt)) return null;
     return stored[SESSION_USER_KEY] || null;
   }
 
@@ -62,13 +66,25 @@
   }
 
   async function isAutoApplyEnabled() {
-    const stored = await chrome.storage.local.get([AUTO_APPLY_ENABLED_KEY, 'authToken']);
-    if (!stored.authToken) return false;
+    const auth = global.__qtsBidderAuth;
+    const token = auth?.getWorkerAuthToken
+      ? await auth.getWorkerAuthToken()
+      : (await chrome.storage.local.get(['authToken'])).authToken || '';
+    if (!token) return false;
+    const stored = await chrome.storage.local.get([AUTO_APPLY_ENABLED_KEY]);
     return stored[AUTO_APPLY_ENABLED_KEY] === true;
   }
 
   async function setAutoApplyEnabled(enabled) {
     await chrome.storage.local.set({ [AUTO_APPLY_ENABLED_KEY]: Boolean(enabled) });
+  }
+
+  async function isExtensionOperational() {
+    const user = await readSessionUser();
+    if (!user || user.role !== 'bidder') return false;
+    if (!(await isAutoApplyEnabled())) return false;
+    const candidateId = await readDefaultCandidateId(user.bidderId);
+    return Number.isFinite(candidateId) && candidateId > 0;
   }
 
   async function resolveDefaultCandidateId() {
@@ -109,6 +125,8 @@
         appliedAt: applyCheck.appliedAt ?? null,
       };
     }
+
+    deps.preloadCustomGptTab?.().catch?.(() => {});
 
     lastProgress(tabId, 'Loading candidate profile…');
 
@@ -196,7 +214,7 @@
     const company = extract?.company || null;
     const jobDescription = extract?.description || extract?.jobDescription || '';
 
-    lastProgress(tabId, 'Creating application session…');
+    lastProgress(tabId, 'Preparing apply session…');
     const sessionRes = await api.workerApiRequest('POST', '/api/application-sessions', {
       candidateId,
       jobId: applyCheck.jobId || options.existingJobId || null,
@@ -217,9 +235,9 @@
     }
 
     const applicationId = sessionRes.session.applicationId;
-    const taskId = sessionRes.taskId
-      || sessionRes.session?.metadata?.publicTaskId
+    const taskId = sessionRes.session?.metadata?.publicTaskId
       || sessionRes.session?.metadata?.taskId
+      || sessionRes.taskId
       || null;
 
     const fillableFields = classifiedFields.filter(
@@ -245,7 +263,7 @@
       });
     }
 
-    lastProgress(tabId, 'Saving session to server…');
+    lastProgress(tabId, 'Staging form fields for GPT…');
     const patchRes = await api.workerApiRequest('PATCH', `/api/application-sessions/${applicationId}/fields`, {
       fields: classifiedFields,
       currentStep: scanMeta.pageStep || 'scan',
@@ -268,6 +286,17 @@
 
     if (willUseCustomGpt && taskId) {
       lastProgress(tabId, 'Switching to Custom GPT to generate resume…');
+
+      await deps.preloadCustomGptTab?.().catch?.(() => {});
+
+      await global.__qtsApplySessionStore?.setActive?.({
+        applicationId,
+        taskId,
+        jobTabId: tabId,
+        jobUrl,
+        candidateId,
+        status: 'awaiting_ai',
+      });
 
       const dispatchRes = await api.workerApiRequest(
         'POST',
@@ -300,6 +329,14 @@
     }
 
     lastProgress(tabId, `Application ready — ${fillableFields.length} field(s) filled.`, 'success');
+    await global.__qtsApplySessionStore?.setActive?.({
+      applicationId,
+      taskId,
+      jobTabId: tabId,
+      jobUrl,
+      candidateId,
+      status: 'ready',
+    });
     return {
       ok: true,
       applicationId,
@@ -311,6 +348,7 @@
   }
 
   function lastProgress(tabId, message, type = 'info') {
+    if (!tabId || !message) return;
     deps?.showPageDetectAlert?.(tabId, message, type).catch?.(() => {});
     chrome.runtime.sendMessage({
       type: 'AUTO_PIPELINE_STATUS',
@@ -329,6 +367,7 @@
     resolveDefaultCandidateId,
     isDefaultCandidateAlreadyApplied,
     isAutoApplyEnabled,
+    isExtensionOperational,
     setAutoApplyEnabled,
     runAutoApplicationPipeline,
   };

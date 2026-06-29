@@ -1,5 +1,7 @@
 # Apply Method Detection â€” Study Guide
 
+> **Current system (June 2026):** See [docs/CURRENT-SYSTEM.md](docs/CURRENT-SYSTEM.md) — extension v1.13.25+, job sites, one-step auto-apply.
+
 This document explains how QTS classifies job apply flows across sites, and how the extension detects the method **when a job page opens** (before Start Application).
 
 ## Apply method taxonomy

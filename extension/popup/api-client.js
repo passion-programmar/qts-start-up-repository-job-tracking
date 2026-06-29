@@ -22,13 +22,14 @@ async function ensureServerUrl() {
 }
 
 async function getToken() {
-  if (cachedAuthToken !== null) return cachedAuthToken;
-  return new Promise(resolve => {
-    chrome.storage.local.get(['authToken'], r => {
-      cachedAuthToken = r.authToken || '';
-      resolve(cachedAuthToken);
-    });
-  });
+  const auth = window.__qtsBidderAuth;
+  if (auth?.getPopupAuthToken) {
+    const token = await auth.getPopupAuthToken();
+    cachedAuthToken = token || null;
+    return token;
+  }
+  if (cachedAuthToken) return cachedAuthToken;
+  return '';
 }
 
 function setCachedToken(token) {
@@ -99,6 +100,14 @@ async function apiRequest(method, path, body) {
   }
 
   data._httpStatus = response.status;
+
+  if (response.status === 401 && window.__qtsBidderAuth?.handleAuthExpired) {
+    await window.__qtsBidderAuth.handleAuthExpired();
+    clearCachedToken();
+    data.message = data.message || 'Session expired. Please log in again.';
+    data._sessionExpired = true;
+  }
+
   return data;
 }
 

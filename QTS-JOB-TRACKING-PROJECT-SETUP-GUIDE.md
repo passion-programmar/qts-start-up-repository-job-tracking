@@ -1,5 +1,7 @@
 # QTS Job Tracking â€” Full Setup Guide
 
+> **Current system (June 2026):** See [docs/CURRENT-SYSTEM.md](docs/CURRENT-SYSTEM.md) — extension v1.13.25+, job sites, one-step auto-apply.
+
 Use this guide to build and run the project from scratch on a new PC.
 
 **Your production setup (free, no credit card):**

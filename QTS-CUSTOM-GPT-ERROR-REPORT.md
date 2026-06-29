@@ -1,5 +1,7 @@
 # QTS Custom GPT + Extension + Server â€” Error Report
 
+> **Current system (June 2026):** See [docs/CURRENT-SYSTEM.md](docs/CURRENT-SYSTEM.md) — extension v1.13.25+, job sites, one-step auto-apply.
+
 **File:** `QTS-CUSTOM-GPT-ERROR-REPORT.md`  
 **Generated:** 2025-06-25  
 **Extension version:** v1.8.5  

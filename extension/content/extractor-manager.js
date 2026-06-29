@@ -1,5 +1,8 @@
 // Extractor manager — picks the right extractor based on hostname
 
+(function initExtractorManager() {
+  if (window.__extractJobData) return;
+
 function selectExtractor(hostname) {
   if (hostname.includes('linkedin.com')) return window.__linkedInExtract;
   if (hostname.includes('indeed.com')) return window.__indeedExtract;
@@ -43,3 +46,4 @@ function detectSource(hostname) {
 }
 
 window.__extractJobData = extractJobData;
+})();

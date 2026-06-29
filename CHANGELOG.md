@@ -2,6 +2,14 @@
 
 ## QTS_Startup
 
+### 1.13.25 — 2026-06-29
+
+- **Job sites:** Admin → Jobs → Job sites — manually add sources (`platform_key`, URL host).
+- **Bidder admission:** Admin admits bidder per site with default candidate; bidder Jobs panel lists sites + jobs.
+- **Extension:** Fix duplicate `PROCESS_TASK` send (submit lock, no re-insert fallback).
+- **Custom GPT:** Final reply **"Confirmed."** only (update GPT instructions).
+- **Docs:** [docs/CURRENT-SYSTEM.md](docs/CURRENT-SYSTEM.md) canonical architecture reference.
+
 ### 1.2.5
 
 - Extension opens a **dedicated capture window** on icon click (no toolbar `default_popup`).

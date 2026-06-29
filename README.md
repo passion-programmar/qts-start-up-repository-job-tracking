@@ -1,4 +1,6 @@
-# QTS_Startup v1.2.0
+# QTS_Startup v1.13+
+
+> **Current system (June 2026):** [docs/CURRENT-SYSTEM.md](docs/CURRENT-SYSTEM.md) — extension v1.13.25, one-step auto-apply, job sites, Custom GPT handoff.
 
 A Chrome/Edge extension with a local Node.js server for capturing job postings and tracking candidates, bidders, and interviews with **QTS_Startup**.
 
@@ -11,7 +13,8 @@ A Chrome/Edge extension with a local Node.js server for capturing job postings a
 ## Features
 
 - **Role-based web UI** — admin, manager, bidder, and caller panels
-- **Chrome extension** — capture jobs from LinkedIn, Indeed, Greenhouse, and more
+- **Job sites registry** — admin adds job board sources; admits bidders with default candidate
+- **Chrome extension** — one-step auto-apply, Custom GPT resume/PDF pipeline (v1.13+)
 - **PostgreSQL** — embedded PGlite for local dev, or external PostgreSQL for production
 - **Bidder organizations** — scoped candidates and jobs per bidder account
 - **Interview tracking** — scheduled interviews with caller assignments
@@ -86,9 +89,9 @@ Full step-by-step guide: **[QTS-JOB-TRACKING-EXTENSION-GUIDE.md](QTS-JOB-TRACKIN
 
 | Role    | URL prefix              | Access |
 |---------|-------------------------|--------|
-| Admin   | `/admin`                | Full CRUD, bidders, users, settings |
+| Admin   | `/admin`                | Full CRUD, job sites, bidders, users, settings |
 | Manager | `/manager`              | Team bidders, candidates, jobs, interviews (read-focused) |
-| Bidder  | `/bidder`               | Add jobs/candidates, view own data |
+| Bidder  | `/bidder`               | Jobs from admitted sites, candidates (extension for capture/apply) |
 | Caller  | `/caller`               | Add interview records, view own interviews |
 
 ## Database

@@ -95,10 +95,14 @@ router.post('/login', async (req, res) => {
             bidderId: user.bidder_id,
             bidderName,
         }, env_1.config.jwtSecret, { expiresIn: env_1.config.jwtExpiry });
+        const decoded = jsonwebtoken_1.default.decode(token);
+        const expiresAt = decoded?.exp ? decoded.exp * 1000 : Date.now() + 24 * 60 * 60 * 1000;
         logger_1.logger.info('Login success', { username, role });
         res.json({
             success: true,
             token,
+            expiresAt,
+            id: user.id,
             username: user.username,
             role,
             bidderId: user.bidder_id,

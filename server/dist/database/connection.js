@@ -314,6 +314,31 @@ async function runMigrations() {
     await execute('CREATE INDEX IF NOT EXISTS idx_app_session_fields_session ON application_session_fields(session_id)');
     await execute('CREATE INDEX IF NOT EXISTS idx_app_session_fields_category ON application_session_fields(category)');
     await execute('CREATE INDEX IF NOT EXISTS idx_candidate_saved_answers_candidate ON candidate_saved_answers(candidate_id)');
+    await execute(`
+    CREATE TABLE IF NOT EXISTS job_sites (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      platform_key TEXT NOT NULL UNIQUE,
+      url_host TEXT,
+      notes TEXT,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+    await execute(`
+    CREATE TABLE IF NOT EXISTS bidder_job_sites (
+      id SERIAL PRIMARY KEY,
+      bidder_id INTEGER NOT NULL REFERENCES bidders(id) ON DELETE CASCADE,
+      job_site_id INTEGER NOT NULL REFERENCES job_sites(id) ON DELETE CASCADE,
+      default_candidate_id INTEGER REFERENCES candidates(id) ON DELETE SET NULL,
+      admitted_by INTEGER REFERENCES admins(id) ON DELETE SET NULL,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (bidder_id, job_site_id)
+    )
+  `);
     await migrateSchema();
     logger_1.logger.info('Database migrations complete');
 }
@@ -380,6 +405,9 @@ async function migrateSchema() {
     await execute('CREATE INDEX IF NOT EXISTS idx_bidders_manager ON bidders(manager_id)');
     await execute('CREATE INDEX IF NOT EXISTS idx_interviews_caller ON interview_processes(caller_user_id)');
     await execute('CREATE INDEX IF NOT EXISTS idx_interviews_bidder ON interview_processes(bidder_id)');
+    await execute('CREATE INDEX IF NOT EXISTS idx_job_sites_platform ON job_sites(platform_key)');
+    await execute('CREATE INDEX IF NOT EXISTS idx_bidder_job_sites_bidder ON bidder_job_sites(bidder_id)');
+    await execute('CREATE INDEX IF NOT EXISTS idx_bidder_job_sites_site ON bidder_job_sites(job_site_id)');
 }
 async function backupDb() {
     const backupDir = env_1.config.backupsPath;

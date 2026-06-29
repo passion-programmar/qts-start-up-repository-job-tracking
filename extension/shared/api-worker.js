@@ -1,11 +1,15 @@
 // Minimal API helpers for the service worker (GPT poll + document download).
 
 const WORKER_DEFAULT_SERVER = 'https://qts-job-tracking.vercel.app';
+const qtsRoot = typeof globalThis !== 'undefined' ? globalThis : self;
 
 async function workerReadAuth() {
-  const stored = await chrome.storage.local.get(['authToken', 'serverUrl']);
+  const auth = qtsRoot.__qtsBidderAuth;  const token = auth?.getWorkerAuthToken
+    ? await auth.getWorkerAuthToken()
+    : (await chrome.storage.local.get(['authToken', 'authExpiresAt'])).authToken || '';
+  const stored = await chrome.storage.local.get(['serverUrl']);
   return {
-    token: stored.authToken || '',
+    token,
     serverUrl: String(stored.serverUrl || WORKER_DEFAULT_SERVER).replace(/\/$/, ''),
   };
 }
@@ -32,6 +36,13 @@ async function workerApiRequest(method, path, body) {
     }
     if (!response.ok && data.success !== false) data.success = false;
     data._httpStatus = response.status;
+    if (response.status === 401) {
+      const auth = qtsRoot.__qtsBidderAuth;
+      await auth?.handleAuthExpired?.();
+      chrome.runtime.sendMessage({ type: 'AUTH_SESSION_EXPIRED' }).catch(() => {});
+      data.message = data.message || 'Session expired. Please log in again.';
+      data._sessionExpired = true;
+    }
     return data;
   } catch {
     return { success: false, message: 'Cannot connect to the server.' };

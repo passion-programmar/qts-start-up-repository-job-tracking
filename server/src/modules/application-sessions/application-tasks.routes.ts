@@ -8,6 +8,14 @@ import {
 } from '../../middleware/auth';
 import { candidateBidderFilter } from '../../middleware/scope';
 import { logger } from '../../utilities/logger';
+import { config } from '../../config/env';
+import {
+  getMemoryApplicationSession,
+  listMemorySessionFields,
+  resolveMemorySessionIdFromTaskId,
+  updateMemorySession,
+  updateMemorySessionField,
+} from '../../services/application-session-store';
 import {
   GptApplicationPackageSchema,
   buildApplicationDocuments,
@@ -42,6 +50,15 @@ const AnswerItemSchema = z.object({
 });
 
 async function getSessionForRequest(req: AuthRequest, sessionId: number) {
+  if (!config.applicationSessionPersistDb) {
+    const session = getMemoryApplicationSession(sessionId);
+    if (!session) return null;
+    if (!req.gptServiceAuth && req.role !== 'admin' && req.bidderId != null && req.bidderId !== session.bidder_id) {
+      return null;
+    }
+    return session as unknown as Record<string, unknown>;
+  }
+
   if (req.gptServiceAuth) {
     return queryOne<Record<string, unknown>>(
       `SELECT s.*,
@@ -112,6 +129,10 @@ function readGptTask(metadata: Record<string, unknown>) {
 }
 
 async function resolveSessionIdFromTaskId(taskIdParam: string): Promise<number | null> {
+  if (!config.applicationSessionPersistDb) {
+    return resolveMemorySessionIdFromTaskId(taskIdParam);
+  }
+
   const legacy = parseLegacySessionId(taskIdParam);
   if (legacy != null) return legacy;
   const trimmed = String(taskIdParam || '').trim();
@@ -145,10 +166,12 @@ async function loadSessionContext(req: AuthRequest, taskIdParam: string) {
     return { error: { status: 404, message: 'Application task not found.' } };
   }
 
-  const fields = await queryAll(
-    'SELECT * FROM application_session_fields WHERE session_id = $1 ORDER BY id ASC',
-    [sessionId]
-  );
+  const fields = config.applicationSessionPersistDb
+    ? await queryAll(
+      'SELECT * FROM application_session_fields WHERE session_id = $1 ORDER BY id ASC',
+      [sessionId]
+    )
+    : listMemorySessionFields(sessionId);
   const mapped = fields.map((row) => mapFieldRow(row as Record<string, unknown>));
 
   return { sessionId, session, fields: mapped };
@@ -176,15 +199,22 @@ router.post('/:taskId/dispatch', async (req: AuthRequest, res: Response) => {
     error: null,
   };
 
-  await execute(
-    `UPDATE application_sessions
-     SET metadata = $2::jsonb,
-         status = 'awaiting_ai',
-         last_activity_at = NOW(),
-         updated_at = NOW()
-     WHERE id = $1`,
-    [sessionId, JSON.stringify({ ...metadata, taskId: publicTaskId, publicTaskId, gptTask })]
-  );
+  if (!config.applicationSessionPersistDb) {
+    updateMemorySession(sessionId, {
+      metadata: { ...metadata, taskId: publicTaskId, publicTaskId, gptTask },
+      status: 'awaiting_ai',
+    });
+  } else {
+    await execute(
+      `UPDATE application_sessions
+       SET metadata = $2::jsonb,
+           status = 'awaiting_ai',
+           last_activity_at = NOW(),
+           updated_at = NOW()
+       WHERE id = $1`,
+      [sessionId, JSON.stringify({ ...metadata, taskId: publicTaskId, publicTaskId, gptTask })]
+    );
+  }
 
   logger.info('GPT task dispatched', { sessionId, taskId: publicTaskId });
   res.json({
@@ -325,20 +355,31 @@ router.post('/:taskId/package', async (req: AuthRequest, res: Response) => {
       : {}),
   };
 
-  await withTransaction(async (client) => {
+  if (!config.applicationSessionPersistDb) {
     for (const item of allAnswers) {
       generatedAnswers[item.stableFieldId] = item.answer;
-      await client.query(
-        `UPDATE application_session_fields
-         SET generated_answer = $3,
-             fill_value = $3,
-             fill_status = 'filled',
-             updated_at = NOW()
-         WHERE session_id = $1 AND stable_field_id = $2`,
-        [sessionId, item.stableFieldId, item.answer]
-      );
+      updateMemorySessionField(sessionId, item.stableFieldId, {
+        generated_answer: item.answer,
+        fill_value: item.answer,
+        fill_status: 'filled',
+      });
     }
-  });
+  } else {
+    await withTransaction(async (client) => {
+      for (const item of allAnswers) {
+        generatedAnswers[item.stableFieldId] = item.answer;
+        await client.query(
+          `UPDATE application_session_fields
+           SET generated_answer = $3,
+               fill_value = $3,
+               fill_status = 'filled',
+               updated_at = NOW()
+           WHERE session_id = $1 AND stable_field_id = $2`,
+          [sessionId, item.stableFieldId, item.answer]
+        );
+      }
+    });
+  }
 
   let documentManifest = null;
   let documents: Record<string, string> = {};
@@ -350,15 +391,25 @@ router.post('/:taskId/package', async (req: AuthRequest, res: Response) => {
     documents = documentManifest.paths;
   }
 
-  const fileFieldRows = await queryAll(
-    `SELECT stable_field_id, label, name_attr FROM application_session_fields
-     WHERE session_id = $1 AND field_type = 'file'`,
-    [sessionId]
-  );
+  const fileFieldRows = config.applicationSessionPersistDb
+    ? await queryAll(
+      `SELECT stable_field_id, label, name_attr FROM application_session_fields
+       WHERE session_id = $1 AND field_type = 'file'`,
+      [sessionId]
+    )
+    : listMemorySessionFields(sessionId).filter((row) => row.field_type === 'file');
+
   for (const row of fileFieldRows as Array<Record<string, unknown>>) {
     const slot = inferSuggestedDocumentForPackage(row.label, row.name_attr);
     const docKey = slot === 'cover_letter' ? 'coverLetterPdfPath' : 'resumePdfPath';
     if (!documents[docKey]) continue;
+    if (!config.applicationSessionPersistDb) {
+      updateMemorySessionField(sessionId, String(row.stable_field_id), {
+        fill_status: 'awaiting_answer',
+        generated_answer: slot,
+      });
+      continue;
+    }
     await execute(
       `UPDATE application_session_fields
        SET fill_status = 'awaiting_answer',
@@ -380,27 +431,37 @@ router.post('/:taskId/package', async (req: AuthRequest, res: Response) => {
     error: null,
   };
 
-  await execute(
-    `UPDATE application_sessions
-     SET generated_answers = $2::jsonb,
-         metadata = $3::jsonb,
-         status = 'filling',
-         last_activity_at = NOW(),
-         updated_at = NOW()
-     WHERE id = $1`,
-    [
-      sessionId,
-      JSON.stringify(generatedAnswers),
-      JSON.stringify({
-        ...metadata,
-        taskId: publicTaskId,
-        publicTaskId,
-        gptTask,
-        documents: { ...(metadata.documents as object || {}), ...documents },
-        documentManifest,
-      }),
-    ]
-  );
+  const nextMetadata = {
+    ...metadata,
+    taskId: publicTaskId,
+    publicTaskId,
+    gptTask,
+    documents: { ...(metadata.documents as object || {}), ...documents },
+    documentManifest,
+  };
+
+  if (!config.applicationSessionPersistDb) {
+    updateMemorySession(sessionId, {
+      generated_answers: generatedAnswers,
+      metadata: nextMetadata,
+      status: 'filling',
+    });
+  } else {
+    await execute(
+      `UPDATE application_sessions
+       SET generated_answers = $2::jsonb,
+           metadata = $3::jsonb,
+           status = 'filling',
+           last_activity_at = NOW(),
+           updated_at = NOW()
+       WHERE id = $1`,
+      [
+        sessionId,
+        JSON.stringify(generatedAnswers),
+        JSON.stringify(nextMetadata),
+      ]
+    );
+  }
 
   logger.info('GPT package stored', {
     sessionId,

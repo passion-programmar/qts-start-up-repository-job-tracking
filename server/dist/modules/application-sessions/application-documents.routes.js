@@ -9,12 +9,23 @@ const auth_1 = require("../../middleware/auth");
 const scope_1 = require("../../middleware/scope");
 const application_documents_1 = require("../../services/application-documents");
 const connection_1 = require("../../database/connection");
+const env_1 = require("../../config/env");
+const application_session_store_1 = require("../../services/application-session-store");
 const document_builder_1 = require("../document-builder");
 const logger_1 = require("../../utilities/logger");
 const router = (0, express_1.Router)({ mergeParams: true });
 router.use(auth_1.requireAuth);
 router.use(auth_1.requireAdminOrBidder);
 async function getSessionForRequest(req, sessionId) {
+    if (!env_1.config.applicationSessionPersistDb) {
+        const session = (0, application_session_store_1.getMemoryApplicationSession)(sessionId);
+        if (!session)
+            return null;
+        if (req.role !== 'admin' && req.bidderId != null && req.bidderId !== session.bidder_id) {
+            return null;
+        }
+        return session;
+    }
     const scope = (0, scope_1.candidateBidderFilter)(req, 'c', 2);
     let query = `
     SELECT s.*
@@ -86,18 +97,24 @@ router.post('/build', async (req, res) => {
     }
     const manifest = await (0, document_builder_1.buildApplicationDocuments)(sessionId, parsed.data);
     const metadata = readMetadata(session);
-    await (0, connection_1.execute)(`UPDATE application_sessions
-     SET metadata = $2::jsonb,
-         last_activity_at = NOW(),
-         updated_at = NOW()
-     WHERE id = $1`, [
-        sessionId,
-        JSON.stringify({
-            ...metadata,
-            documents: { ...(metadata.documents || {}), ...manifest.paths },
-            documentManifest: manifest,
-        }),
-    ]);
+    const nextMetadata = {
+        ...metadata,
+        documents: { ...(metadata.documents || {}), ...manifest.paths },
+        documentManifest: manifest,
+    };
+    if (!env_1.config.applicationSessionPersistDb) {
+        (0, application_session_store_1.updateMemorySession)(sessionId, { metadata: nextMetadata });
+    }
+    else {
+        await (0, connection_1.execute)(`UPDATE application_sessions
+       SET metadata = $2::jsonb,
+           last_activity_at = NOW(),
+           updated_at = NOW()
+       WHERE id = $1`, [
+            sessionId,
+            JSON.stringify(nextMetadata),
+        ]);
+    }
     logger_1.logger.info('Documents built via API', { sessionId, artifacts: manifest.artifacts.length });
     res.json({
         success: true,

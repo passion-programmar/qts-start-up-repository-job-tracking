@@ -1,5 +1,7 @@
 # justjoin.it Application Flow Analysis
 
+> **Current system (June 2026):** See [docs/CURRENT-SYSTEM.md](docs/CURRENT-SYSTEM.md) — extension v1.13.25+, job sites, one-step auto-apply.
+
 This document describes how QTS Job Tracking detects and handles different apply flows on [justjoin.it](https://justjoin.it) job-offer pages.
 
 ## Analyzed page pattern

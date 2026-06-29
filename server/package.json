@@ -17,7 +17,8 @@
     "db:down": "docker compose -f ../docker-compose.yml down",
     "migrate:sqlite": "node scripts/migrate-sqlite-to-pg.mjs",
     "db:reset": "npm run build && node dist/scripts/reset-db.js",
-    "db:clear-bidders": "npm run build && node dist/scripts/clear-bidders-candidates.js"
+    "db:clear-bidders": "npm run build && node dist/scripts/clear-bidders-candidates.js",
+    "db:clear-apply-sessions": "npm run build && node dist/scripts/clear-application-sessions.js"
   },
   "pkg": {
     "scripts": "dist/**/*.js",

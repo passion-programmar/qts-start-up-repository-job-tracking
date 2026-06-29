@@ -4,6 +4,8 @@ importScripts(
   '../shared/job-detect.js',
   '../shared/api-prefetch.js',
   '../shared/custom-gpt.js',
+  '../shared/bidder-auth-storage.js',
+  '../shared/apply-session-store.js',
   '../shared/api-worker.js',
   '../shared/gpt-worker-handoff.js',
   '../shared/field-classifier.js',
@@ -42,6 +44,21 @@ let captureWindowId = null;
 let lastSourceTabId = null;
 const lastAutoOpenKeyByTab = new Map();
 const detectGenerationByTab = new Map();
+const detectSuccessToastShownKeys = new Set();
+
+function detectSuccessToastKey(tabId, url) {
+  const normalized = typeof normalizeJobUrl === 'function'
+    ? normalizeJobUrl(url)
+    : String(url || '').trim();
+  return `${tabId}:${normalized}`;
+}
+
+function clearDetectSuccessToastsForTab(tabId) {
+  const prefix = `${tabId}:`;
+  for (const key of detectSuccessToastShownKeys) {
+    if (key.startsWith(prefix)) detectSuccessToastShownKeys.delete(key);
+  }
+}
 
 const EXTRACTOR_FILES = [
   'content/extractors/generic.js',
@@ -267,6 +284,7 @@ const JOB_PANEL_WATCH_FILE = 'content/job-panel-watch.js';
 const LINKEDIN_PANEL_WATCH_FILE = 'content/linkedin-panel-watch.js';
 const AUTO_DETECT_DELAY_MS = 100;
 const injectedExtractorTabs = new Set();
+const extractorInjectInFlight = new Map();
 
 async function getTab(tabId) {
   try {
@@ -288,14 +306,33 @@ async function injectExtractors(tabId) {
   if (!(await canInjectIntoTab(tab))) return false;
   if (injectedExtractorTabs.has(tabId)) return true;
 
-  try {
-    await chrome.scripting.executeScript({ target: { tabId }, files: EXTRACTOR_FILES });
-    injectedExtractorTabs.add(tabId);
-    return true;
-  } catch (err) {
-    console.warn('[QTS_Startup] Skipped injection on', tab.url, err?.message || err);
-    return false;
-  }
+  const inFlight = extractorInjectInFlight.get(tabId);
+  if (inFlight) return inFlight;
+
+  const promise = (async () => {
+    try {
+      const [{ result: hasExtractors }] = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => typeof window.__extractJobData === 'function',
+      });
+      if (hasExtractors) {
+        injectedExtractorTabs.add(tabId);
+        return true;
+      }
+
+      await chrome.scripting.executeScript({ target: { tabId }, files: EXTRACTOR_FILES });
+      injectedExtractorTabs.add(tabId);
+      return true;
+    } catch (err) {
+      console.warn('[QTS_Startup] Skipped injection on', tab?.url, err?.message || err);
+      return false;
+    } finally {
+      extractorInjectInFlight.delete(tabId);
+    }
+  })();
+
+  extractorInjectInFlight.set(tabId, promise);
+  return promise;
 }
 
 async function injectJobPanelWatch(tabId, pageUrl) {
@@ -659,6 +696,19 @@ async function fillApplicationFormOnTab(tabId, fields) {
   }
 }
 
+function isChatGptHostUrl(url) {
+  const worker = self.__qtsGptWorkerHandoff;
+  if (worker?.isChatGptHost) {
+    return worker.isChatGptHost(url || '');
+  }
+  try {
+    const host = new URL(url || '').hostname.replace(/^www\./, '').toLowerCase();
+    return host === 'chatgpt.com' || host === 'chat.openai.com';
+  } catch {
+    return /chatgpt\.com|chat\.openai\.com/i.test(String(url || ''));
+  }
+}
+
 function isCustomGptUrl(url, title = '') {
   const worker = self.__qtsGptWorkerHandoff;
   if (worker?.isQtsGptTab) {
@@ -896,12 +946,23 @@ async function preloadCustomGptTab() {
       storageKey: GPT_TAB_STORAGE_KEY,
       focus: false,
       preparePage: true,
+      pinInBrowser: true,
     });
   })().finally(() => {
     gptPrewarmPromise = null;
   });
 
   return gptPrewarmPromise;
+}
+
+function isJobPageCandidateUrl(url) {
+  return isExtractablePageUrl(url) && !isIgnoredSite(url) && !isChatGptHostUrl(url);
+}
+
+async function maybePrewarmCustomGptOnJobPage(url) {
+  if (!isJobPageCandidateUrl(url)) return;
+  if (!(await isAutoApplyArmed())) return;
+  preloadCustomGptTab().catch(() => {});
 }
 
 async function restoreCaptureWindowFocus() {
@@ -1206,22 +1267,32 @@ async function dispatchCustomGptTask(taskId, prompt, jobTabId, options = {}) {
 
 async function injectDetectToast(tabId) {
   try {
-    await chrome.scripting.executeScript({ target: { tabId }, files: [DETECT_TOAST_FILE] });
+    const [{ result: hasToast }] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => typeof window.__showQtsDetectToast === 'function',
+    });
+    if (!hasToast) {
+      await chrome.scripting.executeScript({ target: { tabId }, files: [DETECT_TOAST_FILE] });
+    }
     return true;
   } catch {
     return false;
   }
 }
 
-async function showPageDetectAlert(tabId, message, type, durationMs) {
+async function showPageDetectAlert(tabId, message, type, durationMs, options = {}) {
+  const tab = await getTab(tabId);
+  const tabUrl = tab?.url || tab?.pendingUrl || '';
+  if (isChatGptHostUrl(tabUrl) && !options.allowOnGptTab) return;
+
   if (!(await injectDetectToast(tabId))) return;
   try {
     await chrome.scripting.executeScript({
       target: { tabId },
-      func: (msg, toastType, hideMs) => {
-        window.__showQtsDetectToast?.(msg, toastType, hideMs);
+      func: (msg, toastType, hideMs, oncePerPage) => {
+        window.__showQtsDetectToast?.(msg, toastType, hideMs, oncePerPage);
       },
-      args: [message, type, durationMs ?? null],
+      args: [message, type, durationMs ?? null, options.oncePerPage === true],
     });
   } catch {
     // non-fatal
@@ -1229,13 +1300,24 @@ async function showPageDetectAlert(tabId, message, type, durationMs) {
 }
 
 async function isAutoApplyArmed() {
-  return Boolean(await self.__qtsAutoApplicationPipeline?.isAutoApplyEnabled?.());
+  return Boolean(await self.__qtsAutoApplicationPipeline?.isExtensionOperational?.());
+}
+
+function disarmJobPageActivity() {
+  lastAutoOpenKeyByTab.clear();
+  lastAutoPipelineKeyByTab.clear();
+  lastApplyMethodDetectKeyByTab.clear();
+  detectSuccessToastShownKeys.clear();
+  autoPipelineInFlight.clear();
+  detectGenerationByTab.clear();
+  stopGptApprovalWatcher();
+  stopGptPollAndApply();
 }
 
 async function autoDetectJob(tabId, url, { showAlert = true, forcePipeline = false } = {}) {
   if (!forcePipeline && !(await isAutoApplyArmed())) return;
 
-  if (!isExtractablePageUrl(url) || isIgnoredSite(url)) return;
+  if (!isExtractablePageUrl(url) || isIgnoredSite(url) || isChatGptHostUrl(url)) return;
 
   const generation = (detectGenerationByTab.get(tabId) || 0) + 1;
   detectGenerationByTab.set(tabId, generation);
@@ -1265,7 +1347,13 @@ async function autoDetectJob(tabId, url, { showAlert = true, forcePipeline = fal
   if (showAlert) {
     const toastAction = getDetectToastAction(pageUrl, entry);
     if (toastAction === 'success') {
-      await showPageDetectAlert(tabId, DETECT_SUCCESS_MESSAGE, 'success');
+      const toastKey = detectSuccessToastKey(tabId, pageUrl);
+      if (!detectSuccessToastShownKeys.has(toastKey)) {
+        detectSuccessToastShownKeys.add(toastKey);
+        await showPageDetectAlert(tabId, DETECT_SUCCESS_MESSAGE, 'success', null, {
+          oncePerPage: true,
+        });
+      }
     } else if (toastAction === 'fail') {
       await showPageDetectAlert(tabId, DETECT_FAIL_MESSAGE, 'fail');
     }
@@ -1287,8 +1375,8 @@ async function startAutoApplyOnJobTab(tabId) {
   }
 
   const pipeline = self.__qtsAutoApplicationPipeline;
-  if (!(await pipeline?.isAutoApplyEnabled?.())) {
-    throw new Error('Auto-apply is not armed.');
+  if (!(await pipeline?.isExtensionOperational?.())) {
+    throw new Error('Sign in, turn on auto-apply, and choose a default candidate first.');
   }
 
   lastAutoPipelineKeyByTab.delete(tabId);
@@ -1298,6 +1386,7 @@ async function startAutoApplyOnJobTab(tabId) {
 
   await closeCaptureWindow();
   await restoreJobBrowserFocus(tabId);
+  preloadCustomGptTab().catch(() => {});
   await showPageDetectAlert(tabId, 'QTS: Discovering job details and starting application…', 'info');
   await autoDetectJob(tabId, tab.url, { showAlert: false, forcePipeline: true });
 }
@@ -1318,6 +1407,7 @@ async function maybeStartAutoApplicationPipeline(tabId, url, detectedEntry, opti
   if (!force && lastAutoPipelineKeyByTab.get(tabId) === pipelineKey) return;
 
   autoPipelineInFlight.add(tabId);
+  preloadCustomGptTab().catch(() => {});
   try {
     if (!force) {
       await sleep(AUTO_PIPELINE_DELAY_MS);
@@ -1352,32 +1442,36 @@ function notifyCapturePopup(tabId) {
 }
 
 function maybeDetectApplyMethodOnOpen(tabId, url) {
-  if (!url || isIgnoredSite(url)) return;
-  if (!isTemplateCandidateUrl(url)) return;
-  const autoKey = `${tabId}:${url}`;
-  if (lastApplyMethodDetectKeyByTab.get(tabId) === autoKey) {
-    injectApplyModalWatch(tabId, url).catch(() => {});
-    return;
-  }
-  lastApplyMethodDetectKeyByTab.set(tabId, autoKey);
-  detectApplyTemplateOnTab(tabId, url)
-    .then(() => injectApplyModalWatch(tabId, url))
-    .catch(() => {});
+  (async () => {
+    if (!(await isAutoApplyArmed())) return;
+    if (!url || isIgnoredSite(url)) return;
+    if (!isTemplateCandidateUrl(url)) return;
+    const autoKey = `${tabId}:${url}`;
+    if (lastApplyMethodDetectKeyByTab.get(tabId) === autoKey) {
+      injectApplyModalWatch(tabId, url).catch(() => {});
+      return;
+    }
+    lastApplyMethodDetectKeyByTab.set(tabId, autoKey);
+    detectApplyTemplateOnTab(tabId, url)
+      .then(() => injectApplyModalWatch(tabId, url))
+      .catch(() => {});
+  })().catch(() => {});
 }
 
 async function runDetectForActiveTab(tabId) {
   if (!(await isAutoApplyArmed())) return;
   const tab = await getTab(tabId);
   if (!tab?.id || !tab.url) return;
-  if (!isExtractablePageUrl(tab.url) || isIgnoredSite(tab.url)) return;
+  if (!isExtractablePageUrl(tab.url) || isIgnoredSite(tab.url) || isChatGptHostUrl(tab.url)) return;
   lastAutoOpenKeyByTab.delete(tabId);
   await autoDetectJob(tabId, tab.url).catch(() => {});
 }
 
 function maybeTrackAutoOpen(tabId, url) {
-  if (!isExtractablePageUrl(url) || isIgnoredSite(url)) return;
+  if (!isJobPageCandidateUrl(url)) return;
   (async () => {
     if (!(await isAutoApplyArmed())) return;
+    maybePrewarmCustomGptOnJobPage(url);
     const autoKey = `${tabId}:${url}`;
     if (lastAutoOpenKeyByTab.get(tabId) === autoKey) return;
     lastAutoOpenKeyByTab.set(tabId, autoKey);
@@ -1443,6 +1537,11 @@ chrome.runtime.onConnect.addListener((port) => {
 });
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.type === 'AUTH_SESSION_EXPIRED') {
+    disarmJobPageActivity();
+    sendResponse({ ok: true });
+    return false;
+  }
   if (msg.type === 'EXTRACT_JOB') {
     (async () => {
       let tab = null;
@@ -1526,7 +1625,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const tabId = sender.tab?.id;
     const url = msg.url || sender.tab?.url;
     if (!tabId || !url || !isTemplateCandidateUrl(url)) return false;
-    detectApplyTemplateOnTab(tabId, url).catch(() => {});
+    (async () => {
+      if (!(await isAutoApplyArmed())) return;
+      detectApplyTemplateOnTab(tabId, url).catch(() => {});
+    })().catch(() => {});
     return false;
   }
 
@@ -1739,10 +1841,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.type === 'RESET_AUTO_PIPELINE_STATE') {
-    lastAutoPipelineKeyByTab.clear();
-    autoPipelineInFlight.clear();
-    stopGptApprovalWatcher();
-    stopGptPollAndApply();
+    disarmJobPageActivity();
     sendResponse({ ok: true });
     return false;
   }
@@ -1804,6 +1903,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           storageKey: GPT_TAB_STORAGE_KEY,
           focus: !background,
           preparePage: true,
+          pinInBrowser: true,
         });
         sendResponse({ ...result, prewarmed: background });
       } catch (e) {
@@ -1828,14 +1928,23 @@ chrome.runtime.onStartup.addListener(() => {
 
 let authTokenPrefetchTimer = null;
 
+const AUTO_APPLY_ENABLED_KEY = 'qtsAutoApplyEnabled';
+
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area !== 'local' || !changes.authToken) return;
-  if (changes.authToken.newValue) {
+  if (area === 'local' && changes.authToken) {
+    if (!changes.authToken.newValue) {
+      disarmJobPageActivity();
+      return;
+    }
     if (authTokenPrefetchTimer) clearTimeout(authTokenPrefetchTimer);
     authTokenPrefetchTimer = setTimeout(() => {
       authTokenPrefetchTimer = null;
       prefetchWorkspace(true).catch(() => {});
     }, 400);
+    return;
+  }
+  if (area === 'local' && changes[AUTO_APPLY_ENABLED_KEY] && !changes[AUTO_APPLY_ENABLED_KEY].newValue) {
+    disarmJobPageActivity();
   }
 });
 
@@ -1849,11 +1958,9 @@ self.__qtsCustomGpt?.loadCustomGptConfigFromStorage?.().catch(() => {});
 chrome.tabs.onActivated.addListener(async (activeInfo) => {
   const tab = await getTab(activeInfo.tabId);
   const onPinnedGpt = await isPinnedGptTab(activeInfo.tabId);
-  if (tab?.url && !onPinnedGpt) {
+  if (tab?.url && !onPinnedGpt && (await isAutoApplyArmed())) {
     maybeDetectApplyMethodOnOpen(activeInfo.tabId, tab.url);
-    if (await isAutoApplyArmed()) {
-      runDetectForActiveTab(activeInfo.tabId).catch(() => {});
-    }
+    runDetectForActiveTab(activeInfo.tabId).catch(() => {});
     prefetchTabContext(activeInfo.tabId).catch(() => {});
   }
   if (captureWindowId === null) return;
@@ -1867,42 +1974,58 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     lastAutoOpenKeyByTab.delete(tabId);
     lastAutoPipelineKeyByTab.delete(tabId);
     lastApplyMethodDetectKeyByTab.delete(tabId);
+    clearDetectSuccessToastsForTab(tabId);
     return;
   }
 
   const url = changeInfo.url || tab.url;
   if (!url || !isExtractablePageUrl(url)) return;
   if (changeInfo.status === 'complete' || changeInfo.url) {
-    maybeDetectApplyMethodOnOpen(tabId, url);
-    maybeTrackAutoOpen(tabId, url);
+    (async () => {
+      if (!(await isAutoApplyArmed())) return;
+      maybeDetectApplyMethodOnOpen(tabId, url);
+      maybeTrackAutoOpen(tabId, url);
+    })().catch(() => {});
   }
 });
 
 chrome.webNavigation.onCommitted.addListener((details) => {
   if (details.frameId !== 0) return;
   if (!isExtractablePageUrl(details.url)) return;
-  injectExtractors(details.tabId).catch(() => {});
-  if (details.transitionQualifiers?.includes('reload') || details.transitionType === 'reload') {
-    lastAutoOpenKeyByTab.delete(details.tabId);
-    lastApplyMethodDetectKeyByTab.delete(details.tabId);
-    maybeTrackAutoOpen(details.tabId, details.url);
-  }
-  maybeDetectApplyMethodOnOpen(details.tabId, details.url);
+  if (isChatGptHostUrl(details.url)) return;
+  injectedExtractorTabs.delete(details.tabId);
+  maybePrewarmCustomGptOnJobPage(details.url);
+  (async () => {
+    if (!(await isAutoApplyArmed())) return;
+    injectExtractors(details.tabId).catch(() => {});
+    if (details.transitionQualifiers?.includes('reload') || details.transitionType === 'reload') {
+      lastAutoOpenKeyByTab.delete(details.tabId);
+      lastApplyMethodDetectKeyByTab.delete(details.tabId);
+      clearDetectSuccessToastsForTab(details.tabId);
+      maybeTrackAutoOpen(details.tabId, details.url);
+    }
+    maybeDetectApplyMethodOnOpen(details.tabId, details.url);
+  })().catch(() => {});
 });
 
 chrome.webNavigation.onHistoryStateUpdated.addListener((details) => {
   if (details.frameId !== 0) return;
   if (!isExtractablePageUrl(details.url)) return;
-  maybeDetectApplyMethodOnOpen(details.tabId, details.url);
-  maybeTrackAutoOpen(details.tabId, details.url);
+  (async () => {
+    if (!(await isAutoApplyArmed())) return;
+    maybeDetectApplyMethodOnOpen(details.tabId, details.url);
+    maybeTrackAutoOpen(details.tabId, details.url);
+  })().catch(() => {});
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   lastAutoOpenKeyByTab.delete(tabId);
   lastAutoPipelineKeyByTab.delete(tabId);
   lastApplyMethodDetectKeyByTab.delete(tabId);
+  clearDetectSuccessToastsForTab(tabId);
   autoPipelineInFlight.delete(tabId);
   injectedExtractorTabs.delete(tabId);
+  extractorInjectInFlight.delete(tabId);
   detectGenerationByTab.delete(tabId);
   removeDetectedJobForTab(tabId).catch(() => {});
   removeApplyTemplateForTab(tabId).catch(() => {});
@@ -1936,6 +2059,8 @@ function isIgnoredSite(url) {
       'stackoverflow.com',
       'chromewebstore.google.com',
       'chrome.google.com',
+      'chatgpt.com',
+      'chat.openai.com',
     ]);
     return ignored.has(host);
   } catch {
@@ -1946,9 +2071,9 @@ function isIgnoredSite(url) {
 async function maybeOpenCaptureWindow(tabId, url) {
   if (!isExtractablePageUrl(url) || isIgnoredSite(url)) return;
 
-  const prefs = await chrome.storage.local.get(['autoOpenPopup', 'authToken']);
+  const prefs = await chrome.storage.local.get(['autoOpenPopup']);
   if (prefs.autoOpenPopup === false) return;
-  if (!prefs.authToken) return;
+  if (!(await isAutoApplyArmed())) return;
 
   await openCaptureWindow(tabId, { focus: false });
 }
@@ -2037,8 +2162,8 @@ async function openCaptureWindow(tabId, options = {}) {
 
   if (await isAutoApplyArmed()) {
     runDetectForActiveTab(jobTabId).catch(() => {});
+    prefetchTabContext(jobTabId).catch(() => {});
   }
-  prefetchTabContext(jobTabId).catch(() => {});
 
   if (captureWindowId !== null) {
     try {

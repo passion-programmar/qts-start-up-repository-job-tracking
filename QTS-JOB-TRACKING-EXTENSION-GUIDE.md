@@ -1,5 +1,7 @@
 # QTS Job Tracking â€” Extension Usage Guide
 
+> **Current system (June 2026):** See [docs/CURRENT-SYSTEM.md](docs/CURRENT-SYSTEM.md) — extension v1.13.25+, job sites, one-step auto-apply.
+
 **File:** `QTS-JOB-TRACKING-EXTENSION-GUIDE.md`  
 **For:** Bidders who capture job postings from job sites  
 **Requires:** Chrome (or Chromium-based browser), bidder account, server running
