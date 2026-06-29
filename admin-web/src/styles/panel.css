@@ -103,6 +103,72 @@
 .org-tree-branch--caller {
   margin-top: 8px;
 }
+
+.database-records-layout {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.database-records-sidebar .card-title {
+  margin-bottom: 12px;
+}
+
+.database-records-category-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.database-records-category {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+
+.database-records-category.is-active {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 8%, var(--surface));
+}
+
+.database-records-panel-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.database-records-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.database-records-pagination-actions {
+  display: flex;
+  gap: 8px;
+}
+
+@media (max-width: 900px) {
+  .database-records-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
 .org-tree-branch--manager {
   margin-top: 10px;
 }

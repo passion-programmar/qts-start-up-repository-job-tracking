@@ -14,6 +14,7 @@ const interviews_routes_1 = __importDefault(require("./modules/interviews/interv
 const settings_routes_1 = __importDefault(require("./modules/settings/settings.routes"));
 const application_sessions_routes_1 = __importDefault(require("./modules/application-sessions/application-sessions.routes"));
 const application_tasks_routes_1 = __importDefault(require("./modules/application-sessions/application-tasks.routes"));
+const admin_records_routes_1 = __importDefault(require("./modules/admin-records/admin-records.routes"));
 const error_handler_1 = require("./middleware/error-handler");
 const paths_1 = require("./config/paths");
 const env_1 = require("./config/env");
@@ -61,6 +62,7 @@ app.use('/api/interviews', interviews_routes_1.default);
 app.use('/api/settings', settings_routes_1.default);
 app.use('/api/application-sessions', application_sessions_routes_1.default);
 app.use('/api/application-tasks', application_tasks_routes_1.default);
+app.use('/api/admin-records', admin_records_routes_1.default);
 app.get('/api/health', (_req, res) => {
     res.json({
         success: true,

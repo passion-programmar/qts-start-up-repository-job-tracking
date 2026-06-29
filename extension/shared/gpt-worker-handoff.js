@@ -3,6 +3,12 @@
 (function initQtsGptWorkerHandoff(global) {
   if (global.__qtsGptWorkerHandoff) return;
 
+  const CHATGPT_TAB_URL_PATTERNS = [
+    'https://chatgpt.com/*',
+    'https://www.chatgpt.com/*',
+    'https://chat.openai.com/*',
+  ];
+
   function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
@@ -85,7 +91,7 @@
   }
 
   async function findExistingGptTabs() {
-    const tabs = await chrome.tabs.query({});
+    const tabs = await chrome.tabs.query({ url: CHATGPT_TAB_URL_PATTERNS });
     const qtsTabs = tabs.filter((tab) => isQtsGptTab(tab));
     if (qtsTabs.length) return qtsTabs;
 
@@ -96,7 +102,7 @@
 
   async function consolidateDuplicateGptTabs(keepTabId) {
     if (!keepTabId) return;
-    const tabs = await chrome.tabs.query({});
+    const tabs = await chrome.tabs.query({ url: CHATGPT_TAB_URL_PATTERNS });
     for (const tab of tabs) {
       if (!tab?.id || tab.id === keepTabId) continue;
       if (!isQtsGptTab(tab)) continue;

@@ -117,7 +117,9 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
   const status = (req.query.status as string) || '';
 
   let query = `
-    SELECT j.*, COALESCE(app.applied_count, 0)::int AS applied_count
+    SELECT j.id, j.title, j.company, j.url, j.normalized_url, j.source, j.bidder_id,
+           j.created_by_user_id, j.created_at, j.updated_at,
+           COALESCE(app.applied_count, 0)::int AS applied_count
     FROM jobs j
     LEFT JOIN (
       SELECT job_id, COUNT(*)::int AS applied_count
@@ -211,115 +213,122 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
         ) OR j.bidder_id = $1`
     : '';
 
-  const totalJobs = await queryOne<{ count: number }>(
-    `SELECT COUNT(*)::int AS count FROM jobs j ${jobScope}`,
-    cjParams
-  );
-  const totalCandidates = await queryOne<{ count: number }>(
-    scoped
-      ? `SELECT COUNT(*)::int AS count FROM candidates WHERE ${candidateScopeSql}`
-      : 'SELECT COUNT(*)::int AS count FROM candidates',
-    cjParams
-  );
-  const activeCandidates = await queryOne<{ count: number }>(
-    scoped
-      ? `SELECT COUNT(*)::int AS count FROM candidates WHERE is_active = TRUE AND ${candidateScopeSql}`
-      : 'SELECT COUNT(*)::int AS count FROM candidates WHERE is_active = TRUE',
-    cjParams
-  );
-  const applications = await queryOne<{ count: number }>(
-    scoped
-      ? managerScope
-        ? `SELECT COUNT(*)::int AS count FROM candidate_jobs cj
-           JOIN candidates c_scope ON c_scope.id = cj.candidate_id
-             AND c_scope.bidder_id IN (SELECT id FROM bidders WHERE manager_id = $1)
-           WHERE cj.status = 'applied'`
-        : `SELECT COUNT(*)::int AS count FROM candidate_jobs cj
-           JOIN candidates c_scope ON c_scope.id = cj.candidate_id AND c_scope.bidder_id = $1
-           WHERE cj.status = 'applied'`
-      : "SELECT COUNT(*)::int AS count FROM candidate_jobs WHERE status = 'applied'",
-    cjParams
-  );
-
-  const todayBids = await queryOne<{ count: number }>(`
-    SELECT COUNT(*)::int AS count FROM candidate_jobs cj
-    ${cjBidderJoin}
-    WHERE cj.status = 'applied' AND cj.applied_at IS NOT NULL
-      AND cj.applied_at::date = CURRENT_DATE
-  `, cjParams);
-
-  const weekBids = await queryOne<{ count: number }>(`
-    SELECT COUNT(*)::int AS count FROM candidate_jobs cj
-    ${cjBidderJoin}
-    WHERE cj.status = 'applied' AND cj.applied_at IS NOT NULL
-      AND cj.applied_at >= NOW() - INTERVAL '7 days'
-  `, cjParams);
-
-  const monthBids = await queryOne<{ count: number }>(`
-    SELECT COUNT(*)::int AS count FROM candidate_jobs cj
-    ${cjBidderJoin}
-    WHERE cj.status = 'applied' AND cj.applied_at IS NOT NULL
-      AND date_trunc('month', cj.applied_at) = date_trunc('month', NOW())
-  `, cjParams);
-
-  const recentApplications = await queryAll(`
-    SELECT j.id AS job_id, j.title AS job_title, j.company, c.name AS candidate_name, cj.applied_at
-    FROM candidate_jobs cj
-    JOIN jobs j ON j.id = cj.job_id
-    JOIN candidates c ON c.id = cj.candidate_id
-    WHERE cj.status = 'applied'
-    ${scoped ? (managerScope ? 'AND c.bidder_id IN (SELECT id FROM bidders WHERE manager_id = $1)' : 'AND c.bidder_id = $1') : ''}
-    ORDER BY cj.applied_at DESC NULLS LAST, cj.updated_at DESC
-    LIMIT 50
-  `, cjParams);
-
-  const dailyBids = await queryAll(`
-    SELECT cj.applied_at::date AS label, COUNT(*)::int AS count
-    FROM candidate_jobs cj
-    ${cjBidderJoin}
-    WHERE cj.status = 'applied' AND cj.applied_at IS NOT NULL
-      AND cj.applied_at >= NOW() - INTERVAL '30 days'
-    GROUP BY cj.applied_at::date
-    ORDER BY label DESC
-  `, cjParams);
-
-  const weeklyBids = await queryAll(`
-    SELECT TO_CHAR(cj.applied_at, 'IYYY-"W"IW') AS label, COUNT(*)::int AS count
-    FROM candidate_jobs cj
-    ${cjBidderJoin}
-    WHERE cj.status = 'applied' AND cj.applied_at IS NOT NULL
-      AND cj.applied_at >= NOW() - INTERVAL '84 days'
-    GROUP BY TO_CHAR(cj.applied_at, 'IYYY-"W"IW')
-    ORDER BY label DESC
-    LIMIT 12
-  `, cjParams);
-
-  const monthlyBids = await queryAll(`
-    SELECT TO_CHAR(cj.applied_at, 'YYYY-MM') AS label, COUNT(*)::int AS count
-    FROM candidate_jobs cj
-    ${cjBidderJoin}
-    WHERE cj.status = 'applied' AND cj.applied_at IS NOT NULL
-    GROUP BY TO_CHAR(cj.applied_at, 'YYYY-MM')
-    ORDER BY label DESC
-    LIMIT 12
-  `, cjParams);
-
-  const jobRows = await queryAll<{
-    id: number;
-    title: string;
-    company: string;
-    url: string;
-    created_at: string;
-    candidate_name: string | null;
-    applied_at: string | null;
-  }>(`
-    SELECT j.id, j.title, j.company, j.url, j.created_at, c.name AS candidate_name, cj.applied_at
-    FROM jobs j
-    LEFT JOIN candidate_jobs cj ON cj.job_id = j.id AND cj.status = 'applied'
-    LEFT JOIN candidates c ON c.id = cj.candidate_id
-    ${scoped ? (managerScope ? 'WHERE (c.bidder_id IN (SELECT id FROM bidders WHERE manager_id = $1) OR j.bidder_id IN (SELECT id FROM bidders WHERE manager_id = $1))' : 'WHERE (c.bidder_id = $1 OR j.bidder_id = $1)') : ''}
-    ORDER BY j.created_at DESC, cj.applied_at DESC NULLS LAST
-  `, cjParams);
+  const [
+    totalJobs,
+    totalCandidates,
+    activeCandidates,
+    applications,
+    todayBids,
+    weekBids,
+    monthBids,
+    recentApplications,
+    dailyBids,
+    weeklyBids,
+    monthlyBids,
+    jobRows,
+  ] = await Promise.all([
+    queryOne<{ count: number }>(
+      `SELECT COUNT(*)::int AS count FROM jobs j ${jobScope}`,
+      cjParams
+    ),
+    queryOne<{ count: number }>(
+      scoped
+        ? `SELECT COUNT(*)::int AS count FROM candidates WHERE ${candidateScopeSql}`
+        : 'SELECT COUNT(*)::int AS count FROM candidates',
+      cjParams
+    ),
+    queryOne<{ count: number }>(
+      scoped
+        ? `SELECT COUNT(*)::int AS count FROM candidates WHERE is_active = TRUE AND ${candidateScopeSql}`
+        : 'SELECT COUNT(*)::int AS count FROM candidates WHERE is_active = TRUE',
+      cjParams
+    ),
+    queryOne<{ count: number }>(
+      scoped
+        ? managerScope
+          ? `SELECT COUNT(*)::int AS count FROM candidate_jobs cj
+             JOIN candidates c_scope ON c_scope.id = cj.candidate_id
+               AND c_scope.bidder_id IN (SELECT id FROM bidders WHERE manager_id = $1)
+             WHERE cj.status = 'applied'`
+          : `SELECT COUNT(*)::int AS count FROM candidate_jobs cj
+             JOIN candidates c_scope ON c_scope.id = cj.candidate_id AND c_scope.bidder_id = $1
+             WHERE cj.status = 'applied'`
+        : "SELECT COUNT(*)::int AS count FROM candidate_jobs WHERE status = 'applied'",
+      cjParams
+    ),
+    queryOne<{ count: number }>(`
+      SELECT COUNT(*)::int AS count FROM candidate_jobs cj
+      ${cjBidderJoin}
+      WHERE cj.status = 'applied' AND cj.applied_at IS NOT NULL
+        AND cj.applied_at::date = CURRENT_DATE
+    `, cjParams),
+    queryOne<{ count: number }>(`
+      SELECT COUNT(*)::int AS count FROM candidate_jobs cj
+      ${cjBidderJoin}
+      WHERE cj.status = 'applied' AND cj.applied_at IS NOT NULL
+        AND cj.applied_at >= NOW() - INTERVAL '7 days'
+    `, cjParams),
+    queryOne<{ count: number }>(`
+      SELECT COUNT(*)::int AS count FROM candidate_jobs cj
+      ${cjBidderJoin}
+      WHERE cj.status = 'applied' AND cj.applied_at IS NOT NULL
+        AND date_trunc('month', cj.applied_at) = date_trunc('month', NOW())
+    `, cjParams),
+    queryAll(`
+      SELECT j.id AS job_id, j.title AS job_title, j.company, c.name AS candidate_name, cj.applied_at
+      FROM candidate_jobs cj
+      JOIN jobs j ON j.id = cj.job_id
+      JOIN candidates c ON c.id = cj.candidate_id
+      WHERE cj.status = 'applied'
+      ${scoped ? (managerScope ? 'AND c.bidder_id IN (SELECT id FROM bidders WHERE manager_id = $1)' : 'AND c.bidder_id = $1') : ''}
+      ORDER BY cj.applied_at DESC NULLS LAST, cj.updated_at DESC
+      LIMIT 50
+    `, cjParams),
+    queryAll(`
+      SELECT cj.applied_at::date AS label, COUNT(*)::int AS count
+      FROM candidate_jobs cj
+      ${cjBidderJoin}
+      WHERE cj.status = 'applied' AND cj.applied_at IS NOT NULL
+        AND cj.applied_at >= NOW() - INTERVAL '30 days'
+      GROUP BY cj.applied_at::date
+      ORDER BY label DESC
+    `, cjParams),
+    queryAll(`
+      SELECT TO_CHAR(cj.applied_at, 'IYYY-"W"IW') AS label, COUNT(*)::int AS count
+      FROM candidate_jobs cj
+      ${cjBidderJoin}
+      WHERE cj.status = 'applied' AND cj.applied_at IS NOT NULL
+        AND cj.applied_at >= NOW() - INTERVAL '84 days'
+      GROUP BY TO_CHAR(cj.applied_at, 'IYYY-"W"IW')
+      ORDER BY label DESC
+      LIMIT 12
+    `, cjParams),
+    queryAll(`
+      SELECT TO_CHAR(cj.applied_at, 'YYYY-MM') AS label, COUNT(*)::int AS count
+      FROM candidate_jobs cj
+      ${cjBidderJoin}
+      WHERE cj.status = 'applied' AND cj.applied_at IS NOT NULL
+      GROUP BY TO_CHAR(cj.applied_at, 'YYYY-MM')
+      ORDER BY label DESC
+      LIMIT 12
+    `, cjParams),
+    queryAll<{
+      id: number;
+      title: string;
+      company: string;
+      url: string;
+      created_at: string;
+      candidate_name: string | null;
+      applied_at: string | null;
+    }>(`
+      SELECT j.id, j.title, j.company, j.url, j.created_at, c.name AS candidate_name, cj.applied_at
+      FROM jobs j
+      LEFT JOIN candidate_jobs cj ON cj.job_id = j.id AND cj.status = 'applied'
+      LEFT JOIN candidates c ON c.id = cj.candidate_id
+      ${scoped ? (managerScope ? 'WHERE (c.bidder_id IN (SELECT id FROM bidders WHERE manager_id = $1) OR j.bidder_id IN (SELECT id FROM bidders WHERE manager_id = $1))' : 'WHERE (c.bidder_id = $1 OR j.bidder_id = $1)') : ''}
+      ORDER BY j.created_at DESC, cj.applied_at DESC NULLS LAST
+    `, cjParams),
+  ]);
 
   const jobsOverviewMap = new Map<number, {
     id: number;

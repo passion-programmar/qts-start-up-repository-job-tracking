@@ -67,7 +67,7 @@ export function ManagersView() {
     const [usersRes, biddersRes, candidatesRes] = await Promise.all([
       api<{ success: boolean; users?: UserAccount[] }>('GET', '/api/users'),
       api<{ success: boolean; bidders?: Bidder[] }>('GET', '/api/bidders'),
-      api<{ success: boolean; candidates?: Candidate[] }>('GET', '/api/candidates'),
+      api<{ success: boolean; candidates?: Candidate[] }>('GET', '/api/candidates?minimal=true'),
     ]);
 
     const allUsers = usersRes.users || [];

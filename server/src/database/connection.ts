@@ -417,8 +417,11 @@ async function migrateSchema(): Promise<void> {
   await execute(`UPDATE admins SET role = 'bidder' WHERE role = 'user'`);
 
   await execute('CREATE INDEX IF NOT EXISTS idx_candidates_bidder ON candidates(bidder_id)');
+  await execute('CREATE INDEX IF NOT EXISTS idx_candidates_bidder_active ON candidates(bidder_id, is_active)');
   await execute('CREATE INDEX IF NOT EXISTS idx_jobs_bidder ON jobs(bidder_id)');
   await execute('CREATE INDEX IF NOT EXISTS idx_admins_bidder ON admins(bidder_id)');
+  await execute('CREATE INDEX IF NOT EXISTS idx_admins_username ON admins(username)');
+  await execute('CREATE INDEX IF NOT EXISTS idx_candidate_jobs_status_job ON candidate_jobs(status, job_id)');
   await execute('CREATE INDEX IF NOT EXISTS idx_bidders_manager ON bidders(manager_id)');
   await execute('CREATE INDEX IF NOT EXISTS idx_interviews_caller ON interview_processes(caller_user_id)');
   await execute('CREATE INDEX IF NOT EXISTS idx_interviews_bidder ON interview_processes(bidder_id)');

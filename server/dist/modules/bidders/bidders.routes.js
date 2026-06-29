@@ -79,10 +79,22 @@ router.get('/', requireAdminOrManagerRead, async (req, res) => {
     const bidders = await (0, connection_1.queryAll)(`
     SELECT b.*,
       m.username AS manager_name,
-      (SELECT COUNT(*)::int FROM admins a WHERE a.bidder_id = b.id) AS account_count,
-      (SELECT COUNT(*)::int FROM candidates c WHERE c.bidder_id = b.id) AS candidate_count
+      COALESCE(ac.account_count, 0)::int AS account_count,
+      COALESCE(cc.candidate_count, 0)::int AS candidate_count
     FROM bidders b
     LEFT JOIN admins m ON m.id = b.manager_id
+    LEFT JOIN (
+      SELECT bidder_id, COUNT(*)::int AS account_count
+      FROM admins
+      WHERE bidder_id IS NOT NULL
+      GROUP BY bidder_id
+    ) ac ON ac.bidder_id = b.id
+    LEFT JOIN (
+      SELECT bidder_id, COUNT(*)::int AS candidate_count
+      FROM candidates
+      WHERE bidder_id IS NOT NULL
+      GROUP BY bidder_id
+    ) cc ON cc.bidder_id = b.id
     ${managerFilter}
     ORDER BY b.name ASC
   `, params);

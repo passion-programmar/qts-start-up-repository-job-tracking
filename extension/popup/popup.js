@@ -23,8 +23,11 @@ let lastDevCapture = null;
 let gptHandoffInProgress = false;
 const gptDispatchWaiters = new Map();
 let defaultCandidateId = null;
+let filterCandidatesTimer = null;
+let lastWorkspaceFetchAt = 0;
 
 const CANDIDATE_CACHE_TTL_MS = 5 * 60 * 1000;
+const WORKSPACE_BACKGROUND_REFRESH_MIN_MS = 45 * 1000;
 const CANDIDATE_CACHE_KEY = 'qtsCandidateCache';
 const SESSION_USER_KEY = 'qtsSessionUser';
 const DEFAULT_CANDIDATE_KEY = 'qtsDefaultCandidateByBidder';
@@ -572,6 +575,10 @@ async function bootstrapPopupFast() {
 
 async function refreshWorkspaceInBackground() {
   try {
+    const cached = await readCandidateCache();
+    if (cached?.savedAt && Date.now() - cached.savedAt < WORKSPACE_BACKGROUND_REFRESH_MIN_MS) {
+      return;
+    }
     const workspace = await fetchWorkspaceData(true);
     if (workspace?.success && workspace.user) {
       defaultCandidateId = await readDefaultCandidateId(workspace.user.bidderId);
@@ -1197,7 +1204,6 @@ async function applyWorkspaceCustomGpt(customGpt, user) {
 async function fetchWorkspaceFromApi() {
   const boot = await window.api.extensionBootstrap();
   if (boot.success && boot.user) {
-    await applyWorkspaceCustomGpt(boot.customGpt, boot.user);
     return {
       success: true,
       user: boot.user,
@@ -1243,6 +1249,7 @@ async function fetchWorkspaceData(forceRefresh = false) {
   const workspace = await fetchWorkspaceFromApi();
   if (!workspace.success) return workspace;
 
+  lastWorkspaceFetchAt = Date.now();
   applyCandidatesData(workspace.candidates, workspace.stacks);
   if (workspace.user) await storeSessionUser(workspace.user);
   if (workspace.customGpt) await applyWorkspaceCustomGpt(workspace.customGpt, workspace.user);
@@ -2299,7 +2306,11 @@ function onCandidateStatusChange(event) {
 }
 
 function filterCandidates() {
-  renderCandidates();
+  if (filterCandidatesTimer) clearTimeout(filterCandidatesTimer);
+  filterCandidatesTimer = setTimeout(() => {
+    filterCandidatesTimer = null;
+    renderCandidates();
+  }, 180);
 }
 
 function formatApiError(response) {

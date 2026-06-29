@@ -71,7 +71,11 @@ async function canAccessCandidate(req, id) {
 router.get('/', async (req, res) => {
     const search = req.query.search || '';
     const activeOnly = req.query.active === 'true';
-    let query = 'SELECT c.*, b.name AS bidder_name FROM candidates c LEFT JOIN bidders b ON b.id = c.bidder_id';
+    const minimal = req.query.minimal === 'true';
+    const selectColumns = minimal
+        ? 'c.id, c.name, c.bidder_id, c.is_active, c.stack, c.color'
+        : 'c.*';
+    let query = `SELECT ${selectColumns}, b.name AS bidder_name FROM candidates c LEFT JOIN bidders b ON b.id = c.bidder_id`;
     const params = [];
     const conditions = [];
     let paramIndex = 1;

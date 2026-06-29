@@ -1826,10 +1826,16 @@ chrome.runtime.onStartup.addListener(() => {
   prefetchWorkspaceIfStale().catch(() => {});
 });
 
+let authTokenPrefetchTimer = null;
+
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local' || !changes.authToken) return;
   if (changes.authToken.newValue) {
-    prefetchWorkspace(true).catch(() => {});
+    if (authTokenPrefetchTimer) clearTimeout(authTokenPrefetchTimer);
+    authTokenPrefetchTimer = setTimeout(() => {
+      authTokenPrefetchTimer = null;
+      prefetchWorkspace(true).catch(() => {});
+    }, 400);
   }
 });
 

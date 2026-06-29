@@ -7,6 +7,11 @@ const PREFETCH_CUSTOM_GPT_CONFIG_KEY = 'qtsCustomGptConfig';
 const PREFETCH_SAVED_JOB_CACHE_KEY = 'qtsSavedJobCache';
 const PREFETCH_WORKSPACE_TTL_MS = 5 * 60 * 1000;
 const PREFETCH_SAVED_JOB_TTL_MS = 3 * 60 * 1000;
+const PREFETCH_TAB_CONTEXT_TTL_MS = 8 * 1000;
+const PREFETCH_SAVED_JOB_CONCURRENCY = 4;
+
+let workspaceFetchPromise = null;
+const tabContextPrefetchAt = new Map();
 
 async function prefetchReadAuthToken() {
   return new Promise((resolve) => {
@@ -111,17 +116,29 @@ async function prefetchWorkspace(force = false) {
     }
   }
 
-  const boot = await prefetchApiRequest('/api/auth/extension-bootstrap');
-  if (!boot.success || !boot.user) return boot;
-
-  const candidates = boot.candidates || [];
-  const stacks = boot.stacks || [];
-  await prefetchWriteSessionUser(boot.user);
-  await prefetchWriteCustomGptConfig(boot.customGpt, boot.user);
-  if (candidates.length) {
-    await prefetchWriteCandidateCache(candidates, stacks, boot.user);
+  if (workspaceFetchPromise) {
+    return workspaceFetchPromise;
   }
-  return { success: true, user: boot.user, candidates, stacks, customGpt: boot.customGpt || null };
+
+  workspaceFetchPromise = (async () => {
+    const boot = await prefetchApiRequest('/api/auth/extension-bootstrap');
+    if (!boot.success || !boot.user) return boot;
+
+    const candidates = boot.candidates || [];
+    const stacks = boot.stacks || [];
+    await prefetchWriteSessionUser(boot.user);
+    await prefetchWriteCustomGptConfig(boot.customGpt, boot.user);
+    if (candidates.length) {
+      await prefetchWriteCandidateCache(candidates, stacks, boot.user);
+    }
+    return { success: true, user: boot.user, candidates, stacks, customGpt: boot.customGpt || null };
+  })();
+
+  try {
+    return await workspaceFetchPromise;
+  } finally {
+    workspaceFetchPromise = null;
+  }
 }
 
 async function prefetchWorkspaceIfStale() {
@@ -187,17 +204,38 @@ async function prefetchSavedJobByUrl(url) {
 
 async function prefetchSavedJobsForUrls(urls) {
   const seen = new Set();
+  const queue = [];
   for (const raw of urls || []) {
     const url = String(raw || '').trim();
     if (!url || !url.startsWith('http')) continue;
     const key = prefetchSavedJobKey(url);
     if (!key || seen.has(key)) continue;
     seen.add(key);
-    await prefetchSavedJobByUrl(url);
+    queue.push(url);
   }
+
+  let index = 0;
+  async function worker() {
+    while (index < queue.length) {
+      const current = queue[index++];
+      await prefetchSavedJobByUrl(current);
+    }
+  }
+
+  const workers = Math.min(PREFETCH_SAVED_JOB_CONCURRENCY, queue.length);
+  if (!workers) return;
+  await Promise.all(Array.from({ length: workers }, () => worker()));
 }
 
 async function prefetchTabContext(tabId) {
+  const id = Number(tabId);
+  if (!Number.isFinite(id)) return;
+
+  const now = Date.now();
+  const lastPrefetch = tabContextPrefetchAt.get(id) || 0;
+  if (now - lastPrefetch < PREFETCH_TAB_CONTEXT_TTL_MS) return;
+  tabContextPrefetchAt.set(id, now);
+
   const token = await prefetchReadAuthToken();
   if (!token) return;
 

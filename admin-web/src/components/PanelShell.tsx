@@ -32,6 +32,7 @@ const PAGE_TITLES: Record<string, string> = {
   candidates: 'Candidates',
   jobs: 'Jobs',
   bidders: 'Custom GPT',
+  database: 'Database Records',
   people: 'People',
   interviews: 'Interview Process',
   settings: 'Settings',
@@ -95,6 +96,7 @@ export function PanelShell({
   useEffect(() => {
     let cancelled = false;
     const check = async () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
       try {
         const r = await api<{ success: boolean }>('GET', '/api/health');
         if (!cancelled) setOnline(r.success);
@@ -102,11 +104,16 @@ export function PanelShell({
         if (!cancelled) setOnline(false);
       }
     };
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') void check();
+    };
     void check();
     const id = setInterval(() => { void check(); }, 30000);
+    document.addEventListener('visibilitychange', onVisibility);
     return () => {
       cancelled = true;
       clearInterval(id);
+      document.removeEventListener('visibilitychange', onVisibility);
     };
   }, []);
 
