@@ -95,6 +95,7 @@ router.get('/', async (req: AuthRequest, res: Response) => {
   const search = (req.query.search as string) || '';
   const activeOnly = req.query.active === 'true';
   const minimal = req.query.minimal === 'true';
+  const bidderIdFilter = Number(req.query.bidderId || 0);
 
   const selectColumns = minimal
     ? 'c.id, c.name, c.bidder_id, c.is_active, c.stack, c.color'
@@ -119,6 +120,10 @@ router.get('/', async (req: AuthRequest, res: Response) => {
   }
   if (activeOnly) {
     conditions.push('c.is_active = TRUE');
+  }
+  if (Number.isFinite(bidderIdFilter) && bidderIdFilter > 0 && isAdmin(req)) {
+    conditions.push(`c.bidder_id = $${paramIndex++}`);
+    params.push(bidderIdFilter);
   }
   if (conditions.length) query += ' WHERE ' + conditions.join(' AND ');
   query += ' ORDER BY c.name ASC';

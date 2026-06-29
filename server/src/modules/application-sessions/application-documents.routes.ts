@@ -8,6 +8,8 @@ import {
 import { candidateBidderFilter } from '../../middleware/scope';
 import { resolveDocumentFile } from '../../services/application-documents';
 import { execute, queryOne } from '../../database/connection';
+import { config } from '../../config/env';
+import { getMemoryApplicationSession, updateMemorySession } from '../../services/application-session-store';
 import {
   BuildDocumentsInputSchema,
   buildApplicationDocuments,
@@ -20,6 +22,15 @@ router.use(requireAuth);
 router.use(requireAdminOrBidder);
 
 async function getSessionForRequest(req: AuthRequest, sessionId: number) {
+  if (!config.applicationSessionPersistDb) {
+    const session = getMemoryApplicationSession(sessionId);
+    if (!session) return null;
+    if (req.role !== 'admin' && req.bidderId != null && req.bidderId !== session.bidder_id) {
+      return null;
+    }
+    return session as unknown as Record<string, unknown>;
+  }
+
   const scope = candidateBidderFilter(req, 'c', 2);
   let query = `
     SELECT s.*
@@ -104,22 +115,27 @@ router.post('/build', async (req: AuthRequest, res: Response) => {
 
   const manifest = await buildApplicationDocuments(sessionId, parsed.data);
   const metadata = readMetadata(session);
+  const nextMetadata = {
+    ...metadata,
+    documents: { ...(metadata.documents as object || {}), ...manifest.paths },
+    documentManifest: manifest,
+  };
 
-  await execute(
-    `UPDATE application_sessions
-     SET metadata = $2::jsonb,
-         last_activity_at = NOW(),
-         updated_at = NOW()
-     WHERE id = $1`,
-    [
-      sessionId,
-      JSON.stringify({
-        ...metadata,
-        documents: { ...(metadata.documents as object || {}), ...manifest.paths },
-        documentManifest: manifest,
-      }),
-    ]
-  );
+  if (!config.applicationSessionPersistDb) {
+    updateMemorySession(sessionId, { metadata: nextMetadata });
+  } else {
+    await execute(
+      `UPDATE application_sessions
+       SET metadata = $2::jsonb,
+           last_activity_at = NOW(),
+           updated_at = NOW()
+       WHERE id = $1`,
+      [
+        sessionId,
+        JSON.stringify(nextMetadata),
+      ]
+    );
+  }
 
   logger.info('Documents built via API', { sessionId, artifacts: manifest.artifacts.length });
 

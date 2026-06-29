@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.clearBiddersAndCandidates = clearBiddersAndCandidates;
+exports.clearApplicationSessionRecords = clearApplicationSessionRecords;
 exports.resetDatabaseKeepingAdminOnly = resetDatabaseKeepingAdminOnly;
 const connection_1 = require("./connection");
 const env_1 = require("../config/env");
@@ -43,6 +44,15 @@ async function clearBiddersAndCandidates() {
     await (0, connection_1.execute)('DELETE FROM bidders');
     await resetBidderCandidateSequences();
     logger_1.logger.info('Cleared all bidders and candidates');
+}
+/** Remove ephemeral apply-flow rows (sessions, fields, saved answers). Jobs/candidates are kept. */
+async function clearApplicationSessionRecords() {
+    const sessions = Number((await (0, connection_1.queryOne)('SELECT COUNT(*)::int AS count FROM application_sessions'))?.count ?? 0);
+    const fields = Number((await (0, connection_1.queryOne)('SELECT COUNT(*)::int AS count FROM application_session_fields'))?.count ?? 0);
+    const savedAnswers = Number((await (0, connection_1.queryOne)('SELECT COUNT(*)::int AS count FROM candidate_saved_answers'))?.count ?? 0);
+    await (0, connection_1.execute)('TRUNCATE application_session_fields, application_sessions, candidate_saved_answers RESTART IDENTITY CASCADE');
+    logger_1.logger.info('Cleared application session tables', { sessions, fields, savedAnswers });
+    return { sessions, fields, savedAnswers };
 }
 async function resetDatabaseKeepingAdminOnly() {
     await (0, connection_1.execute)('DELETE FROM candidate_jobs');

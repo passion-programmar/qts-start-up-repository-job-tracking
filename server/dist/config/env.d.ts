@@ -22,5 +22,7 @@ export declare const config: {
     adminWebUrl: string;
     /** Static Bearer secret for Custom GPT Actions (not OpenAI key, not JWT). */
     gptActionApiKey: string;
+    /** When false, application sessions/fields live in server memory only (cleared after TTL). */
+    applicationSessionPersistDb: boolean;
 };
 //# sourceMappingURL=env.d.ts.map

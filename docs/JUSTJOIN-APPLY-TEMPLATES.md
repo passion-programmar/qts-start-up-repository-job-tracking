@@ -1,5 +1,7 @@
 # justjoin.it Apply Templates
 
+> **Current system (June 2026):** See [docs/CURRENT-SYSTEM.md](docs/CURRENT-SYSTEM.md) — extension v1.13.25+, job sites, one-step auto-apply.
+
 The extension uses **apply templates** on justjoin.it â€” one strategy per apply flow type. Templates are registered in code and selected automatically by URL + page state.
 
 ## Architecture

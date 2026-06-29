@@ -10,6 +10,8 @@ const auth_1 = require("../../middleware/auth");
 const scope_1 = require("../../middleware/scope");
 const normalize_url_1 = require("../../utilities/normalize-url");
 const logger_1 = require("../../utilities/logger");
+const env_1 = require("../../config/env");
+const application_session_store_1 = require("../../services/application-session-store");
 const application_task_id_1 = require("./application-task-id");
 const application_documents_routes_1 = __importDefault(require("./application-documents.routes"));
 const router = (0, express_1.Router)();
@@ -82,6 +84,15 @@ async function canAccessCandidate(req, candidateId) {
     return false;
 }
 async function getSessionForRequest(req, sessionId) {
+    if (!env_1.config.applicationSessionPersistDb) {
+        const session = (0, application_session_store_1.getMemoryApplicationSession)(sessionId);
+        if (!session)
+            return null;
+        if (req.role !== 'admin' && (0, scope_1.isBidder)(req) && req.bidderId !== session.bidder_id) {
+            return null;
+        }
+        return session;
+    }
     const scope = (0, scope_1.candidateBidderFilter)(req, 'c', 2);
     let query = `
     SELECT s.*,
@@ -174,7 +185,7 @@ router.post('/', async (req, res) => {
         res.status(404).json({ success: false, message: 'Candidate not found.' });
         return;
     }
-    const candidate = await (0, connection_1.queryOne)('SELECT bidder_id FROM candidates WHERE id = $1', [data.candidateId]);
+    const candidate = await (0, connection_1.queryOne)('SELECT bidder_id, name, email, phone, linkedin_url, stack FROM candidates WHERE id = $1', [data.candidateId]);
     if (!candidate?.bidder_id) {
         res.status(400).json({ success: false, message: 'Candidate is not linked to a bidder organization.' });
         return;
@@ -196,6 +207,32 @@ router.post('/', async (req, res) => {
         publicTaskId,
         taskId: publicTaskId,
     };
+    if (!env_1.config.applicationSessionPersistDb) {
+        const inserted = (0, application_session_store_1.createMemoryApplicationSession)({
+            candidateId: data.candidateId,
+            jobId: data.jobId ?? null,
+            userId,
+            bidderId,
+            jobUrl: data.jobUrl,
+            jobTitle: data.jobTitle ?? null,
+            company: data.company ?? null,
+            jobDescription: data.jobDescription ?? null,
+            platform: data.platform ?? null,
+            currentStep: data.currentStep ?? 'scan',
+            discoveredPages: data.discoveredPages ?? [],
+            metadata: sessionMetadata,
+            candidate,
+        });
+        logger_1.logger.info('Application session created (memory)', { sessionId: inserted.id, candidateId: data.candidateId });
+        const responseTaskId = (0, application_session_store_1.readPublicTaskIdFromSession)(inserted) ?? publicTaskId;
+        res.status(201).json({
+            success: true,
+            taskId: responseTaskId,
+            session: mapSessionRow(inserted),
+            savedAnswers: [],
+        });
+        return;
+    }
     const inserted = await (0, connection_1.queryOne)(`INSERT INTO application_sessions (
       candidate_id, job_id, user_id, bidder_id,
       job_url, normalized_url, job_title, company, job_description,
@@ -260,6 +297,46 @@ router.patch('/:id/fields', async (req, res) => {
     const { fields, currentStep, discoveredPages, status } = parsed.data;
     const aiPending = fields.some((f) => (f.category === 'ai_generation' || f.category === 'document_upload')
         && (f.fillStatus === 'pending' || f.fillStatus === 'awaiting_answer'));
+    const nextStatus = status ?? (aiPending ? 'awaiting_ai' : 'filling');
+    if (!env_1.config.applicationSessionPersistDb) {
+        const upsertFields = fields.map((field) => ({
+            stableFieldId: field.stableFieldId,
+            label: field.label ?? null,
+            fieldType: field.fieldType,
+            required: field.required ?? false,
+            options: field.options ?? [],
+            currentValue: field.currentValue ?? null,
+            placeholder: field.placeholder ?? null,
+            sectionHeading: field.sectionHeading ?? null,
+            pageStep: field.pageStep ?? null,
+            pageUrl: field.pageUrl ?? null,
+            nameAttr: field.nameAttr ?? null,
+            autocompleteAttr: field.autocompleteAttr ?? null,
+            validationMessage: field.validationMessage ?? null,
+            selectorHints: field.selectorHints ?? {},
+            fieldFingerprint: field.fieldFingerprint,
+            category: field.category ?? 'unknown',
+            profileKey: field.profileKey ?? null,
+            savedAnswerKey: field.savedAnswerKey ?? null,
+            documentSlot: field.documentSlot ?? null,
+            fillValue: field.fillValue ?? null,
+            fillStatus: field.fillStatus ?? 'pending',
+            generatedAnswer: field.generatedAnswer ?? null,
+        }));
+        const updatedFields = (0, application_session_store_1.upsertMemorySessionFields)(sessionId, upsertFields, {
+            currentStep: currentStep ?? null,
+            discoveredPages: discoveredPages ?? undefined,
+            status: nextStatus,
+        });
+        res.json({
+            success: true,
+            fields: updatedFields.map((row) => mapFieldRow(row)),
+            pendingAiCount: updatedFields.filter((row) => (row.category === 'ai_generation' || row.category === 'document_upload')
+                && (row.fill_status === 'pending' || row.fill_status === 'awaiting_answer')
+                && row.required).length,
+        });
+        return;
+    }
     await (0, connection_1.withTransaction)(async (client) => {
         for (const field of fields) {
             await client.query(`INSERT INTO application_session_fields (
@@ -354,7 +431,9 @@ router.get('/:id', async (req, res) => {
         res.status(404).json({ success: false, message: 'Application session not found.' });
         return;
     }
-    const fields = await (0, connection_1.queryAll)('SELECT * FROM application_session_fields WHERE session_id = $1 ORDER BY id ASC', [sessionId]);
+    const fields = env_1.config.applicationSessionPersistDb
+        ? await (0, connection_1.queryAll)('SELECT * FROM application_session_fields WHERE session_id = $1 ORDER BY id ASC', [sessionId])
+        : (0, application_session_store_1.listMemorySessionFields)(sessionId);
     res.json({
         success: true,
         session: mapSessionRow(session),
@@ -372,11 +451,14 @@ router.get('/:id/pending-fields', async (req, res) => {
         res.status(404).json({ success: false, message: 'Application session not found.' });
         return;
     }
-    const fields = await (0, connection_1.queryAll)(`SELECT * FROM application_session_fields
-     WHERE session_id = $1
-       AND category IN ('ai_generation', 'document_upload')
-       AND fill_status IN ('pending', 'awaiting_answer')
-     ORDER BY required DESC, id ASC`, [sessionId]);
+    const fields = env_1.config.applicationSessionPersistDb
+        ? await (0, connection_1.queryAll)(`SELECT * FROM application_session_fields
+       WHERE session_id = $1
+         AND category IN ('ai_generation', 'document_upload')
+         AND fill_status IN ('pending', 'awaiting_answer')
+       ORDER BY required DESC, id ASC`, [sessionId])
+        : (0, application_session_store_1.listMemorySessionFields)(sessionId).filter((row) => (row.category === 'ai_generation' || row.category === 'document_upload')
+            && (row.fill_status === 'pending' || row.fill_status === 'awaiting_answer'));
     res.json({
         success: true,
         applicationId: sessionId,
@@ -418,6 +500,14 @@ router.post('/:id/answers', async (req, res) => {
     };
     for (const item of parsed.data.answers) {
         generatedAnswers[item.stableFieldId] = item.answer;
+        if (!env_1.config.applicationSessionPersistDb) {
+            (0, application_session_store_1.updateMemorySessionField)(sessionId, item.stableFieldId, {
+                generated_answer: item.answer,
+                fill_value: item.answer,
+                fill_status: 'filled',
+            });
+            continue;
+        }
         await (0, connection_1.execute)(`UPDATE application_session_fields
        SET generated_answer = $3,
            fill_value = $3,
@@ -425,23 +515,34 @@ router.post('/:id/answers', async (req, res) => {
            updated_at = NOW()
        WHERE session_id = $1 AND stable_field_id = $2`, [sessionId, item.stableFieldId, item.answer]);
     }
-    const remaining = await (0, connection_1.queryOne)(`SELECT COUNT(*)::int AS count FROM application_session_fields
-     WHERE session_id = $1
-       AND category = 'ai_generation'
-       AND fill_status IN ('pending', 'awaiting_answer')`, [sessionId]);
-    const allAnswered = Number(remaining?.count ?? 0) === 0;
-    await (0, connection_1.execute)(`UPDATE application_sessions
-     SET generated_answers = $2::jsonb,
-         status = $3,
-         last_activity_at = NOW(),
-         updated_at = NOW(),
-         completed_at = CASE WHEN $4 THEN NOW() ELSE completed_at END
-     WHERE id = $1`, [
-        sessionId,
-        JSON.stringify(generatedAnswers),
-        allAnswered ? 'completed' : 'awaiting_ai',
-        allAnswered,
-    ]);
+    const remainingCount = env_1.config.applicationSessionPersistDb
+        ? Number((await (0, connection_1.queryOne)(`SELECT COUNT(*)::int AS count FROM application_session_fields
+       WHERE session_id = $1
+         AND category = 'ai_generation'
+         AND fill_status IN ('pending', 'awaiting_answer')`, [sessionId]))?.count ?? 0)
+        : (0, application_session_store_1.countMemoryPendingAiFields)(sessionId);
+    const allAnswered = remainingCount === 0;
+    if (!env_1.config.applicationSessionPersistDb) {
+        (0, application_session_store_1.updateMemorySession)(sessionId, {
+            generated_answers: generatedAnswers,
+            status: allAnswered ? 'completed' : 'awaiting_ai',
+            completed_at: allAnswered ? new Date().toISOString() : session.completed_at,
+        });
+    }
+    else {
+        await (0, connection_1.execute)(`UPDATE application_sessions
+       SET generated_answers = $2::jsonb,
+           status = $3,
+           last_activity_at = NOW(),
+           updated_at = NOW(),
+           completed_at = CASE WHEN $4 THEN NOW() ELSE completed_at END
+       WHERE id = $1`, [
+            sessionId,
+            JSON.stringify(generatedAnswers),
+            allAnswered ? 'completed' : 'awaiting_ai',
+            allAnswered,
+        ]);
+    }
     res.json({
         success: true,
         applicationId: sessionId,
@@ -461,7 +562,9 @@ router.get('/:id/result', async (req, res) => {
         res.status(404).json({ success: false, message: 'Application session not found.' });
         return;
     }
-    const fields = await (0, connection_1.queryAll)('SELECT * FROM application_session_fields WHERE session_id = $1 ORDER BY id ASC', [sessionId]);
+    const fields = env_1.config.applicationSessionPersistDb
+        ? await (0, connection_1.queryAll)('SELECT * FROM application_session_fields WHERE session_id = $1 ORDER BY id ASC', [sessionId])
+        : (0, application_session_store_1.listMemorySessionFields)(sessionId);
     const mapped = fields.map((row) => mapFieldRow(row));
     const summary = {
         totalFields: mapped.length,

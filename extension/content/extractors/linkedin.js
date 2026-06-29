@@ -1,5 +1,8 @@
 // LinkedIn job extractor — supports full job pages and split-view search (list left, JD right)
 
+(function initLinkedInExtractor() {
+  if (window.__linkedInExtract) return;
+
 const LINKEDIN_DETAIL_ROOT_SELECTORS = [
   '.jobs-search__job-details',
   '.jobs-details',
@@ -209,3 +212,4 @@ function linkedInExtract() {
 window.__linkedInExtract = linkedInExtract;
 window.__linkedInExtractJobId = extractLinkedInJobId;
 window.__linkedInBuildCanonicalUrl = buildLinkedInCanonicalUrl;
+})();

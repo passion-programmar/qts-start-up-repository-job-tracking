@@ -14,9 +14,15 @@ let workspaceFetchPromise = null;
 const tabContextPrefetchAt = new Map();
 
 async function prefetchReadAuthToken() {
-  return new Promise((resolve) => {
-    chrome.storage.local.get(['authToken'], (result) => resolve(result.authToken || ''));
-  });
+  const auth = (typeof self !== 'undefined' ? self : globalThis).__qtsBidderAuth;
+  if (auth?.getWorkerAuthToken) {
+    return auth.getWorkerAuthToken();
+  }
+  const stored = await chrome.storage.local.get(['authToken', 'authExpiresAt']);
+  if (stored.authExpiresAt && Date.now() >= Number(stored.authExpiresAt)) {
+    return '';
+  }
+  return stored.authToken || '';
 }
 
 async function prefetchApiRequest(path) {
@@ -99,8 +105,9 @@ async function prefetchWriteCustomGptConfig(customGpt, user) {
     bidderId: user?.bidderId ?? null,
     savedAt: Date.now(),
   };
-  if (typeof global.__qtsCustomGpt?.persistCustomGptConfig === 'function') {
-    await global.__qtsCustomGpt.persistCustomGptConfig(payload);
+  const root = typeof globalThis !== 'undefined' ? globalThis : self;
+  if (typeof root.__qtsCustomGpt?.persistCustomGptConfig === 'function') {
+    await root.__qtsCustomGpt.persistCustomGptConfig(payload);
     return;
   }
   return new Promise((resolve) => {

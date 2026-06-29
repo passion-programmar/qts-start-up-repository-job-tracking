@@ -69,6 +69,43 @@ export interface Candidate {
   created_at?: string;
 }
 
+export interface JobSite {
+  id: number;
+  name: string;
+  platform_key: string;
+  url_host?: string | null;
+  notes?: string | null;
+  is_active: boolean;
+  created_at?: string;
+  updated_at?: string;
+  admission_count?: number;
+  job_count?: number;
+  default_candidate_id?: number | null;
+  default_candidate_name?: string | null;
+}
+
+export interface BidderJobSiteAdmission {
+  id: number;
+  name: string;
+  platform_key: string;
+  url_host?: string | null;
+  default_candidate_id?: number | null;
+  default_candidate_name?: string | null;
+  admitted_at?: string;
+  admission_active?: boolean;
+}
+
+export interface JobSiteAdmission {
+  id: number;
+  bidder_id: number;
+  bidder_name: string;
+  default_candidate_id?: number | null;
+  default_candidate_name?: string | null;
+  admitted_at?: string;
+  is_active: boolean;
+  admitted_by_username?: string | null;
+}
+
 export interface Job {
   id: number;
   title: string;

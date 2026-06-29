@@ -89,6 +89,7 @@ router.get('/', auth_1.requireAuth, async (req, res) => {
     const search = req.query.search || '';
     const company = req.query.company || '';
     const status = req.query.status || '';
+    const jobSiteId = Number(req.query.jobSiteId || 0);
     let query = `
     SELECT j.id, j.title, j.company, j.url, j.normalized_url, j.source, j.bidder_id,
            j.created_by_user_id, j.created_at, j.updated_at,
@@ -104,6 +105,17 @@ router.get('/', auth_1.requireAuth, async (req, res) => {
     const conditions = [];
     const params = [];
     let paramIndex = 1;
+    if (Number.isFinite(jobSiteId) && jobSiteId > 0) {
+        conditions.push(`EXISTS (
+      SELECT 1 FROM job_sites js
+      WHERE js.id = $${paramIndex++}
+      AND (
+        LOWER(COALESCE(j.source, '')) = LOWER(js.platform_key)
+        OR (js.url_host IS NOT NULL AND js.url_host <> '' AND j.url ILIKE '%' || js.url_host || '%')
+      )
+    )`);
+        params.push(jobSiteId);
+    }
     if (search) {
         const placeholder = `$${paramIndex++}`;
         conditions.push(`(j.title ILIKE ${placeholder} OR j.company ILIKE ${placeholder})`);

@@ -1,5 +1,7 @@
 // popup.js — capture window UI logic
 
+const global = globalThis;
+
 let candidates = [];
 let candidateStatuses = {};
 let candidateAppliedAt = {};
@@ -32,6 +34,25 @@ const CANDIDATE_CACHE_KEY = 'qtsCandidateCache';
 const SESSION_USER_KEY = 'qtsSessionUser';
 const DEFAULT_CANDIDATE_KEY = 'qtsDefaultCandidateByBidder';
 const AUTO_APPLY_ENABLED_KEY = 'qtsAutoApplyEnabled';
+
+async function hydrateApplySessionStore() {
+  const store = global.__qtsApplySessionStore;
+  if (!store?.hydrate) return;
+  await store.hydrate();
+  const active = store.getActive();
+  if (!active) return;
+  if (active.applicationId != null) activeApplicationId = active.applicationId;
+  if (active.taskId != null) activeTaskId = active.taskId;
+}
+
+async function persistActiveApplySession(patch) {
+  const store = global.__qtsApplySessionStore;
+  if (!store?.setActive) return null;
+  const active = await store.setActive(patch);
+  if (active?.applicationId != null) activeApplicationId = active.applicationId;
+  if (active?.taskId != null) activeTaskId = active.taskId;
+  return active;
+}
 
 let loadingCount = 0;
 
@@ -400,6 +421,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('f-desc').addEventListener('input', updateJobSummary);
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (msg.type === 'AUTH_SESSION_EXPIRED') {
+      clearAuthState()
+        .then(() => {
+          showAlert('login-alert', 'Session expired (24 hours). Please log in again.', 'warn');
+          return showLogin();
+        })
+        .catch(() => {});
+      sendResponse?.({ ok: true });
+      return;
+    }
     if (msg.type === 'GPT_DISPATCH_FINISHED') {
       if (settleGptDispatchWaiter(msg)) {
         sendResponse?.({ ok: true });
@@ -523,6 +554,13 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 async function bootstrapPopupFast() {
+  const hydrated = await global.__qtsBidderAuth?.hydratePopupAuth?.();
+  if (!hydrated) {
+    hideLoading(true);
+    await showLogin();
+    return;
+  }
+
   const token = await getStoredToken();
   if (!token) {
     hideLoading(true);
@@ -530,47 +568,48 @@ async function bootstrapPopupFast() {
     return;
   }
 
-  const [sessionUser, cache] = await Promise.all([readSessionUser(), readCandidateCache()]);
-  if (sessionUser && isBidderSession(sessionUser)) {
-    if (Array.isArray(cache?.candidates) && cache.candidates.length) {
-      applyCandidatesData(cache.candidates, cache.stacks || []);
-    }
-    defaultCandidateId = await readDefaultCandidateId(sessionUser.bidderId);
-    if (await needsDefaultCandidateSelection(sessionUser)) {
-      hideLoading(true);
-      await showDefaultCandidateStep(sessionUser);
-      return;
-    }
-    if (!(await readAutoApplyEnabled())) {
-      hideLoading(true);
-      setSession(sessionUser);
-      showJobSection();
-      await loadCurrentTab({ preferCache: true, allowExtract: false });
-      updateJobSummary();
-      updateDefaultCandidateUi();
-      updateAutoApplyBarUi();
-      scheduleFitPopup();
-      refreshWorkspaceInBackground();
-      return;
-    }
+  await hydrateApplySessionStore();
+
+  const sessionUser = await readSessionUser();
+  if (!sessionUser || !isBidderSession(sessionUser)) {
+    await clearAuthState();
+    hideLoading(true);
+    await showLogin();
+    return;
+  }
+
+  const cache = await readCandidateCache();
+  if (Array.isArray(cache?.candidates) && cache.candidates.length) {
+    applyCandidatesData(cache.candidates, cache.stacks || []);
+  }
+  defaultCandidateId = await readDefaultCandidateId(sessionUser.bidderId);
+  if (await needsDefaultCandidateSelection(sessionUser)) {
+    hideLoading(true);
+    await showDefaultCandidateStep(sessionUser);
+    return;
+  }
+  if (!(await readAutoApplyEnabled())) {
+    hideLoading(true);
     setSession(sessionUser);
     showJobSection();
-    hideLoading(true);
-    updateAutoApplyBarUi();
     await loadCurrentTab({ preferCache: true, allowExtract: false });
     updateJobSummary();
     updateDefaultCandidateUi();
+    updateAutoApplyBarUi();
     scheduleFitPopup();
     refreshWorkspaceInBackground();
     return;
   }
-
-  showLoading('Loading your account…');
-  try {
-    await checkAuth();
-  } finally {
-    hideLoading(true);
-  }
+  await global.__qtsBidderAuth?.armWorkerAuth?.();
+  setSession(sessionUser);
+  showJobSection();
+  hideLoading(true);
+  updateAutoApplyBarUi();
+  await loadCurrentTab({ preferCache: true, allowExtract: false });
+  updateJobSummary();
+  updateDefaultCandidateUi();
+  scheduleFitPopup();
+  refreshWorkspaceInBackground();
 }
 
 async function refreshWorkspaceInBackground() {
@@ -688,6 +727,12 @@ async function setAutoApplyEnabled(enabled) {
   await new Promise((resolve) => {
     chrome.storage.local.set({ [AUTO_APPLY_ENABLED_KEY]: Boolean(enabled) }, resolve);
   });
+  if (enabled) {
+    await global.__qtsBidderAuth?.armWorkerAuth?.();
+  } else {
+    await global.__qtsBidderAuth?.disarmWorkerAuth?.();
+    chrome.runtime.sendMessage({ type: 'RESET_AUTO_PIPELINE_STATE' }).catch(() => {});
+  }
   updateAutoApplyBarUi();
 }
 
@@ -1075,20 +1120,6 @@ async function checkAuth() {
     }
   } catch {
     hideLoading(true);
-    const token = await getStoredToken();
-    const sessionUser = await readSessionUser();
-    if (token && sessionUser && isBidderSession(sessionUser)) {
-      const cached = await readCandidateCache();
-      if (Array.isArray(cached?.candidates) && cached.candidates.length) {
-        applyCandidatesData(cached.candidates, cached.stacks || []);
-      } else {
-        try {
-          await fetchWorkspaceData(true);
-        } catch { /* non-fatal */ }
-      }
-      await enterJobWorkspace(sessionUser, { skipBackgroundRefresh: false });
-      return;
-    }
     await showLogin();
   }
 }
@@ -1106,26 +1137,49 @@ async function doLogin() {
   showLoading('Signing in…');
   if (loginBtn) loginBtn.disabled = true;
   try {
+    if (!global.__qtsBidderAuth?.storePopupAuth) {
+      throw new Error('Extension auth module not loaded. Reload the extension in chrome://extensions.');
+    }
     const r = await window.api.login(username, password);
+    if (r._httpStatus === 0) {
+      showAlert(
+        'login-alert',
+        'Cannot reach the API. Confirm start-server.bat is running and https://qts-job-tracking.vercel.app/api/health shows online.',
+        'error'
+      );
+      return;
+    }
     if (r.success && isBidderSession(r)) {
-      await storeToken(r.token);
-      await storeSessionUser(r);
-      setSession(r);
+      const sessionSnapshot = {
+        id: r.id,
+        username: r.username,
+        role: r.role,
+        bidderId: r.bidderId,
+        bidderName: r.bidderName,
+      };
+      await global.__qtsBidderAuth.storePopupAuth(r.token, sessionSnapshot, r.expiresAt);
+      window.api.setCachedToken(r.token);
+      setSession(sessionSnapshot);
       clearAlert('login-alert');
       try {
-        await fetchWorkspaceData(true);
+        const workspace = await fetchWorkspaceData(true);
+        if (workspace?.user) {
+          setSession(workspace.user);
+          await global.__qtsBidderAuth.storeSessionUser(workspace.user);
+        }
       } catch { /* session already saved */ }
       defaultCandidateId = await readDefaultCandidateId(r.bidderId);
       if (await needsDefaultCandidateSelection(r)) {
         hideLoading(true);
-        await showDefaultCandidateStep(r);
+        await showDefaultCandidateStep(currentUser || sessionSnapshot);
         return;
       }
       if (!(await readAutoApplyEnabled())) {
         hideLoading(true);
-        await showDefaultCandidateStep(r, { armOnly: true });
+        await showDefaultCandidateStep(currentUser || sessionSnapshot, { armOnly: true });
         return;
       }
+      await global.__qtsBidderAuth.armWorkerAuth();
       showJobSection();
       resetLoginFormView();
       hideLoading(true);
@@ -1143,8 +1197,16 @@ async function doLogin() {
     } else {
       showAlert('login-alert', r.message || 'Login failed.', 'error');
     }
-  } catch {
-    showAlert('login-alert', 'Cannot connect to the server. Ask your admin to run start-server.bat.', 'error');
+  } catch (err) {
+    console.error('doLogin error:', err);
+    const detail = err instanceof Error ? err.message : String(err);
+    showAlert(
+      'login-alert',
+      detail.includes('auth module')
+        ? detail
+        : `Login error: ${detail}. If this persists, reload the extension and confirm the server is running.`,
+      'error'
+    );
   } finally {
     if (loginBtn) loginBtn.disabled = false;
     hideLoading(true);
@@ -1326,11 +1388,10 @@ async function persistSession(user, nextCandidates, nextStacks) {
 }
 
 async function readSessionUser() {
-  return new Promise(resolve => {
-    chrome.storage.local.get([SESSION_USER_KEY], (result) => {
-      resolve(result[SESSION_USER_KEY] || null);
-    });
-  });
+  if (global.__qtsBidderAuth?.readPopupSessionUser) {
+    return global.__qtsBidderAuth.readPopupSessionUser();
+  }
+  return null;
 }
 
 async function storeSessionUser(user) {
@@ -1342,21 +1403,21 @@ async function storeSessionUser(user) {
     bidderId: user.bidderId != null ? Number(user.bidderId) : null,
     bidderName: user.bidderName ?? null,
   };
-  return new Promise(resolve => {
-    chrome.storage.local.set({ [SESSION_USER_KEY]: snapshot }, resolve);
-  });
+  if (global.__qtsBidderAuth?.storeSessionUser) {
+    await global.__qtsBidderAuth.storeSessionUser(snapshot);
+    return;
+  }
 }
 
 async function clearSessionUser() {
-  return new Promise(resolve => {
-    chrome.storage.local.remove([SESSION_USER_KEY], resolve);
-  });
+  // cleared via clearAuthState()
 }
 
 async function clearAuthState() {
   await clearToken();
-  await clearSessionUser();
+  await global.__qtsBidderAuth?.clearAuth?.();
   await clearCandidateCache();
+  await global.__qtsApplySessionStore?.clearActive?.();
   await new Promise((resolve) => {
     chrome.storage.local.remove([AUTO_APPLY_ENABLED_KEY], resolve);
   });
@@ -1364,6 +1425,7 @@ async function clearAuthState() {
     chrome.storage.local.remove(['qtsCustomGptConfig', 'qtsCustomGptTabId'], resolve);
   });
   global.__qtsCustomGpt?.applyCustomGptConfig?.(null);
+  chrome.runtime.sendMessage({ type: 'RESET_AUTO_PIPELINE_STATE' }).catch(() => {});
   clearSession();
 }
 
@@ -2356,6 +2418,11 @@ function renderApplicationStatus(result, taskStatus) {
   if (taskStatus?.taskId) {
     activeTaskId = taskStatus.taskId;
   }
+  persistActiveApplySession({
+    applicationId: activeApplicationId,
+    taskId: activeTaskId,
+    status: ts?.gptTaskStatus || null,
+  }).catch(() => {});
   sessionIdEl.textContent = activeApplicationId ? `#${activeApplicationId}` : '—';
   syncTaskIdDisplay();
 
@@ -2778,10 +2845,18 @@ async function startApplication(candidateId) {
     }
 
     activeApplicationId = sessionRes.session.applicationId;
-    activeTaskId = sessionRes.taskId
-      || sessionRes.session?.metadata?.publicTaskId
+    activeTaskId = sessionRes.session?.metadata?.publicTaskId
       || sessionRes.session?.metadata?.taskId
+      || sessionRes.taskId
       || null;
+    await persistActiveApplySession({
+      applicationId: activeApplicationId,
+      taskId: activeTaskId,
+      jobTabId: targetTabId,
+      jobUrl,
+      candidateId,
+      status: 'started',
+    });
     if (!activeTaskId) {
       console.warn('Server did not return taskId for session', activeApplicationId);
     }
@@ -3074,33 +3149,69 @@ function showJobSection() {
   scheduleFitPopup();
 }
 
-let toastHideTimer = null;
-const TOAST_AUTO_HIDE_MS = 1250;
+let popupToastSeq = 0;
+const popupToastTimers = new WeakMap();
+const TOAST_AUTO_HIDE_MS = 6000;
+const TOAST_MIN_HIDE_MS = 5000;
+const TOAST_MAX_VISIBLE = 8;
+const TOAST_EXIT_MS = 320;
 
 function normalizeToastType(type) {
   const value = String(type || 'info').toLowerCase();
-  if (['success', 'fail', 'error', 'info', 'warn'].includes(value)) return value;
+  if (['success', 'fail', 'error', 'info', 'warn', 'applied'].includes(value)) return value;
   return 'info';
 }
 
-function showToast(msg, type = 'info') {
+function dismissPopupToast(toast) {
+  if (!toast || !toast.isConnected) return;
+  const timer = popupToastTimers.get(toast);
+  if (timer) clearTimeout(timer);
+  popupToastTimers.delete(toast);
+  toast.classList.remove('is-visible');
+  toast.classList.add('is-leaving');
+  setTimeout(() => toast.remove(), TOAST_EXIT_MS);
+}
+
+function trimPopupToastStack(host) {
+  while (host.children.length > TOAST_MAX_VISIBLE) {
+    dismissPopupToast(host.children[0]);
+  }
+}
+
+function showToast(msg, type = 'info', durationMs = TOAST_AUTO_HIDE_MS) {
   const host = document.getElementById('qts-toast-host');
   if (!host) return;
 
   const toastType = normalizeToastType(type);
-  host.querySelectorAll('.qts-toast').forEach((node) => node.remove());
-  clearTimeout(toastHideTimer);
+  const hideMs = Number.isFinite(durationMs) && durationMs >= TOAST_MIN_HIDE_MS
+    ? durationMs
+    : TOAST_AUTO_HIDE_MS;
+
+  popupToastSeq += 1;
 
   const toast = document.createElement('div');
-  toast.className = `qts-toast qts-toast--${toastType} is-visible`;
+  toast.className = `qts-toast qts-toast--${toastType}`;
   toast.setAttribute('role', 'alert');
-  toast.textContent = msg;
-  host.appendChild(toast);
 
-  toastHideTimer = setTimeout(() => {
-    toast.classList.remove('is-visible');
-    setTimeout(() => toast.remove(), 220);
-  }, TOAST_AUTO_HIDE_MS);
+  const indexEl = document.createElement('span');
+  indexEl.className = 'qts-toast-index';
+  indexEl.textContent = String(popupToastSeq);
+
+  const textEl = document.createElement('span');
+  textEl.className = 'qts-toast-text';
+  textEl.textContent = String(msg || '');
+
+  toast.appendChild(indexEl);
+  toast.appendChild(textEl);
+  host.appendChild(toast);
+  trimPopupToastStack(host);
+
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => toast.classList.add('is-visible'));
+  });
+
+  const timer = setTimeout(() => dismissPopupToast(toast), hideMs);
+  popupToastTimers.set(toast, timer);
 }
 
 function showAlert(id, msg, type = 'info') {
@@ -3110,9 +3221,10 @@ function showAlert(id, msg, type = 'info') {
 }
 
 function clearAlert(id) {
-  clearTimeout(toastHideTimer);
   const host = document.getElementById('qts-toast-host');
-  if (host) host.innerHTML = '';
+  if (host) {
+    [...host.children].forEach((toast) => dismissPopupToast(toast));
+  }
   const el = document.getElementById(id);
   if (el) el.innerHTML = '';
 }
@@ -3147,20 +3259,25 @@ function escAttr(s) {
   return escHtml(s).replace(/'/g, '&#39;');
 }
 
-function storeToken(token) {
+async function storeToken(token) {
   window.api.setCachedToken(token);
-  return new Promise(res => chrome.storage.local.set({ authToken: token }, res));
+  if (global.__qtsBidderAuth?.setPopupAuthToken) {
+    return global.__qtsBidderAuth.setPopupAuthToken(token);
+  }
+  return global.__qtsBidderAuth?.setPopupCachedToken?.(token);
 }
 
-function getStoredToken() {
-  return new Promise(res => chrome.storage.local.get(['authToken'], r => {
-    const token = r.authToken || '';
+async function getStoredToken() {
+  if (global.__qtsBidderAuth?.getPopupAuthToken) {
+    const token = await global.__qtsBidderAuth.getPopupAuthToken();
     window.api.setCachedToken(token);
-    res(token);
-  }));
+    return token;
+  }
+  return '';
 }
 
 function clearToken() {
   window.api.clearCachedToken();
-  return new Promise(res => chrome.storage.local.remove(['authToken'], res));
+  global.__qtsBidderAuth?.clearPopupCachedToken?.();
+  return Promise.resolve();
 }

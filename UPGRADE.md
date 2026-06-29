@@ -1,5 +1,7 @@
 # Upgrade to PostgreSQL (QTS_Startup v1.2.0)
 
+> **Current system (June 2026):** See [docs/CURRENT-SYSTEM.md](docs/CURRENT-SYSTEM.md) — extension v1.13.25+, job sites, one-step auto-apply.
+
 ## Database change
 
 v1.2.0 replaces SQLite with PostgreSQL. All API routes, extension workflows, and QTS_Startup features work the same.

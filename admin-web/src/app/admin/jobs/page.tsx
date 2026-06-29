@@ -1,5 +1,5 @@
-import { JobsView } from '@/components/JobsView';
+import { AdminJobsPageView } from '@/components/AdminJobsPageView';
 
 export default function AdminJobsPage() {
-  return <JobsView />;
+  return <AdminJobsPageView />;
 }

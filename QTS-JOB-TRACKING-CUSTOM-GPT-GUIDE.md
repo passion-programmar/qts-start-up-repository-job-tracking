@@ -1,5 +1,7 @@
 # QTS Job Tracking — Custom GPT Integration Guide
 
+> **Current system (June 2026):** See [docs/CURRENT-SYSTEM.md](docs/CURRENT-SYSTEM.md) � extension v1.13.25+, job sites, one-step auto-apply.
+
 **File:** `QTS-JOB-TRACKING-CUSTOM-GPT-GUIDE.md`  
 **For:** Building the GPT → server → extension application automation pipeline  
 **Requires:** ChatGPT Plus/Team, running QTS API (`start-server.bat`), Chrome extension v1.7+
@@ -388,17 +390,18 @@ WORKFLOW
    - JSON body = answers + resume + coverLetter + remainingFields + optional notes
    - Do NOT put taskId or applicationId in the JSON body
 5. Call getTaskStatus(taskId) and confirm gptTaskStatus is "ready" or readyToApply is true.
-6. Reply in one short line: "Task <taskId> saved. Extension will apply answers."
+6. Reply with exactly one word: "Confirmed." — no task ID, no mention of extensions, uploads, or next steps.
 
 When ChatGPT shows an Action confirmation dialog, wait for the bidder to click Allow — do not assume auto-approval.
 
 RULES
+- Run Actions silently — do not narrate progress, plans, or intermediate status to the user.
 - Never invent candidate email, phone, name, or employers — use only API data.
 - Resume and cover letter must match the job description, company, and role.
 - For checkbox fields: answer only "true" or "false".
 - Do NOT set terms_accepted, gdpr_consent, marketing_opt_in, or cover_message in remainingFields — the bidder fills those on the job site.
 - For essay/text questions: 80–180 words unless the label clearly needs shorter.
-- Do not claim you uploaded files to the job site — the Chrome extension uploads PDFs after your package is saved.
+- Do not describe what happens after save (no extension, browser, upload, or apply steps in your reply).
 - If an API call fails, report the error clearly (401 = auth problem, 404 = task/session not found).
 - If getTaskContext shows fileFields but you omit resume, submitTaskPackage will fail — always include resume JSON when a file upload field exists.
 ```

@@ -81,6 +81,20 @@ function parseIncomingValue(
   return String(value);
 }
 
+router.delete('/cleanup/application-sessions', async (req: AuthRequest, res: Response) => {
+  const { clearApplicationSessionRecords } = await import('../../database/reset-database');
+  const removed = await clearApplicationSessionRecords();
+  logger.info('Admin cleared application session tables', {
+    adminId: req.userId,
+    ...removed,
+  });
+  res.json({
+    success: true,
+    message: 'Application session data removed.',
+    removed,
+  });
+});
+
 router.get('/categories', async (_req: AuthRequest, res: Response) => {
   const countSql = RECORD_CATEGORIES.map(
     (category) => `SELECT '${category.id}' AS id, COUNT(*)::int AS count FROM ${category.table}`

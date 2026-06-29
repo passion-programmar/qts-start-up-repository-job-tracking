@@ -1,4 +1,4 @@
-export type RecordCategoryId = 'accounts' | 'bidders' | 'candidates' | 'jobs' | 'candidate_jobs' | 'interviews' | 'application_sessions' | 'application_session_fields' | 'candidate_saved_answers' | 'settings';
+export type RecordCategoryId = 'accounts' | 'bidders' | 'candidates' | 'jobs' | 'candidate_jobs' | 'interviews' | 'settings';
 export type ColumnType = 'text' | 'number' | 'boolean' | 'json' | 'readonly';
 export interface RecordColumnDef {
     key: string;

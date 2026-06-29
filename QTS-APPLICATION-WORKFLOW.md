@@ -1,5 +1,7 @@
 # QTS Application Workflow — Extension + Custom GPT + Server
 
+> **Current system (June 2026):** See [docs/CURRENT-SYSTEM.md](docs/CURRENT-SYSTEM.md) � extension v1.13.25+, job sites, one-step auto-apply.
+
 **File:** `QTS-APPLICATION-WORKFLOW.md`  
 **Version:** Extension **v1.7.7** · corrected architecture and operating rules  
 **Scope:** Current justjoin.it Easy Apply workflow plus the target page-by-page workflow  

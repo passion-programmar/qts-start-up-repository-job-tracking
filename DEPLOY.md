@@ -1,5 +1,7 @@
 # Deploy guide (free tier)
 
+> **Current system (June 2026):** See [docs/CURRENT-SYSTEM.md](docs/CURRENT-SYSTEM.md) — extension v1.13.25+, job sites, one-step auto-apply.
+
 Repo: https://github.com/passion-programmar/qts-start-up-repository-job-tracking
 
 ## 1. Push code to GitHub

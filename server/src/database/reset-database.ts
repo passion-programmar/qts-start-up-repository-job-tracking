@@ -1,4 +1,4 @@
-import { execute } from './connection';
+import { execute, queryOne } from './connection';
 import { config } from '../config/env';
 import { logger } from '../utilities/logger';
 
@@ -44,6 +44,24 @@ export async function clearBiddersAndCandidates(): Promise<void> {
   await execute('DELETE FROM bidders');
   await resetBidderCandidateSequences();
   logger.info('Cleared all bidders and candidates');
+}
+
+/** Remove ephemeral apply-flow rows (sessions, fields, saved answers). Jobs/candidates are kept. */
+export async function clearApplicationSessionRecords(): Promise<{
+  sessions: number;
+  fields: number;
+  savedAnswers: number;
+}> {
+  const sessions = Number((await queryOne<{ count: number }>('SELECT COUNT(*)::int AS count FROM application_sessions'))?.count ?? 0);
+  const fields = Number((await queryOne<{ count: number }>('SELECT COUNT(*)::int AS count FROM application_session_fields'))?.count ?? 0);
+  const savedAnswers = Number((await queryOne<{ count: number }>('SELECT COUNT(*)::int AS count FROM candidate_saved_answers'))?.count ?? 0);
+
+  await execute(
+    'TRUNCATE application_session_fields, application_sessions, candidate_saved_answers RESTART IDENTITY CASCADE'
+  );
+
+  logger.info('Cleared application session tables', { sessions, fields, savedAnswers });
+  return { sessions, fields, savedAnswers };
 }
 
 export async function resetDatabaseKeepingAdminOnly(): Promise<void> {

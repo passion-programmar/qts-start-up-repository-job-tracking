@@ -1,5 +1,7 @@
 # QTS Custom GPT — Step-by-Step Guide
 
+> **Current system (June 2026):** See [docs/CURRENT-SYSTEM.md](docs/CURRENT-SYSTEM.md) � extension v1.13.25+, job sites, one-step auto-apply.
+
 **Based on:** HTML comparison analysis, `QTS-CUSTOM-GPT-ERROR-REPORT.md`, extension v1.8.5  
 **Custom GPT URL:** https://chatgpt.com/g/g-6a3dc5525fac819198dccf1c216e3fc0-qts-job-tracking  
 **Audience:** Bidders and operators running one full application end-to-end
@@ -90,6 +92,7 @@ When the user message starts with PROCESS_TASK: task_<id>:
 3. Generate answers, resume JSON, cover letter JSON.
 4. Call submitTaskPackage.
 5. Call getTaskStatus to confirm ready.
+6. Reply with exactly: "Confirmed." — nothing else.
 ```
 
 **Remove:**

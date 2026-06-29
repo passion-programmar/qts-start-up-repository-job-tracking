@@ -1,5 +1,7 @@
 # QTS_Startup â€” Build Requirements & Recommendations
 
+> **Current system (June 2026):** See [docs/CURRENT-SYSTEM.md](docs/CURRENT-SYSTEM.md) — extension v1.13.25+, job sites, one-step auto-apply.
+
 This document describes everything needed to build, run, and deploy **QTS_Startup v1.2.0**. Use it as the primary reference for developers and operators.
 
 ---

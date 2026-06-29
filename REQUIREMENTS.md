@@ -1,5 +1,7 @@
 # QTS_Startup â€” Requirements Document
 
+> **Current system (June 2026):** See [docs/CURRENT-SYSTEM.md](docs/CURRENT-SYSTEM.md) — extension v1.13.25+, job sites, one-step auto-apply.
+
 **Version:** 1.2.0  
 **Last updated:** 2026-06-24  
 **Purpose:** Single reference for product, technical, and planned requirements. Use this document to analyze scope, prioritize work, and decide what to build next.

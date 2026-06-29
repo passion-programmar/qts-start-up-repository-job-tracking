@@ -66,7 +66,8 @@
 
   let cachedGptTabId = null;
   let findOrCreateGptTabLock = null;
-  let sendTaskToCustomGptLock = null;
+  const sendLocksByTaskId = new Map();
+  const completedHandoffsByTaskId = new Map();
   const recentHandoffs = new Map();
 
   async function persistGptTabId(storageKey, tabId) {
@@ -145,10 +146,12 @@
     preparePage = true,
     taskId = null,
     loadTimeoutMs = 45000,
+    pinInBrowser = true,
   } = {}) {
-    const tab = await findOrCreateGptTab({ storageKey, focus });
+    const tab = await findOrCreateGptTab({ storageKey, focus, pinInBrowser });
     if (!tab?.id) throw new Error('Could not open Custom GPT tab.');
     await consolidateDuplicateGptTabs(tab.id);
+    if (pinInBrowser) await ensureBrowserTabPinned(tab.id);
     if (preparePage) {
       await ensureGptPageReady(tab.id, { loadTimeoutMs, focus, taskId });
     }
@@ -201,7 +204,18 @@
     });
   }
 
-  async function findOrCreateGptTabInternal({ storageKey, focus = true } = {}) {
+  async function ensureBrowserTabPinned(tabId) {
+    if (!tabId) return;
+    try {
+      const tab = await chrome.tabs.get(tabId);
+      if (!tab?.id || !isQtsGptTab(tab) || tab.pinned) return;
+      await chrome.tabs.update(tabId, { pinned: true });
+    } catch {
+      // tab may be closed or pinning unsupported
+    }
+  }
+
+  async function findOrCreateGptTabInternal({ storageKey, focus = true, pinInBrowser = false } = {}) {
     const { url } = getGptConfig();
     const preferredIds = [];
 
@@ -221,6 +235,7 @@
       if (tab) {
         await persistGptTabId(storageKey, tab.id);
         await consolidateDuplicateGptTabs(tab.id);
+        if (pinInBrowser) await ensureBrowserTabPinned(tab.id);
         if (focus) {
           await chrome.tabs.update(tab.id, { active: true });
         }
@@ -234,6 +249,7 @@
     if (tab?.id) {
       await persistGptTabId(storageKey, tab.id);
       await consolidateDuplicateGptTabs(tab.id);
+      if (pinInBrowser) await ensureBrowserTabPinned(tab.id);
       if (focus) {
         await chrome.tabs.update(tab.id, { active: true });
         if (tab.status !== 'complete') {
@@ -243,18 +259,19 @@
       return tab;
     }
 
-    const created = await chrome.tabs.create({ url, active: focus });
+    const created = await chrome.tabs.create({ url, active: focus, pinned: pinInBrowser });
     if (created?.id) {
       await persistGptTabId(storageKey, created.id);
       await consolidateDuplicateGptTabs(created.id);
+      if (pinInBrowser && !created.pinned) await ensureBrowserTabPinned(created.id);
       await waitForTabComplete(created.id, 30000);
     }
     return created;
   }
 
-  async function findOrCreateGptTab({ storageKey, focus = true } = {}) {
+  async function findOrCreateGptTab({ storageKey, focus = true, pinInBrowser = false } = {}) {
     if (!findOrCreateGptTabLock) {
-      findOrCreateGptTabLock = findOrCreateGptTabInternal({ storageKey, focus })
+      findOrCreateGptTabLock = findOrCreateGptTabInternal({ storageKey, focus, pinInBrowser })
         .finally(() => {
           findOrCreateGptTabLock = null;
         });
@@ -550,10 +567,15 @@
     const tid = normalizeTaskId(taskId);
     if (!tabId || !tid) return false;
 
-    const handoffKey = `${tabId}:${tid}`;
-    const recentAt = recentHandoffs.get(handoffKey);
-    if (recentAt && Date.now() - recentAt < 120000) {
-      return true;
+    try {
+      const ping = await chrome.tabs.sendMessage(tabId, {
+        type: 'QTS_GPT_TASK_IN_CHAT',
+        taskId: tid,
+        message: buildProcessTaskMessage(tid),
+      });
+      if (ping?.inChat) return true;
+    } catch {
+      // fall through to executeScript probe
     }
 
     try {
@@ -563,8 +585,22 @@
         func: (normalizedTaskId) => {
           const escaped = normalizedTaskId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
           const pattern = new RegExp(`PROCESS_TASK:\\s*${escaped}`, 'i');
-          const text = document.body?.innerText || '';
-          return pattern.test(text);
+          const editor = document.querySelector(
+            '#prompt-textarea[contenteditable="true"], div[contenteditable="true"]#prompt-textarea, textarea[name="prompt-textarea"]'
+          );
+          const composerText = String(editor?.innerText || editor?.value || '').replace(/\s+/g, ' ').trim();
+          if (composerText && pattern.test(composerText)) return false;
+          const userNodes = document.querySelectorAll(
+            '[data-message-author-role="user"],' +
+            'article[data-turn="user"],' +
+            '[data-testid*="conversation-turn-user"],' +
+            '[data-testid="user-message"]'
+          );
+          let count = 0;
+          for (const node of userNodes) {
+            if (pattern.test(String(node.innerText || '').replace(/\s+/g, ' ').trim())) count += 1;
+          }
+          return count >= 1;
         },
       });
       return Boolean(results?.[0]?.result);
@@ -577,6 +613,15 @@
     const tid = normalizeTaskId(taskId);
     if (!tabId || !tid) return;
     recentHandoffs.set(`${tabId}:${tid}`, Date.now());
+  }
+
+  async function waitForTaskInChatOnTab(tabId, taskId, message, timeoutMs = 6000) {
+    const started = Date.now();
+    while (Date.now() - started < timeoutMs) {
+      if (await taskAlreadyVisibleInTab(tabId, taskId)) return true;
+      await sleep(300);
+    }
+    return taskAlreadyVisibleInTab(tabId, taskId);
   }
 
   async function runDomHandoffFallback(tabId, message, { taskId, composerTimeoutMs, sendTimeoutMs } = {}) {
@@ -623,8 +668,10 @@
     }
     await ensureChatGptHandoff(tabId);
     try {
-      const result = await chrome.tabs.sendMessage(tabId, { type: 'QTS_GPT_CLICK_ALLOW' });
-      if (result?.clicked || result?.allowClicked) {
+      const result = await chrome.tabs.sendMessage(tabId, {
+        type: options.snapshotOnly ? 'QTS_GPT_SNAPSHOT' : 'QTS_GPT_CLICK_ALLOW',
+      });
+      if (result) {
         return {
           allowClicked: Boolean(result.allowClicked || result.clicked),
           clickedLabel: result.clickedLabel || result.labels?.[0] || null,
@@ -636,28 +683,15 @@
           thinking: result.thinking,
           stoppedThinking: result.stoppedThinking,
           snippet: result.snippet,
-          method: 'content_script',
-        };
-      }
-      if (result) {
-        return {
-          allowClicked: false,
-          clickedLabel: null,
-          allowButtonCount: result.allowButtonCount || 0,
-          hasApprovalDialog: result.hasApprovalDialog,
-          hasGetTaskContext: result.hasGetTaskContext,
-          hasSubmitTaskPackage: result.hasSubmitTaskPackage,
-          taskSaved: result.taskSaved,
-          thinking: result.thinking,
-          stoppedThinking: result.stoppedThinking,
-          snippet: result.snippet,
-          method: 'content_script',
+          method: options.snapshotOnly ? 'content_snapshot' : 'content_script',
         };
       }
     } catch {
-      // fall through to executeScript
+      if (options.allowScrapeFallback) {
+        return scrapeAndClickAllowInTab(tabId);
+      }
     }
-    return scrapeAndClickAllowInTab(tabId);
+    return null;
   }
 
   async function scrapeAndClickAllowInTab(tabId) {
@@ -668,13 +702,14 @@
 
         function visitRoots(visitor) {
           const seen = new Set();
-          const walk = (root) => {
-            if (!root || seen.has(root)) return;
+          const walk = (root, depth = 0) => {
+            if (!root || seen.has(root) || depth > 3) return;
             seen.add(root);
             visitor(root);
+            if (depth >= 3) return;
             try {
               root.querySelectorAll('*').forEach((el) => {
-                if (el.shadowRoot) walk(el.shadowRoot);
+                if (el.shadowRoot) walk(el.shadowRoot, depth + 1);
               });
             } catch {
               // ignore
@@ -686,7 +721,7 @@
         function collectClickables() {
           const elements = new Set();
           visitRoots((root) => {
-            root.querySelectorAll('button, [role="button"], a, div[tabindex="0"]').forEach((el) => {
+            root.querySelectorAll('button, [role="button"]').forEach((el) => {
               elements.add(el);
             });
           });
@@ -757,7 +792,8 @@
           hasGetTaskContext: /getTaskContext/i.test(bodyText),
           hasSubmitTaskPackage: /submitTaskPackage/i.test(bodyText),
           taskSaved: /task\s+task_[\w-]+\s+saved/i.test(bodyText)
-            || /Extension will apply answers/i.test(bodyText),
+            || /Extension will apply answers/i.test(bodyText)
+            || /(?:^|\n)\s*Confirmed\.?\s*(?:\n|$)/im.test(bodyText),
           thinking: /\bThinking\b/i.test(bodyText),
           stoppedThinking: /Stopped thinking/i.test(bodyText),
           snippet: bodyText.slice(0, 600),
@@ -774,7 +810,7 @@
 
   async function watchGptTabAfterSend(tabId, taskId, options = {}) {
     const timeoutMs = options.timeoutMs || 180000;
-    const pollMs = options.pollMs || 1200;
+    const pollMs = options.pollMs || 2800;
     const started = Date.now();
     let totalAllowClicks = 0;
     let idlePolls = 0;
@@ -788,27 +824,18 @@
       type: 'warn',
     });
 
-    await focusGptBrowserWindow(tabId, {
-      defocusWindowId: options.defocusWindowId,
-      focusDelayMs: 400,
-    });
+    if (options.focus !== false) {
+      await focusGptBrowserWindow(tabId, {
+        defocusWindowId: options.defocusWindowId,
+        focusDelayMs: 400,
+      });
+    }
     await startAllowWatchInTab(tabId);
 
     while (Date.now() - started < timeoutMs) {
-      const needsFocus = !lastSnap
-        || lastSnap.hasApprovalDialog
-        || (lastSnap.allowButtonCount > 0 && !lastSnap.allowClicked);
-      if (needsFocus) {
-        await focusGptBrowserWindow(tabId, {
-          defocusWindowId: options.defocusWindowId,
-          focusDelayMs: 250,
-        });
-      }
-
       const snap = await clickAllowViaContentScript(tabId, {
-        focus: needsFocus,
-        defocusWindowId: needsFocus ? options.defocusWindowId : undefined,
-        focusDelayMs: needsFocus ? 250 : 0,
+        focus: false,
+        snapshotOnly: true,
       });
       if (!snap) break;
       lastSnap = snap;
@@ -822,7 +849,6 @@
       if (snap.allowClicked) {
         totalAllowClicks += 1;
         idlePolls = 0;
-        await sleep(800);
       } else {
         idlePolls += 1;
       }
@@ -854,7 +880,7 @@
         };
       }
 
-      if (totalAllowClicks > 0 && idlePolls >= 8 && snap.stoppedThinking && !snap.allowButtonCount) {
+      if (totalAllowClicks > 0 && idlePolls >= 6 && snap.stoppedThinking && !snap.allowButtonCount) {
         await setGptTabStatus(tabId, {
           phase: 'finished',
           taskId,
@@ -873,8 +899,7 @@
         };
       }
 
-      const waitMs = snap.hasApprovalDialog && !snap.allowClicked ? 400 : pollMs;
-      await sleep(waitMs);
+      await sleep(pollMs);
     }
 
     await stopAllowWatchInTab(tabId);
@@ -908,6 +933,16 @@
       };
     }
 
+    const cached = completedHandoffsByTaskId.get(taskId);
+    if (cached?.handoff?.sent) {
+      return cached;
+    }
+
+    const inFlight = sendLocksByTaskId.get(taskId);
+    if (inFlight) {
+      return inFlight;
+    }
+
     const runSend = async () => {
       const loadTimeoutMs = options.loadTimeoutMs || 45000;
       const composerTimeoutMs = options.composerTimeoutMs || 30000;
@@ -920,6 +955,7 @@
         preparePage: true,
         taskId,
         loadTimeoutMs,
+        pinInBrowser: true,
       });
       const tab = pinned.tab;
       if (!tab?.id) throw new Error('Could not open Custom GPT tab');
@@ -946,16 +982,61 @@
 
       let result = await sendHandoffViaContentScript(tab.id, message, { taskId, composerTimeoutMs });
 
-      if (!result?.sent && !result?.needsManualSend) {
-        result = await runDomHandoffFallback(tab.id, message, {
-          taskId,
-          composerTimeoutMs,
-          sendTimeoutMs,
-        });
+      if (result?.needsManualSend || (result !== null && !result?.sent)) {
+        if (await waitForTaskInChatOnTab(tab.id, taskId, message, 15000)) {
+          result = {
+            ok: true,
+            sent: true,
+            method: 'confirmed_after_handoff',
+            phase: 'typed_and_sent',
+            message,
+          };
+        }
+      }
+
+      if (result === null) {
+        if (!(await taskAlreadyVisibleInTab(tab.id, taskId))) {
+          result = await runDomHandoffFallback(tab.id, message, {
+            taskId,
+            composerTimeoutMs,
+            sendTimeoutMs,
+          });
+        } else {
+          result = {
+            ok: true,
+            sent: true,
+            method: 'already_sent',
+            phase: 'skipped_duplicate',
+            message,
+          };
+        }
+      } else if (!result?.sent && !result?.needsManualSend) {
+        if (await taskAlreadyVisibleInTab(tab.id, taskId)) {
+          result = {
+            ok: true,
+            sent: true,
+            method: 'already_sent',
+            phase: 'skipped_duplicate',
+            message,
+          };
+        }
       }
 
       if (result?.sent) {
-        markTaskHandoffSent(tab.id, taskId);
+        const confirmed = await waitForTaskInChatOnTab(tab.id, taskId, message, 8000)
+          || await taskAlreadyVisibleInTab(tab.id, taskId);
+        if (confirmed) {
+          markTaskHandoffSent(tab.id, taskId);
+        } else {
+          result = {
+            ok: true,
+            sent: false,
+            needsManualSend: true,
+            method: result.method || 'unconfirmed_send',
+            message,
+            error: 'PROCESS_TASK typed but not confirmed in chat. Click Send manually.',
+          };
+        }
       } else if (!result?.sent) {
         await setGptTabStatus(tab.id, {
           phase: 'error',
@@ -974,13 +1055,21 @@
       };
     };
 
-    if (sendTaskToCustomGptLock) {
-      await sendTaskToCustomGptLock.catch(() => {});
-    }
-
-    sendTaskToCustomGptLock = (async () => {
+    const promise = (async () => {
       try {
-        return await runSend();
+        const outcome = await runSend();
+        if (outcome?.handoff?.sent && outcome.tabId) {
+          const confirmed = await taskAlreadyVisibleInTab(outcome.tabId, taskId);
+          if (confirmed) {
+            completedHandoffsByTaskId.set(taskId, outcome);
+          } else if (outcome.handoff) {
+            outcome.handoff.sent = false;
+            outcome.handoff.needsManualSend = true;
+            outcome.handoff.error = outcome.handoff.error
+              || 'PROCESS_TASK not confirmed in chat. Click Send in the GPT tab.';
+          }
+        }
+        return outcome;
       } catch (err) {
         const error = err?.message || String(err);
         if (options.tabId) {
@@ -1005,10 +1094,11 @@
         };
       }
     })().finally(() => {
-      sendTaskToCustomGptLock = null;
+      sendLocksByTaskId.delete(taskId);
     });
 
-    return sendTaskToCustomGptLock;
+    sendLocksByTaskId.set(taskId, promise);
+    return promise;
   }
 
   if (typeof chrome !== 'undefined' && chrome.tabs?.onRemoved) {

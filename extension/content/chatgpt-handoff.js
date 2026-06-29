@@ -144,13 +144,14 @@
 
   function visitAllRoots(visitor) {
     const seen = new Set();
-    const walk = (root) => {
-      if (!root || seen.has(root)) return;
+    const walk = (root, depth = 0) => {
+      if (!root || seen.has(root) || depth > 4) return;
       seen.add(root);
       visitor(root);
+      if (depth >= 4) return;
       try {
         root.querySelectorAll('*').forEach((el) => {
-          if (el.shadowRoot) walk(el.shadowRoot);
+          if (el.shadowRoot) walk(el.shadowRoot, depth + 1);
         });
       } catch {
         // ignore
@@ -159,9 +160,118 @@
     walk(document);
   }
 
+  function taskPatternForId(taskId, message) {
+    const tid = cleanText(taskId || parseTaskId(message) || '');
+    if (!tid) return null;
+    const escaped = tid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`PROCESS_TASK:\\s*${escaped}`, 'i');
+  }
+
+  const GPT_SUBMIT_LOCK_MS = 45000;
+
+  function getUserChatNodes() {
+    return document.querySelectorAll(
+      '[data-message-author-role="user"],' +
+      'article[data-turn="user"],' +
+      '[data-testid*="conversation-turn-user"],' +
+      '[data-testid="user-message"],' +
+      'div[data-message-id][data-message-author-role="user"]'
+    );
+  }
+
+  function countTaskMessagesInChat(taskId, message) {
+    const pattern = taskPatternForId(taskId, message);
+    if (!pattern) return 0;
+
+    const editor = findPromptEditor();
+    const composerText = readEditorText(editor);
+    if (composerText && pattern.test(composerText)) return 0;
+
+    let count = 0;
+    for (const node of getUserChatNodes()) {
+      if (pattern.test(cleanText(node.innerText || ''))) count += 1;
+    }
+    return count;
+  }
+
+  function taskMessageInChatHistory(taskId, message) {
+    return countTaskMessagesInChat(taskId, message) >= 1;
+  }
+
+  function lockTaskSubmit(taskId) {
+    const tid = cleanText(taskId || '');
+    if (!tid) return;
+    if (!window.__qtsGptSubmitLockedAt) window.__qtsGptSubmitLockedAt = {};
+    window.__qtsGptSubmitLockedAt[tid] = Date.now();
+  }
+
+  function isTaskSubmitLocked(taskId) {
+    const tid = cleanText(taskId || '');
+    if (!tid || !window.__qtsGptSubmitLockedAt) return false;
+    const at = window.__qtsGptSubmitLockedAt[tid];
+    return Boolean(at && Date.now() - at < GPT_SUBMIT_LOCK_MS);
+  }
+
+  function handoffStepAttemptedSubmit(stepResult) {
+    return Boolean(
+      stepResult?.sent
+      || stepResult?.submitAttempted
+      || stepResult?.phase === 'typed_and_sent'
+      || stepResult?.phase === 'typed_needs_enter'
+      || stepResult?.needsManualSend
+    );
+  }
+
+  function composerHasTaskMessage(taskId, message) {
+    const pattern = taskPatternForId(taskId, message);
+    if (!pattern) return false;
+    const editor = findPromptEditor();
+    const composerText = readEditorText(editor);
+    return Boolean(composerText && pattern.test(composerText));
+  }
+
+  async function waitForTaskInChat(taskId, message, timeoutMs = 6000) {
+    const started = Date.now();
+    while (Date.now() - started < timeoutMs) {
+      if (taskMessageInChatHistory(taskId, message)) return true;
+      await sleep(250);
+    }
+    return taskMessageInChatHistory(taskId, message);
+  }
+
+  function finishSuccessfulSend(tid, text, method, extra = {}) {
+    markTaskSentInPage(tid, text);
+    showGptLiveStatus({
+      phase: 'allowing',
+      taskId: tid,
+      message: 'PROCESS_TASK sent — watching for GPT Actions…',
+      type: 'warn',
+    });
+    return { ok: true, sent: true, method, taskId: tid, ...extra };
+  }
+
+  function markTaskSentInPage(taskId, message) {
+    const tid = cleanText(taskId || '');
+    if (!tid || !taskMessageInChatHistory(tid, message)) return;
+    if (!window.__qtsGptSentTaskIds) {
+      window.__qtsGptSentTaskIds = new Set();
+    }
+    window.__qtsGptSentTaskIds.add(tid);
+  }
+
+  const handoffInFlightByTask = new Map();
+
   function domOrderScore(el) {
     const rect = el.getBoundingClientRect();
     return rect.top * 10000 + rect.left;
+  }
+
+  function isGptTaskSavedConfirmation(bodyText) {
+    const text = cleanText(bodyText);
+    if (!text) return false;
+    if (/task\s+task_[\w-]+\s+saved/i.test(text)) return true;
+    if (/Extension will apply answers/i.test(text)) return true;
+    return /(?:^|\n)\s*Confirmed\.?\s*(?:\n|$)/im.test(text);
   }
 
   function scrapePageState() {
@@ -170,8 +280,7 @@
       hasApprovalDialog: /wants to talk to/i.test(bodyText),
       hasGetTaskContext: /getTaskContext/i.test(bodyText),
       hasSubmitTaskPackage: /submitTaskPackage/i.test(bodyText),
-      taskSaved: /task\s+task_[\w-]+\s+saved/i.test(bodyText)
-        || /Extension will apply answers/i.test(bodyText),
+      taskSaved: isGptTaskSavedConfirmation(bodyText),
       thinking: /\bThinking\b/i.test(bodyText),
       stoppedThinking: /Stopped thinking/i.test(bodyText),
       snippet: bodyText.slice(0, 600),
@@ -248,26 +357,19 @@
           ...result,
         }).catch(() => {});
       }
-    }, 120);
+    }, 350);
   }
 
   function startAllowAutoWatch() {
     if (allowAutoWatchActive) return { ok: true, already: true };
     allowAutoWatchActive = true;
     scheduleAllowAutoClick();
+    const observeRoot = document.body || document.documentElement;
     allowAutoWatchObserver = new MutationObserver(scheduleAllowAutoClick);
-    allowAutoWatchObserver.observe(document.documentElement, {
+    allowAutoWatchObserver.observe(observeRoot, {
       childList: true,
       subtree: true,
-      attributes: true,
     });
-    const interval = setInterval(() => {
-      if (!allowAutoWatchActive) {
-        clearInterval(interval);
-        return;
-      }
-      scheduleAllowAutoClick();
-    }, 800);
     return { ok: true, started: true };
   }
 
@@ -373,51 +475,25 @@
     return editor;
   }
 
-  function runHandoffStep(text) {
-    const shared = window.__qtsChatGptComposerHandoff?.runUnifiedComposerHandoff?.(text);
-    if (shared && (shared.sent || shared.needsManualSend || shared.phase !== 'no_editor')) {
-      return shared;
-    }
-
+  async function runHandoffStep(text) {
     const message = cleanText(text);
     if (!message) return { ok: false, sent: false, phase: 'empty', error: 'Empty message.' };
 
-    const editor = activateComposer();
-    if (!editor) {
-      return { ok: false, sent: false, phase: 'no_editor', error: 'Waiting for ChatGPT composer…' };
+    const runUnified = window.__qtsChatGptComposerHandoff?.runUnifiedComposerHandoff;
+    if (!runUnified) {
+      return { ok: false, sent: false, phase: 'no_module', error: 'Composer handoff module not loaded.' };
     }
 
-    const target = resolveEditable(editor) || editor;
-    if (!(target instanceof HTMLElement)) {
-      return { ok: false, sent: false, phase: 'no_editable', error: 'Composer not editable.' };
-    }
-
-    const before = readEditorText(target);
-    if (!before.includes(message.slice(0, 8))) {
-      if (!insertTextIntoEditor(target, message)) {
-        return { ok: false, sent: false, phase: 'insert_failed', error: 'Could not type into composer.' };
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const result = runUnified(message);
+      if (result?.submitAttempted || result?.sent) {
+        lockTaskSubmit(parseTaskId(message));
       }
+      if (result?.phase !== 'no_editor') return result;
+      await sleep(300);
     }
 
-    const after = readEditorText(target);
-    if (!after.includes(message.slice(0, 8))) {
-      return { ok: false, sent: false, phase: 'insert_failed', error: 'Text did not appear in composer.' };
-    }
-
-    const submit = performSubmitWithFallback(target);
-    if (submit.sent) {
-      return { ok: true, sent: true, method: submit.method, phase: 'typed_and_sent' };
-    }
-
-    return {
-      ok: true,
-      sent: false,
-      needsManualSend: true,
-      method: submit.method,
-      phase: 'typed_needs_enter',
-      editorText: after,
-      message,
-    };
+    return { ok: false, sent: false, phase: 'no_editor', error: 'Waiting for ChatGPT composer…' };
   }
 
   const GPT_STATUS_HOST_ID = 'qts-gpt-status-host';
@@ -481,6 +557,9 @@
       gptStatusTaskId = taskId;
       gptStatusActiveIndex = 0;
       gptCompletedSteps.clear();
+      if (window.__qtsGptToastedPhases) {
+        window.__qtsGptToastedPhases.clear();
+      }
     }
     const idx = getPhaseStepIndex(phase);
     if (phase === 'finished') {
@@ -649,6 +728,14 @@
     (document.head || document.documentElement).appendChild(style);
   }
 
+  function showNumberedStepToast(message, type = 'info') {
+    if (typeof window.__showQtsDetectToast === 'function') {
+      window.__showQtsDetectToast(message, type);
+      return true;
+    }
+    return false;
+  }
+
   function dismissGptLiveStatus() {
     clearTimeout(gptStatusFinishTimer);
     gptStatusFinishTimer = null;
@@ -670,7 +757,18 @@
     const taskId = cleanText(options.taskId || '');
     const persistent = options.persistent !== false
       && phase !== 'finished'
-      && phase !== 'error';
+      && phase !== 'error'
+      && phase !== 'thinking'
+      && phase !== 'allowing'
+      && phase !== 'running';
+
+    const toastKey = `${taskId || gptStatusTaskId || 'default'}:${phase}`;
+    if (!window.__qtsGptToastedPhases) {
+      window.__qtsGptToastedPhases = new Set();
+    }
+    if (!window.__qtsGptToastedPhases.has(toastKey)) {
+      window.__qtsGptToastedPhases.add(toastKey);
+    }
 
     syncCompletedSteps(phase, taskId || gptStatusTaskId);
 
@@ -708,6 +806,7 @@
 
   function showHandoffToast(message, type) {
     const toastType = type === 'success' ? 'success' : type === 'error' ? 'error' : 'warn';
+    if (showNumberedStepToast(message, toastType)) return;
     showGptLiveStatus({
       phase: toastType === 'success' ? 'finished' : toastType === 'error' ? 'error' : 'running',
       message,
@@ -812,18 +911,14 @@
     return null;
   }
 
-  function performSubmitWithFallback(editor) {
+  async function performSubmitWithFallback(editor, taskId = null) {
+    lockTaskSubmit(taskId || parseTaskId(readEditorText(editor)));
     const sendBtn = findSendButton();
     if (sendBtn) {
       clickElement(sendBtn);
-      if (readEditorText(editor) === '') {
-        return { sent: true, method: 'composer_send' };
-      }
-    }
-
-    editor.focus();
-    for (const eventType of ['keydown', 'keypress', 'keyup']) {
-      editor.dispatchEvent(new KeyboardEvent(eventType, {
+    } else {
+      editor.focus();
+      editor.dispatchEvent(new KeyboardEvent('keydown', {
         key: 'Enter',
         code: 'Enter',
         keyCode: 13,
@@ -834,22 +929,18 @@
       }));
     }
 
-    if (readEditorText(editor) === '') {
-      return { sent: true, method: 'composer_enter' };
+    for (let i = 0; i < 12; i += 1) {
+      await sleep(250);
+      if (readEditorText(editor) === '') {
+        return { sent: true, method: sendBtn ? 'composer_send' : 'composer_enter', submitAttempted: true };
+      }
     }
 
-    editor.dispatchEvent(new InputEvent('beforeinput', {
-      inputType: 'insertParagraph',
-      bubbles: true,
-      cancelable: true,
-      composed: true,
-    }));
-
-    if (readEditorText(editor) === '') {
-      return { sent: true, method: 'composer_insert_paragraph' };
-    }
-
-    return { sent: false, method: 'composer_paste' };
+    return {
+      sent: false,
+      method: sendBtn ? 'composer_send_pending' : 'composer_enter_pending',
+      submitAttempted: true,
+    };
   }
 
   async function trySendFromComposer(message, { maxWaitMs = 45000, taskId = null } = {}) {
@@ -857,44 +948,110 @@
     if (!text) return { ok: false, sent: false, error: 'Empty PROCESS_TASK message.' };
     const tid = taskId || parseTaskId(text);
 
+    if (countTaskMessagesInChat(tid, text) >= 1) {
+      return finishSuccessfulSend(tid, text, 'already_in_chat');
+    }
+
+    if (isTaskSubmitLocked(tid)) {
+      if (await waitForTaskInChat(tid, text, 8000)) {
+        return finishSuccessfulSend(tid, text, 'confirmed_after_submit_lock');
+      }
+    }
+
     showGptLiveStatus({ phase: 'scraping', taskId: tid, message: 'Scanning page for composer…' });
 
-    const editor = await waitForComposer(maxWaitMs);
+    const deadline = Date.now() + maxWaitMs;
+    while (Date.now() < deadline) {
+      const editor = window.__qtsChatGptComposerHandoff?.findUnifiedComposerEditor?.()
+        || findPromptEditor();
+      if (editor) break;
+      if (countTaskMessagesInChat(tid, text) >= 1) {
+        return finishSuccessfulSend(tid, text, 'already_in_chat');
+      }
+      await sleep(400);
+    }
+
+    showGptLiveStatus({ phase: 'typing', taskId: tid, message: 'Typing PROCESS_TASK…' });
+    const stepResult = await runHandoffStep(text);
+
+    if (await waitForTaskInChat(tid, text, 15000)) {
+      return finishSuccessfulSend(tid, text, stepResult?.method || 'unified_composer');
+    }
+
+    if (countTaskMessagesInChat(tid, text) >= 1) {
+      return finishSuccessfulSend(tid, text, stepResult?.method || 'unified_composer');
+    }
+
+    const submitWasAttempted = handoffStepAttemptedSubmit(stepResult);
+    if (submitWasAttempted || isTaskSubmitLocked(tid)) {
+      showGptLiveStatus({ phase: 'sending', taskId: tid, message: 'Confirming message in chat…' });
+      if (await waitForTaskInChat(tid, text, 15000)) {
+        return finishSuccessfulSend(tid, text, stepResult?.method || 'unified_composer');
+      }
+    }
+
+    const editor = window.__qtsChatGptComposerHandoff?.findUnifiedComposerEditor?.()
+      || findPromptEditor();
+
+    if (composerHasTaskMessage(tid, text) && editor) {
+      showGptLiveStatus({ phase: 'sending', taskId: tid, message: 'Sending message…' });
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        if (countTaskMessagesInChat(tid, text) >= 1) {
+          return finishSuccessfulSend(tid, text, 'already_in_chat', { attempt });
+        }
+        if (!composerHasTaskMessage(tid, text)) break;
+        const submit = await performSubmitWithFallback(editor, tid);
+        if (submit.submitAttempted) lockTaskSubmit(tid);
+        if (await waitForTaskInChat(tid, text, 3000)) {
+          return finishSuccessfulSend(tid, text, submit.method, { attempt });
+        }
+        await sleep(500);
+      }
+    }
+
+    if (await waitForTaskInChat(tid, text, 8000)) {
+      return finishSuccessfulSend(tid, text, 'confirmed_late');
+    }
+
+    if (submitWasAttempted || isTaskSubmitLocked(tid)) {
+      showGptLiveStatus({
+        phase: 'error',
+        taskId: tid,
+        message: 'PROCESS_TASK may have sent — check chat before retrying.',
+        type: 'error',
+        persistent: false,
+      });
+      return {
+        ok: true,
+        sent: false,
+        needsManualSend: true,
+        method: 'unconfirmed_send',
+        message: text,
+        error: 'PROCESS_TASK submit was attempted but not confirmed in chat.',
+        taskId: tid,
+      };
+    }
+
     if (!editor) {
       showGptLiveStatus({ phase: 'error', taskId: tid, message: 'ChatGPT composer not ready yet.' });
       return { ok: false, sent: false, error: 'ChatGPT composer not ready yet.' };
     }
 
-    showGptLiveStatus({ phase: 'typing', taskId: tid, message: 'Typing PROCESS_TASK…' });
-
-    if (!insertTextIntoEditor(editor, text)) {
-      showGptLiveStatus({ phase: 'error', taskId: tid, message: 'Could not type into ChatGPT composer.' });
-      return { ok: false, sent: false, error: 'Could not insert text into ChatGPT composer.' };
-    }
-
-    await sleep(500);
-    showGptLiveStatus({ phase: 'sending', taskId: tid, message: 'Sending message…' });
-
-    for (let attempt = 0; attempt < 8; attempt += 1) {
-      const submit = await performSubmitWithFallback(editor);
-      if (submit.sent) {
-        showGptLiveStatus({
-          phase: 'allowing',
-          taskId: tid,
-          message: 'PROCESS_TASK sent — watching for GPT Actions…',
-          type: 'warn',
-        });
-        return { ok: true, sent: true, method: submit.method, attempt };
-      }
-      await sleep(350);
-    }
-
+    showGptLiveStatus({
+      phase: 'error',
+      taskId: tid,
+      message: 'Could not send PROCESS_TASK — click Send in the composer.',
+      type: 'error',
+      persistent: false,
+    });
     return {
       ok: true,
       sent: false,
-      method: 'composer_paste',
+      method: 'composer_needs_manual_send',
       needsManualSend: true,
       message: text,
+      error: 'PROCESS_TASK is in the composer but was not sent. Click Send manually.',
+      taskId: tid,
     };
   }
 
@@ -902,28 +1059,43 @@
     const tid = taskId || parseTaskId(message);
     const fullMessage = cleanText(message) || (tid ? `PROCESS_TASK: ${tid}` : '');
 
-    if (preferStarter && tid) {
-      const starterResult = await clickConversationStarter(tid, fullMessage);
-      if (starterResult.sent) return starterResult;
+    if (countTaskMessagesInChat(tid, fullMessage) >= 1) {
+      return { ok: true, sent: true, method: 'already_in_chat', taskId: tid };
     }
 
-    const composerResult = await trySendFromComposer(fullMessage, {
-      maxWaitMs: composerWaitMs,
-      taskId: tid,
+    if (handoffInFlightByTask.has(tid)) {
+      return handoffInFlightByTask.get(tid);
+    }
+
+    const flight = (async () => {
+      if (preferStarter && tid) {
+        const starterResult = await clickConversationStarter(tid, fullMessage);
+        if (starterResult.sent) return starterResult;
+      }
+
+      const composerResult = await trySendFromComposer(fullMessage, {
+        maxWaitMs: composerWaitMs,
+        taskId: tid,
+      });
+      if (composerResult?.sent) {
+        return { ...composerResult, taskId: tid };
+      }
+      if (composerResult?.needsManualSend) {
+        return { ...composerResult, taskId: tid };
+      }
+
+      return {
+        ok: false,
+        sent: false,
+        error: composerResult?.error || 'ChatGPT composer not ready — paste PROCESS_TASK manually.',
+        taskId: tid,
+      };
+    })().finally(() => {
+      handoffInFlightByTask.delete(tid);
     });
-    if (composerResult?.sent) {
-      return { ...composerResult, taskId: tid };
-    }
-    if (composerResult?.needsManualSend) {
-      return { ...composerResult, taskId: tid };
-    }
 
-    return {
-      ok: false,
-      sent: false,
-      error: composerResult?.error || 'ChatGPT composer not ready — paste PROCESS_TASK manually.',
-      taskId: tid,
-    };
+    handoffInFlightByTask.set(tid, flight);
+    return flight;
   }
 
   async function insertTaskMessage(message, options = {}) {
@@ -937,12 +1109,10 @@
   if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage) {
     chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       if (msg.type === 'QTS_GPT_HANDOFF_STEP') {
-        try {
-          sendResponse(runHandoffStep(msg.message));
-        } catch (e) {
-          sendResponse({ ok: false, error: e.message, phase: 'error' });
-        }
-        return false;
+        runHandoffStep(msg.message)
+          .then(sendResponse)
+          .catch((e) => sendResponse({ ok: false, error: e.message, phase: 'error' }));
+        return true;
       }
       if (msg.type === 'QTS_GPT_SHOW_TOAST') {
         showHandoffToast(msg.message, msg.toastType || 'warn');
@@ -969,7 +1139,7 @@
         runHandoff({
           taskId: msg.taskId,
           message: msg.message,
-          preferStarter: msg.preferStarter !== false,
+          preferStarter: msg.preferStarter === true,
           composerWaitMs: msg.composerWaitMs || 45000,
         }).then(sendResponse).catch((e) => sendResponse({ ok: false, error: e.message }));
         return true;
@@ -990,6 +1160,21 @@
       if (msg.type === 'QTS_GPT_CLICK_ALLOW') {
         const result = clickAllowButtons();
         sendResponse({ ok: true, ...result });
+        return false;
+      }
+      if (msg.type === 'QTS_GPT_SNAPSHOT') {
+        sendResponse({ ok: true, ...scrapePageState(), allowWatch: allowAutoWatchActive });
+        return false;
+      }
+      if (msg.type === 'QTS_GPT_TASK_IN_CHAT') {
+        const tid = cleanText(msg.taskId || parseTaskId(msg.message) || '');
+        const count = countTaskMessagesInChat(tid, msg.message);
+        sendResponse({
+          ok: true,
+          inChat: count >= 1,
+          count,
+          taskId: tid,
+        });
         return false;
       }
       return false;

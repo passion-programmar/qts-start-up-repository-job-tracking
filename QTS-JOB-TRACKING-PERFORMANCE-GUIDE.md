@@ -1,5 +1,7 @@
 # QTS Job Tracking â€” Performance & Optimization Guide
 
+> **Current system (June 2026):** See [docs/CURRENT-SYSTEM.md](docs/CURRENT-SYSTEM.md) — extension v1.13.25+, job sites, one-step auto-apply.
+
 **File:** `QTS-JOB-TRACKING-PERFORMANCE-GUIDE.md`  
 **For:** Admins, developers, and anyone tuning speed on Vercel, the extension, and the API  
 **Related:** `QTS-JOB-TRACKING-PROJECT-SETUP-GUIDE.md`, `QTS-JOB-TRACKING-EXTENSION-GUIDE.md`
