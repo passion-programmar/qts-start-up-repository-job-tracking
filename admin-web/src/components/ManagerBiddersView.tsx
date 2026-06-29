@@ -30,6 +30,7 @@ export function ManagerBiddersView() {
     password: '',
     username: '',
     accountId: null as number | null,
+    customGptUrl: '',
   });
   const [savedBidderPassword, setSavedBidderPassword] = useState('');
   const [formLoading, setFormLoading] = useState(false);
@@ -98,7 +99,7 @@ export function ManagerBiddersView() {
 
   function openAddForm() {
     setSelected(null);
-    setForm({ name: '', notes: '', isActive: true, password: '', username: '', accountId: null });
+    setForm({ name: '', notes: '', isActive: true, password: '', username: '', accountId: null, customGptUrl: '' });
     setSavedBidderPassword('');
     setFormLoading(false);
     setError(null);
@@ -114,6 +115,7 @@ export function ManagerBiddersView() {
       password: '',
       username: b.name,
       accountId: null,
+      customGptUrl: b.custom_gpt_url || '',
     });
     setSavedBidderPassword('');
     setError(null);
@@ -142,6 +144,7 @@ export function ManagerBiddersView() {
       password,
       username: primaryAccount?.username || b.name,
       accountId: primaryAccount?.id ?? null,
+      customGptUrl: b.custom_gpt_url || '',
     });
     setSavedBidderPassword(password);
   }
@@ -201,6 +204,7 @@ export function ManagerBiddersView() {
       name: form.name.trim(),
       notes: form.notes.trim(),
       isActive: form.isActive,
+      customGptUrl: form.customGptUrl.trim() || null,
       ...(!selected ? { password: form.password } : {}),
       ...(selected && passwordChanged && form.password ? { password: form.password } : {}),
     };
@@ -367,6 +371,17 @@ export function ManagerBiddersView() {
                   No saved password on file. Enter a new password to set credentials.
                 </p>
               )}
+            </div>
+            <div className="form-group">
+              <label>Custom GPT URL</label>
+              <input
+                value={form.customGptUrl}
+                onChange={(e) => setForm({ ...form, customGptUrl: e.target.value })}
+                placeholder="https://chatgpt.com/g/g-…-qts-job-tracking"
+              />
+              <p className="text-muted" style={{ marginTop: 6, fontSize: 12 }}>
+                Optional. Leave empty to use the system default Custom GPT.
+              </p>
             </div>
             <div className="form-group">
               <label>Notes</label>

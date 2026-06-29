@@ -10,6 +10,7 @@ import { isAdmin, isManager } from '../../middleware/scope';
 import { createAccount, updateAccountPassword, usernameExists } from '../../services/accounts';
 import { decryptCredential } from '../../utilities/credential-crypto';
 import { logger } from '../../utilities/logger';
+import { validateCustomGptUrl } from '../../utilities/custom-gpt-url';
 
 const router = Router();
 router.use(requireAuth);
@@ -40,7 +41,18 @@ const BidderSchema = z.object({
   isActive: z.boolean().optional().default(true),
   managerId: z.number().int().positive().optional().nullable(),
   password: z.string().min(1).max(200).optional(),
+  customGptUrl: z.string().max(500).optional().nullable(),
 });
+
+function normalizeCustomGptUrlInput(value: string | null | undefined): string | null {
+  const trimmed = String(value ?? '').trim();
+  if (!trimmed) return null;
+  const validated = validateCustomGptUrl(trimmed);
+  if (!validated.ok) {
+    throw new Error(validated.message);
+  }
+  return validated.url;
+}
 
 const AccountSchema = z.object({
   username: z.string().min(1).max(100),
@@ -147,6 +159,16 @@ router.post('/', requireAdminOrManager, async (req: AuthRequest, res: Response) 
   const data = BidderSchema.parse(req.body);
   const managerId = isManager(req) ? (req.userId ?? null) : (data.managerId ?? null);
   const username = data.name.trim();
+  let customGptUrl: string | null = null;
+  try {
+    customGptUrl = normalizeCustomGptUrlInput(data.customGptUrl);
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error instanceof Error ? error.message : 'Invalid Custom GPT URL.',
+    });
+    return;
+  }
 
   if (isManager(req) && !data.password) {
     res.status(400).json({ success: false, message: 'Password is required for the bidder login.' });
@@ -164,8 +186,8 @@ router.post('/', requireAdminOrManager, async (req: AuthRequest, res: Response) 
   }
 
   const row = await queryOne<{ id: number }>(
-    `INSERT INTO bidders (name, notes, is_active, manager_id) VALUES ($1, $2, $3, $4) RETURNING id`,
-    [data.name, data.notes || null, data.isActive ?? true, managerId]
+    `INSERT INTO bidders (name, notes, is_active, manager_id, custom_gpt_url) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+    [data.name, data.notes || null, data.isActive ?? true, managerId, customGptUrl]
   );
 
   if (data.password) {
@@ -190,9 +212,19 @@ router.put('/:id', requireAdminOrManager, async (req: AuthRequest, res: Response
   }
   const data = BidderSchema.parse(req.body);
   const managerId = isManager(req) ? (req.userId ?? null) : (data.managerId ?? null);
+  let customGptUrl: string | null = null;
+  try {
+    customGptUrl = normalizeCustomGptUrlInput(data.customGptUrl);
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error instanceof Error ? error.message : 'Invalid Custom GPT URL.',
+    });
+    return;
+  }
   await execute(
-    `UPDATE bidders SET name = $1, notes = $2, is_active = $3, manager_id = $4, updated_at = NOW() WHERE id = $5`,
-    [data.name, data.notes || null, data.isActive ?? true, managerId, id]
+    `UPDATE bidders SET name = $1, notes = $2, is_active = $3, manager_id = $4, custom_gpt_url = $5, updated_at = NOW() WHERE id = $6`,
+    [data.name, data.notes || null, data.isActive ?? true, managerId, customGptUrl, id]
   );
 
   const primaryAccount = await getPrimaryBidderAccount(id);

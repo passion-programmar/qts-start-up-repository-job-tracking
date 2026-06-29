@@ -168,3 +168,6 @@ function classifyFields(fields) {
 if (typeof window !== 'undefined') {
   window.__qtsFieldClassifier = { classifyField, classifyFields };
 }
+if (typeof self !== 'undefined' && typeof importScripts === 'function') {
+  self.__qtsFieldClassifier = { classifyField, classifyFields };
+}

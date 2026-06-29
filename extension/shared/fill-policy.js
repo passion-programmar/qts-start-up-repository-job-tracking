@@ -7,6 +7,9 @@ const TEMPLATE_FILL_POLICIES = {
     skipSavedAnswerKeys: ['terms_accepted', 'gdpr_consent', 'cover_message', 'marketing_opt_in'],
     skipCategories: ['ai_generation', 'unknown'],
     deferDocumentUploadToGpt: true,
+    fillProfileBeforeGpt: true,
+    gptDocumentSlots: ['resume'],
+    gptApplyDocumentsOnly: true,
   },
 };
 
@@ -18,7 +21,8 @@ function getFillPolicyForTemplate(templateId) {
 function applyFillPolicy(fields, policy, context = {}) {
   if (!policy) return fields;
 
-  const matcher = typeof window !== 'undefined' ? window.__qtsCandidateMatcher : null;
+  const matcher = (typeof window !== 'undefined' ? window.__qtsCandidateMatcher : null)
+    || (typeof self !== 'undefined' ? self.__qtsCandidateMatcher : null);
   const profileMap = context.candidate && matcher?.buildCandidateProfileMap
     ? matcher.buildCandidateProfileMap(context.candidate)
     : {};
@@ -93,10 +97,40 @@ function applyFillPolicy(fields, policy, context = {}) {
   });
 }
 
+function getEarlyProfileFillFields(fields, policy) {
+  if (!policy?.fillProfileBeforeGpt) return [];
+  const allowed = new Set(policy.profileKeys || []);
+  return (fields || []).filter((field) => field.category === 'candidate_profile'
+    && allowed.has(field.profileKey)
+    && field.fillStatus === 'filled'
+    && field.fillValue);
+}
+
+function applyEarlyFillResults(fields, fillResults) {
+  const resultById = new Map((fillResults || []).map((item) => [item.stableFieldId, item]));
+  return (fields || []).map((field) => {
+    const outcome = resultById.get(field.stableFieldId);
+    if (!outcome) return field;
+    if (outcome.ok) return { ...field, fillStatus: 'filled' };
+    return { ...field, fillStatus: 'error' };
+  });
+}
+
 if (typeof window !== 'undefined') {
   window.__qtsFillPolicy = {
     TEMPLATE_FILL_POLICIES,
     getFillPolicyForTemplate,
     applyFillPolicy,
+    getEarlyProfileFillFields,
+    applyEarlyFillResults,
+  };
+}
+if (typeof self !== 'undefined' && typeof importScripts === 'function') {
+  self.__qtsFillPolicy = {
+    TEMPLATE_FILL_POLICIES,
+    getFillPolicyForTemplate,
+    applyFillPolicy,
+    getEarlyProfileFillFields,
+    applyEarlyFillResults,
   };
 }

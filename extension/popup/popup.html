@@ -135,6 +135,81 @@
     #login-section { padding: 0; }
     #job-section { padding: 14px 18px; }
     #action-bar.hidden { display: none; }
+    .login-candidate-step {
+      margin-top: 4px;
+      padding-top: 4px;
+      border-top: 1px solid #e2e8f0;
+    }
+    .login-candidate-step.hidden { display: none; }
+    .login-form.hidden { display: none; }
+    .login-candidate-hint {
+      margin: 6px 0 0;
+      font-size: 11px;
+      line-height: 1.45;
+      color: #64748b;
+    }
+    .login-candidate-actions {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 4px;
+    }
+    .auto-apply-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 12px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid #cbd5e1;
+      background: #f8fafc;
+      font-size: 12px;
+    }
+    .auto-apply-bar.is-active {
+      border-color: #86efac;
+      background: #f0fdf4;
+    }
+    .auto-apply-bar.hidden { display: none; }
+    .auto-apply-status {
+      font-weight: 600;
+      color: #334155;
+    }
+    .auto-apply-bar.is-active .auto-apply-status { color: #166534; }
+    .login-signed-in-as {
+      margin: 0 0 12px;
+      font-size: 12px;
+      color: #475569;
+      text-align: center;
+    }
+    .cand-default-badge {
+      display: inline-flex;
+      align-items: center;
+      margin-left: 8px;
+      padding: 2px 7px;
+      border-radius: 999px;
+      background: #dbeafe;
+      color: #1d4ed8;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      vertical-align: middle;
+    }
+    .cand-header-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .cand-default-select {
+      min-width: 140px;
+      max-width: 200px;
+      font-size: 11px;
+      padding: 5px 8px;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      background: #fff;
+    }
   </style>
 </head>
 <body class="popup-app">
@@ -199,7 +274,7 @@
           </div>
           <div id="login-alert"></div>
 
-          <div class="login-form">
+          <div id="login-form" class="login-form">
             <div class="login-field">
               <label class="login-label" for="login-user">Username</label>
               <input type="text" id="login-user" class="login-input" placeholder="Type name from qts" autocomplete="username">
@@ -211,6 +286,21 @@
             <button class="btn btn-primary btn-block login-submit" id="btn-login" type="button">Log In</button>
           </div>
 
+          <div id="login-candidate-step" class="login-candidate-step hidden">
+            <p class="login-signed-in-as" id="login-signed-in-as"></p>
+            <div class="login-field">
+              <label class="login-label" for="login-default-candidate">Default candidate</label>
+              <select id="login-default-candidate" class="login-input" aria-label="Default candidate">
+                <option value="">— Select candidate —</option>
+              </select>
+              <p class="login-candidate-hint">Choose who you are applying as, then press <strong>Start applying on job pages</strong>. Until you do, the extension will not run on job sites. Open the extension icon anytime to change candidate or stop auto-apply.</p>
+            </div>
+            <div class="login-candidate-actions">
+              <button class="btn btn-primary btn-block login-submit" id="btn-start-auto-apply" type="button">Start applying on job pages</button>
+              <button class="btn btn-ghost btn-block" id="btn-setup-not-now" type="button">Not now</button>
+            </div>
+          </div>
+
           <p class="login-footer">Use the bidder account your manager created in QTS_Startup</p>
         </div>
       </div>
@@ -220,6 +310,11 @@
     <div id="job-section" class="hidden">
       <div id="main-alert"></div>
 
+      <div id="auto-apply-bar" class="auto-apply-bar hidden" aria-live="polite">
+        <span class="auto-apply-status" id="auto-apply-status">Auto-apply: off</span>
+        <button type="button" class="btn btn-primary btn-sm" id="btn-toggle-auto-apply">Start on job pages</button>
+      </div>
+
       <div id="job-summary" class="job-summary">
         <div class="job-summary-stats">
           <span class="job-summary-item">
@@ -227,7 +322,7 @@
             <span class="job-summary-stat-value" id="summary-source">—</span>
           </span>
           <span class="job-summary-item">
-            <span class="job-summary-stat-label">Apply template:</span>
+            <span class="job-summary-stat-label">Apply method:</span>
             <span class="job-summary-stat-value" id="summary-apply-template" title="">—</span>
           </span>
           <span class="job-summary-item">
@@ -284,7 +379,7 @@
             <span class="application-preview-flow" id="application-preview-flow"></span>
           </div>
           <p class="application-preview-note" id="application-preview-note">
-            Extension fills the form only — you submit manually on the job site. Nothing is submitted automatically.
+            Review discovered fields, then click Confirm. Profile fields fill on the job page; Custom GPT runs next for AI questions and document uploads. You submit manually on the job site.
           </p>
           <div class="application-preview-stats" id="application-preview-stats"></div>
           <ul class="application-preview-warnings hidden" id="application-preview-warnings"></ul>
@@ -347,11 +442,17 @@
 
       <div class="cand-header">
         <span class="cand-title">Candidates</span>
-        <div class="cand-filters">
-          <select class="cand-stack-filter" id="cand-stack-filter" aria-label="Filter by stack">
-            <option value="">All stacks</option>
+        <div class="cand-header-actions">
+          <select class="cand-default-select hidden" id="main-default-candidate" aria-label="Default candidate" title="Default candidate for new applications">
+            <option value="">Default…</option>
           </select>
-          <input class="cand-search" type="text" placeholder="Search name…" id="cand-filter">
+          <button type="button" class="btn btn-primary btn-sm hidden" id="btn-start-default-candidate">Start Application</button>
+          <div class="cand-filters">
+            <select class="cand-stack-filter" id="cand-stack-filter" aria-label="Filter by stack">
+              <option value="">All stacks</option>
+            </select>
+            <input class="cand-search" type="text" placeholder="Search name…" id="cand-filter">
+          </div>
         </div>
       </div>
       <div class="cand-list" id="cand-list"></div>

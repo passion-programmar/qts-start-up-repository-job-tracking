@@ -6,13 +6,14 @@
   const TOAST_HOST_ID = 'qts-toast-host';
   const STYLE_ID = 'qts-toast-style';
   const AUTO_HIDE_MS = 1250;
+  const APPLIED_HIDE_MS = 10000;
 
   function normalizeToastType(typeOrSuccess) {
     if (typeof typeOrSuccess === 'boolean') {
       return typeOrSuccess ? 'success' : 'fail';
     }
     const type = String(typeOrSuccess || 'info').toLowerCase();
-    if (['success', 'fail', 'error', 'info', 'warn'].includes(type)) return type;
+    if (['success', 'fail', 'error', 'info', 'warn', 'applied'].includes(type)) return type;
     return 'info';
   }
 
@@ -52,6 +53,11 @@
       .qts-toast--error { background: #b91c1c; border: 1px solid #991b1b; }
       .qts-toast--info { background: #1d4ed8; border: 1px solid #1e40af; }
       .qts-toast--warn { background: #b45309; border: 1px solid #92400e; }
+      .qts-toast--applied {
+        background: #eab308;
+        border: 1px solid #ca8a04;
+        color: #1c1917;
+      }
     `;
     (document.head || document.documentElement).appendChild(style);
   }
@@ -66,10 +72,13 @@
     return host;
   }
 
-  window.__showQtsDetectToast = function showQtsToast(message, typeOrSuccess = 'info') {
+  window.__showQtsDetectToast = function showQtsToast(message, typeOrSuccess = 'info', durationMs) {
     ensureStyles();
     const host = ensureHost();
     const type = normalizeToastType(typeOrSuccess);
+    const hideMs = Number.isFinite(durationMs) && durationMs > 0
+      ? durationMs
+      : (type === 'applied' ? APPLIED_HIDE_MS : AUTO_HIDE_MS);
 
     host.querySelectorAll('.qts-toast').forEach((node) => node.remove());
 
@@ -86,6 +95,6 @@
     window.setTimeout(() => {
       toast.classList.remove('is-visible');
       window.setTimeout(() => toast.remove(), 220);
-    }, AUTO_HIDE_MS);
+    }, hideMs);
   };
 })();

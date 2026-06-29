@@ -8,6 +8,7 @@ const scope_1 = require("../../middleware/scope");
 const accounts_1 = require("../../services/accounts");
 const credential_crypto_1 = require("../../utilities/credential-crypto");
 const logger_1 = require("../../utilities/logger");
+const custom_gpt_url_1 = require("../../utilities/custom-gpt-url");
 const router = (0, express_1.Router)();
 router.use(auth_1.requireAuth);
 async function canAccessBidder(req, bidderId) {
@@ -32,7 +33,18 @@ const BidderSchema = zod_1.z.object({
     isActive: zod_1.z.boolean().optional().default(true),
     managerId: zod_1.z.number().int().positive().optional().nullable(),
     password: zod_1.z.string().min(1).max(200).optional(),
+    customGptUrl: zod_1.z.string().max(500).optional().nullable(),
 });
+function normalizeCustomGptUrlInput(value) {
+    const trimmed = String(value ?? '').trim();
+    if (!trimmed)
+        return null;
+    const validated = (0, custom_gpt_url_1.validateCustomGptUrl)(trimmed);
+    if (!validated.ok) {
+        throw new Error(validated.message);
+    }
+    return validated.url;
+}
 const AccountSchema = zod_1.z.object({
     username: zod_1.z.string().min(1).max(100),
     password: zod_1.z.string().min(1).max(200),
@@ -104,6 +116,17 @@ router.post('/', auth_1.requireAdminOrManager, async (req, res) => {
     const data = BidderSchema.parse(req.body);
     const managerId = (0, scope_1.isManager)(req) ? (req.userId ?? null) : (data.managerId ?? null);
     const username = data.name.trim();
+    let customGptUrl = null;
+    try {
+        customGptUrl = normalizeCustomGptUrlInput(data.customGptUrl);
+    }
+    catch (error) {
+        res.status(400).json({
+            success: false,
+            message: error instanceof Error ? error.message : 'Invalid Custom GPT URL.',
+        });
+        return;
+    }
     if ((0, scope_1.isManager)(req) && !data.password) {
         res.status(400).json({ success: false, message: 'Password is required for the bidder login.' });
         return;
@@ -117,7 +140,7 @@ router.post('/', auth_1.requireAdminOrManager, async (req, res) => {
             return;
         }
     }
-    const row = await (0, connection_1.queryOne)(`INSERT INTO bidders (name, notes, is_active, manager_id) VALUES ($1, $2, $3, $4) RETURNING id`, [data.name, data.notes || null, data.isActive ?? true, managerId]);
+    const row = await (0, connection_1.queryOne)(`INSERT INTO bidders (name, notes, is_active, manager_id, custom_gpt_url) VALUES ($1, $2, $3, $4, $5) RETURNING id`, [data.name, data.notes || null, data.isActive ?? true, managerId, customGptUrl]);
     if (data.password) {
         await (0, accounts_1.createAccount)({
             username,
@@ -138,7 +161,18 @@ router.put('/:id', auth_1.requireAdminOrManager, async (req, res) => {
     }
     const data = BidderSchema.parse(req.body);
     const managerId = (0, scope_1.isManager)(req) ? (req.userId ?? null) : (data.managerId ?? null);
-    await (0, connection_1.execute)(`UPDATE bidders SET name = $1, notes = $2, is_active = $3, manager_id = $4, updated_at = NOW() WHERE id = $5`, [data.name, data.notes || null, data.isActive ?? true, managerId, id]);
+    let customGptUrl = null;
+    try {
+        customGptUrl = normalizeCustomGptUrlInput(data.customGptUrl);
+    }
+    catch (error) {
+        res.status(400).json({
+            success: false,
+            message: error instanceof Error ? error.message : 'Invalid Custom GPT URL.',
+        });
+        return;
+    }
+    await (0, connection_1.execute)(`UPDATE bidders SET name = $1, notes = $2, is_active = $3, manager_id = $4, custom_gpt_url = $5, updated_at = NOW() WHERE id = $6`, [data.name, data.notes || null, data.isActive ?? true, managerId, customGptUrl, id]);
     const primaryAccount = await getPrimaryBidderAccount(id);
     if (primaryAccount) {
         if (primaryAccount.username !== data.name.trim()) {

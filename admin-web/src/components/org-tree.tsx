@@ -325,24 +325,52 @@ export function CallerBranch({
   caller,
   expanded,
   onToggle,
+  onEdit,
+  onDelete,
 }: {
   caller: UserAccount;
   expanded: Record<string, boolean>;
   onToggle: (key: string) => void;
+  onEdit?: () => void;
+  onDelete?: () => void;
 }) {
   const key = `c-${caller.id}`;
-  const isOpen = Boolean(expanded[key]);
+  const active = isTreeEntityActive(caller.is_active);
+  const isOpen = active && Boolean(expanded[key]);
+  const hasActions = Boolean(onEdit || onDelete);
 
   return (
-    <div className="org-tree-branch org-tree-branch--caller">
-      <button type="button" className="org-tree-row" onClick={() => onToggle(key)} aria-expanded={isOpen}>
-        <TreeChevron open={isOpen} />
-        <span className="org-tree-type">Caller</span>
-        <span className="org-tree-name">{caller.username}</span>
-        {caller.bidder_name ? (
-          <span className="text-muted org-tree-meta">{caller.bidder_name}</span>
-        ) : null}
-      </button>
+    <div className={`org-tree-branch org-tree-branch--caller${active ? '' : ' is-inactive'}`}>
+      <div className={hasActions ? 'org-tree-branch-header' : undefined}>
+        <TreeRowToggle
+          active={active}
+          isOpen={isOpen}
+          onToggle={() => onToggle(key)}
+        >
+          <span className="org-tree-type">Caller</span>
+          <span className="org-tree-name">{caller.username}</span>
+          {!active && <InactiveBadge />}
+          {caller.bidder_name ? (
+            <span className="text-muted org-tree-meta">{caller.bidder_name}</span>
+          ) : (
+            <span className="text-muted org-tree-meta">No bidder linked</span>
+          )}
+        </TreeRowToggle>
+        {hasActions && (
+          <div className="org-tree-branch-actions">
+            {onEdit && (
+              <button className="btn btn-ghost btn-sm" type="button" onClick={onEdit}>
+                Edit
+              </button>
+            )}
+            {onDelete && (
+              <button className="btn btn-danger btn-sm" type="button" onClick={onDelete}>
+                Delete
+              </button>
+            )}
+          </div>
+        )}
+      </div>
       {isOpen && (
         <div className="org-tree-children">
           <p className="org-tree-empty">Caller account — assign interviews from Interviews.</p>

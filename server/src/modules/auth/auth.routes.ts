@@ -8,6 +8,7 @@ import { getCandidateStacks } from '../../config/candidate-stacks';
 import { requireAuth, AuthRequest } from '../../middleware/auth';
 import { normalizeRole } from '../../lib/roles';
 import { logger } from '../../utilities/logger';
+import { resolveCustomGptConfig } from '../../utilities/custom-gpt-url';
 
 const router = Router();
 
@@ -31,8 +32,19 @@ async function validateBidderAccount(user: {
     };
   }
 
-  const bidder = await queryOne<{ is_active: boolean; name: string }>(
-    'SELECT is_active, name FROM bidders WHERE id = $1',
+  const bidder = await queryOne<{
+    is_active: boolean;
+    name: string;
+    manager_id: number | null;
+    manager_is_active: boolean | null;
+    manager_username: string | null;
+  }>(
+    `SELECT b.is_active, b.name, b.manager_id,
+            m.is_active AS manager_is_active,
+            m.username AS manager_username
+     FROM bidders b
+     LEFT JOIN admins m ON m.id = b.manager_id AND m.role = 'manager'
+     WHERE b.id = $1`,
     [user.bidder_id]
   );
 
@@ -46,6 +58,14 @@ async function validateBidderAccount(user: {
   if (!bidder.is_active) {
     return {
       error: 'This bidder organization is inactive. Contact your admin.',
+      bidderName: null,
+    };
+  }
+
+  if (bidder.manager_id != null && bidder.manager_is_active !== true) {
+    const managerLabel = bidder.manager_username || 'manager';
+    return {
+      error: `Your manager (${managerLabel}) is inactive. Contact your admin.`,
       bidderName: null,
     };
   }
@@ -135,7 +155,18 @@ router.post('/logout', requireAuth, (req: AuthRequest, res: Response) => {
   res.json({ success: true, message: 'Logged out.' });
 });
 
-router.get('/me', requireAuth, (req: AuthRequest, res: Response) => {
+router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
+  if (normalizeRole(req.role) === 'bidder') {
+    const bidderCheck = await validateBidderAccount({
+      role: req.role || 'bidder',
+      bidder_id: req.bidderId ?? null,
+    });
+    if (bidderCheck.error) {
+      res.status(403).json({ success: false, message: bidderCheck.error });
+      return;
+    }
+  }
+
   res.json({
     success: true,
     username: req.username,
@@ -157,7 +188,16 @@ router.get('/extension-bootstrap', requireAuth, async (req: AuthRequest, res: Re
     return;
   }
 
-  const [candidates, stacks] = await Promise.all([
+  const bidderCheck = await validateBidderAccount({
+    role: req.role || 'bidder',
+    bidder_id: bidderId,
+  });
+  if (bidderCheck.error) {
+    res.status(403).json({ success: false, message: bidderCheck.error });
+    return;
+  }
+
+  const [candidates, stacks, bidderRow] = await Promise.all([
     queryAll(
       `SELECT c.*, b.name AS bidder_name
        FROM candidates c
@@ -167,7 +207,13 @@ router.get('/extension-bootstrap', requireAuth, async (req: AuthRequest, res: Re
       [bidderId]
     ),
     getCandidateStacks(),
+    queryOne<{ custom_gpt_url: string | null }>(
+      'SELECT custom_gpt_url FROM bidders WHERE id = $1',
+      [bidderId]
+    ),
   ]);
+
+  const customGpt = resolveCustomGptConfig(bidderRow?.custom_gpt_url);
 
   res.json({
     success: true,
@@ -180,6 +226,7 @@ router.get('/extension-bootstrap', requireAuth, async (req: AuthRequest, res: Re
     },
     candidates,
     stacks,
+    customGpt,
   });
 });
 
@@ -188,7 +235,10 @@ router.get('/extension-status', async (_req: Request, res: Response) => {
     SELECT COUNT(*)::int AS count
     FROM admins a
     INNER JOIN bidders b ON b.id = a.bidder_id
-    WHERE a.role = 'bidder' AND b.is_active = TRUE
+    LEFT JOIN admins m ON m.id = b.manager_id AND m.role = 'manager'
+    WHERE a.role = 'bidder'
+      AND b.is_active = TRUE
+      AND (b.manager_id IS NULL OR m.is_active = TRUE)
   `);
   res.json({
     success: true,

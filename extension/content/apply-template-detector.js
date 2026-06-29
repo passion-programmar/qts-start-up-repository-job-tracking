@@ -1,14 +1,10 @@
-// Detect apply template from page URL + DOM structure (runs on page load / navigation).
+// Detect apply template + apply method from page URL + DOM structure (runs on page load / navigation).
 
 (function initApplyTemplateDetector() {
+  const flow = () => window.__qtsApplicationFlow || {};
+
   function detectPlatformFromUrl(url) {
-    const host = String(url || window.location.href).toLowerCase();
-    if (host.includes('justjoin.it')) return 'justjoin';
-    if (host.includes('linkedin.com')) return 'linkedin';
-    if (host.includes('greenhouse.io')) return 'greenhouse';
-    if (host.includes('lever.co')) return 'lever';
-    if (host.includes('workable.com')) return 'workable';
-    return null;
+    return flow().detectPlatformFromUrl?.(url) || null;
   }
 
   function isTemplateCandidateUrl(url) {
@@ -21,17 +17,22 @@
   function detectApplyTemplateOnPage() {
     const url = window.location.href;
     const platform = detectPlatformFromUrl(url);
-    if (!platform) {
-      return {
-        platform: null,
-        templateId: null,
-        templateName: null,
-        url,
-        detectedAt: new Date().toISOString(),
-        formOpen: false,
-        signals: {},
-      };
-    }
+    const empty = {
+      platform: null,
+      templateId: null,
+      templateName: null,
+      applyMethod: flow().APPLY_METHOD_TYPES?.UNKNOWN || 'unknown',
+      applyMethodLabel: flow().formatApplyMethod?.('unknown') || 'Unknown apply method',
+      flowType: flow().APPLICATION_FLOW_TYPES?.UNKNOWN || 'unknown',
+      flowTypeLabel: flow().formatFlowType?.('unknown') || 'Unknown flow',
+      url,
+      detectedAt: new Date().toISOString(),
+      formOpen: false,
+      signals: {},
+      stepHints: { isMultiStep: false },
+    };
+
+    if (!platform) return empty;
 
     const adapterByPlatform = {
       justjoin: () => window.__qtsPlatformJustjoin,
@@ -52,24 +53,59 @@
       ? template.hooks.collectPageSignals({ url, external })
       : {};
 
-    const scan = window.__scanApplicationForm?.();
+    const scan = window.__scanApplicationForm?.() || { fields: [] };
+    const modalConfirmed = Boolean(signals.applyModalConfirmed || signals.youApplyForModal);
     const formOpen = Boolean(
-      window.__looksLikeApplicationForm?.(scan)
+      modalConfirmed
+      || window.__looksLikeApplicationForm?.(scan)
       || (scan?.fields?.length > 0 && signals.modalOpen)
     );
+
+    const context = {
+      url,
+      external,
+      externalUrl: external?.url || null,
+      dynamicActions: [],
+      mode: 'page_load',
+    };
+
+    const flowType = flow().resolveFlowType?.({
+      template,
+      adapter,
+      scan,
+      context,
+      signals,
+    }) || 'unknown';
+
+    const stepHints = flow().detectMultiStepHints?.(scan) || { isMultiStep: false };
+    const applyMethod = flow().resolveApplyMethod?.({
+      template,
+      flowType,
+      platform,
+      signals,
+      scan,
+    }) || 'unknown';
 
     return {
       platform,
       templateId: template?.id || null,
       templateName: template?.name || null,
       templateDescription: template?.description || null,
+      applyMethod,
+      applyMethodLabel: flow().formatApplyMethod?.(applyMethod) || applyMethod,
+      applyMethodDescription: flow().APPLY_METHOD_DESCRIPTIONS?.[applyMethod] || '',
+      flowType,
+      flowTypeLabel: flow().formatFlowType?.(flowType) || flowType,
       guestApply: template?.guestApply === true,
       url,
       detectedAt: new Date().toISOString(),
       formOpen,
-      externalUrl: external?.url || null,
+      externalUrl: external?.url || signals.externalUrl || null,
+      externalProvider: signals.externalProvider || external?.providerHint || null,
       signals,
+      stepHints,
       fieldCount: scan?.fields?.length || 0,
+      detectionMode: modalConfirmed ? 'modal_open' : 'page_load',
     };
   }
 

@@ -31,6 +31,33 @@
 
   let debounceTimer = null;
   let lastFingerprint = '';
+  let observer = null;
+  let stopped = false;
+
+  function safeRuntimeMessage(payload) {
+    if (stopped) return;
+    try {
+      if (!chrome?.runtime?.id) {
+        stopWatching();
+        return;
+      }
+      chrome.runtime.sendMessage(payload).catch(() => {});
+    } catch {
+      stopWatching();
+    }
+  }
+
+  function stopWatching() {
+    if (stopped) return;
+    stopped = true;
+    clearTimeout(debounceTimer);
+    try {
+      observer?.disconnect();
+    } catch {
+      // ignore
+    }
+    observer = null;
+  }
 
   function getDetailText() {
     for (const sel of DETAIL_SELECTORS) {
@@ -63,14 +90,15 @@
   }
 
   function notifyPanelChanged() {
+    if (stopped) return;
     const fingerprint = getJobFingerprint();
     if (!fingerprint || fingerprint === lastFingerprint) return;
     lastFingerprint = fingerprint;
-    chrome.runtime.sendMessage({
+    safeRuntimeMessage({
       type: 'JOB_PANEL_CHANGED',
       url: location.href,
       fingerprint,
-    }).catch(() => {});
+    });
   }
 
   function scheduleNotify() {
@@ -86,7 +114,7 @@
   const root = document.body || document.documentElement;
   if (!root) return;
 
-  const observer = new MutationObserver(scheduleNotify);
+  observer = new MutationObserver(scheduleNotify);
   observer.observe(root, {
     childList: true,
     subtree: true,

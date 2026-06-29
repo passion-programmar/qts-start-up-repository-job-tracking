@@ -31,7 +31,7 @@ const PAGE_TITLES: Record<string, string> = {
   dashboard: 'Dashboard',
   candidates: 'Candidates',
   jobs: 'Jobs',
-  bidders: 'Bidders',
+  bidders: 'Custom GPT',
   people: 'People',
   interviews: 'Interview Process',
   settings: 'Settings',

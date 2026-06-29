@@ -349,6 +349,9 @@ async function migrateSchema() {
     if (!(await columnExists('bidders', 'manager_id'))) {
         await execute(`ALTER TABLE bidders ADD COLUMN manager_id INTEGER REFERENCES admins(id) ON DELETE SET NULL`);
     }
+    if (!(await columnExists('bidders', 'custom_gpt_url'))) {
+        await execute(`ALTER TABLE bidders ADD COLUMN custom_gpt_url TEXT`);
+    }
     if (!(await columnExists('admins', 'password_encrypted'))) {
         await execute(`ALTER TABLE admins ADD COLUMN password_encrypted TEXT`);
     }

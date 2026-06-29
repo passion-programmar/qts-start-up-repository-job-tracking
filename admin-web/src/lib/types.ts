@@ -15,6 +15,7 @@ export interface Bidder {
   is_active: boolean;
   manager_id?: number | null;
   manager_name?: string | null;
+  custom_gpt_url?: string | null;
   account_count?: number;
   candidate_count?: number;
   created_at?: string;

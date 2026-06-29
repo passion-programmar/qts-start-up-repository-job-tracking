@@ -20,10 +20,15 @@ let lastGptTaskStatus = null;
 let gptDispatchSent = false;
 let gptAppliedToForm = false;
 let lastDevCapture = null;
+let gptHandoffInProgress = false;
+const gptDispatchWaiters = new Map();
+let defaultCandidateId = null;
 
 const CANDIDATE_CACHE_TTL_MS = 5 * 60 * 1000;
 const CANDIDATE_CACHE_KEY = 'qtsCandidateCache';
 const SESSION_USER_KEY = 'qtsSessionUser';
+const DEFAULT_CANDIDATE_KEY = 'qtsDefaultCandidateByBidder';
+const AUTO_APPLY_ENABLED_KEY = 'qtsAutoApplyEnabled';
 
 let loadingCount = 0;
 
@@ -107,6 +112,149 @@ function getQueryTabId() {
   return Number.isFinite(tabId) ? tabId : null;
 }
 
+function settleGptDispatchWaiter(msg) {
+  const taskId = msg?.taskId;
+  if (!taskId) return false;
+  const waiter = gptDispatchWaiters.get(taskId);
+  if (!waiter) return false;
+  clearTimeout(waiter.timer);
+  gptDispatchWaiters.delete(taskId);
+  if (msg.ok && msg.handoff?.sent !== false) {
+    waiter.resolve(msg);
+  } else {
+    waiter.reject(new Error(msg.handoff?.error || msg.error || 'GPT handoff failed.'));
+  }
+  return true;
+}
+
+function waitForGptDispatchFinished(taskId, timeoutMs = 120000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      gptDispatchWaiters.delete(taskId);
+      reject(new Error('Timed out waiting for Custom GPT handoff. Check the GPT tab or click Send PROCESS_TASK.'));
+    }, timeoutMs);
+    gptDispatchWaiters.set(taskId, { resolve, reject, timer });
+  });
+}
+
+function sendGptTaskViaPort({ taskId, jobTabId, applicationId, pollAndApply, timeoutMs = 120000 }) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let port = null;
+
+    const finish = (fn, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      chrome.runtime.onMessage.removeListener(onBroadcast);
+      try {
+        port?.disconnect();
+      } catch {
+        // ignore
+      }
+      fn(value);
+    };
+
+    const onBroadcast = (msg) => {
+      if (msg?.type !== 'GPT_DISPATCH_FINISHED') return;
+      if (msg.taskId && taskId && msg.taskId !== taskId) return;
+      if (msg.ok && msg.handoff?.sent !== false) {
+        finish(resolve, msg);
+        return;
+      }
+      finish(reject, new Error(msg.handoff?.error || msg.error || 'GPT handoff failed.'));
+    };
+
+    const timer = setTimeout(() => {
+      finish(reject, new Error('Timed out waiting for Custom GPT handoff.'));
+    }, timeoutMs);
+
+    chrome.runtime.onMessage.addListener(onBroadcast);
+
+    try {
+      port = chrome.runtime.connect({ name: 'qts-gpt-handoff' });
+    } catch (connectErr) {
+      finish(reject, connectErr);
+      return;
+    }
+
+    port.onMessage.addListener((msg) => {
+      if (msg?.type !== 'GPT_HANDOFF_RESULT') return;
+      if (msg.taskId && taskId && msg.taskId !== taskId) return;
+      if (msg.ok && msg.handoff?.sent !== false) {
+        finish(resolve, msg);
+        return;
+      }
+      finish(reject, new Error(msg.handoff?.error || msg.error || 'GPT handoff failed.'));
+    });
+
+    port.onDisconnect.addListener(() => {
+      if (settled) return;
+      const errText = chrome.runtime.lastError?.message;
+      if (errText) {
+        finish(reject, new Error(errText));
+      }
+    });
+
+    port.postMessage({
+      type: 'SEND_GPT_TASK',
+      taskId,
+      jobTabId,
+      applicationId,
+      pollAndApply,
+    });
+  });
+}
+
+async function sendGptTaskToBackground({ taskId, jobTabId, applicationId, pollAndApply }) {
+  const dispatchWaiter = waitForGptDispatchFinished(taskId);
+  try {
+    const startRes = await chrome.runtime.sendMessage({
+      type: 'SEND_GPT_TASK',
+      taskId,
+      jobTabId,
+      applicationId,
+      pollAndApply,
+      async: true,
+    });
+    if (!startRes?.started && !startRes?.ok) {
+      throw new Error(startRes?.error || 'Could not start GPT handoff.');
+    }
+    return dispatchWaiter;
+  } catch (messageErr) {
+    try {
+      return await sendGptTaskViaPort({ taskId, jobTabId, applicationId, pollAndApply });
+    } catch (portErr) {
+      throw new Error(portErr?.message || messageErr?.message || 'Could not start GPT handoff.');
+    }
+  }
+}
+
+async function resolveTargetTabOnLoad() {
+  const fromQuery = getQueryTabId();
+  if (fromQuery) return fromQuery;
+
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage({ type: 'GET_CURRENT_TAB_URL' }, (res) => {
+      if (chrome.runtime.lastError) {
+        resolve(null);
+        return;
+      }
+      const tabId = res?.tabId;
+      const url = res?.url || '';
+      if (!tabId || !url) {
+        resolve(null);
+        return;
+      }
+      if (url.includes('chatgpt.com') || url.startsWith('chrome://') || url.startsWith('chrome-extension://')) {
+        resolve(null);
+        return;
+      }
+      resolve(tabId);
+    });
+  });
+}
+
 // ---- Init ----
 function applyGptDispatchResult(msg) {
   const handoff = msg.handoff || {};
@@ -119,21 +267,14 @@ function applyGptDispatchResult(msg) {
   if (!handoff.sent) {
     const prompt = window.__qtsCustomGpt?.buildPrompt?.(msg.taskId || activeTaskId);
     if (prompt) copyTextToClipboard(prompt);
-    if (handoff.needsManualSend || handoff.method === 'composer_paste' || handoff.method === 'main_paste_only' || handoff.method === 'inline_paste' || handoff.method === 'clipboard_fallback' || handoff.method === 'debugger_insertText') {
-      setGptPipelineState('waiting', 'PROCESS_TASK is in the GPT composer — press Enter, then click Allow.');
-      const pasteHint = handoff.method === 'clipboard_fallback'
-        ? 'PROCESS_TASK copied. In the GPT tab, click the QTS overlay (or Ask anything), paste, Enter, then Allow.'
-        : handoff.method === 'debugger_insertText' && !handoff.sent
-          ? 'PROCESS_TASK was typed in the GPT tab. Press Enter, then click Allow for Actions.'
-          : 'PROCESS_TASK was placed in the Custom GPT tab. Press Enter to send, then click Allow for Actions.';
-      showAlert('main-alert', pasteHint, 'warn');
-    } else {
-      setGptPipelineState('waiting', 'Paste PROCESS_TASK in the pinned Custom GPT tab.');
-      showAlert('main-alert', 'PROCESS_TASK copied — paste it in the pinned Custom GPT tab (Ctrl+V, Enter).', 'warn');
-    }
+    const detail = handoff.error || 'Could not send PROCESS_TASK automatically.';
+    setGptPipelineState('waiting', 'GPT handoff failed — click GPT task to copy PROCESS_TASK, paste in Custom GPT tab.');
+    showAlert('main-alert', `GPT auto-send failed: ${detail}. Copy PROCESS_TASK from GPT task button and paste manually.`, 'warn');
+    updateCustomGptButton();
+    return { ok: false, error: detail };
   } else {
-    setGptPipelineState('waiting', 'Waiting for Custom GPT. Click Allow when ChatGPT prompts for Actions.');
-    showAlert('main-alert', 'PROCESS_TASK sent to Custom GPT. Click Allow when prompted.', 'success');
+    setGptPipelineState('waiting', 'Waiting for Custom GPT. Extension is clicking Allow automatically.');
+    showAlert('main-alert', 'PROCESS_TASK sent. Extension will click Allow and monitor GPT Actions.', 'success');
   }
   updateCustomGptButton();
   return { ok: true, handoff };
@@ -142,7 +283,11 @@ function applyGptDispatchResult(msg) {
 document.addEventListener('DOMContentLoaded', async () => {
   const logoEl = document.getElementById('header-logo');
   if (logoEl) logoEl.src = chrome.runtime.getURL('assets/bidder-logo.png');
-  targetTabId = getQueryTabId();
+  targetTabId = getQueryTabId() || await resolveTargetTabOnLoad();
+  if (targetTabId) {
+    await chrome.storage.local.set({ qtsJobSourceTabId: targetTabId });
+    chrome.runtime.sendMessage({ type: 'REGISTER_JOB_TAB', tabId: targetTabId }).catch(() => {});
+  }
   try {
     await window.api.ensureServerUrl();
     await bootstrapPopupFast();
@@ -154,7 +299,44 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   document.getElementById('login-pass').addEventListener('keyup', e => { if (e.key === 'Enter') doLogin(); });
   document.getElementById('login-user').addEventListener('keyup', e => { if (e.key === 'Enter') doLogin(); });
+  document.getElementById('login-default-candidate')?.addEventListener('keyup', (e) => {
+    if (e.key === 'Enter') {
+      startAutoApplyFromLoginStep().catch((err) => {
+        showAlert('login-alert', err?.message || 'Could not start auto-apply.', 'error');
+      });
+    }
+  });
   document.getElementById('btn-login').addEventListener('click', doLogin);
+  document.getElementById('btn-start-auto-apply')?.addEventListener('click', () => {
+    startAutoApplyFromLoginStep().catch((e) => {
+      showAlert('login-alert', e?.message || 'Could not start auto-apply.', 'error');
+    });
+  });
+  document.getElementById('btn-setup-not-now')?.addEventListener('click', () => {
+    dismissSetupWithoutAutoApply().catch((e) => {
+      showAlert('login-alert', e?.message || 'Could not save setup.', 'error');
+    });
+  });
+  document.getElementById('login-default-candidate')?.addEventListener('change', (event) => {
+    const nextId = parseInt(event.target.value, 10);
+    if (Number.isFinite(nextId)) expandedCandidateIds.add(nextId);
+  });
+  document.getElementById('main-default-candidate')?.addEventListener('change', (event) => {
+    onMainDefaultCandidateChange(event).catch((e) => {
+      showAlert('main-alert', e?.message || 'Could not update default candidate.', 'error');
+    });
+  });
+  document.getElementById('btn-start-default-candidate')?.addEventListener('click', () => {
+    startApplicationWithDefault().catch((e) => {
+      console.error('startApplicationWithDefault error:', e);
+      showAlert('main-alert', e?.message || 'Could not start application.', 'error');
+    });
+  });
+  document.getElementById('btn-toggle-auto-apply')?.addEventListener('click', () => {
+    toggleAutoApplyFromPopup().catch((e) => {
+      showAlert('main-alert', e?.message || 'Could not update auto-apply.', 'error');
+    });
+  });
   document.getElementById('btn-logout').addEventListener('click', doLogout);
   document.getElementById('btn-save').addEventListener('click', doSave);
   document.getElementById('btn-refresh').addEventListener('click', doRefresh);
@@ -216,17 +398,58 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg.type === 'GPT_DISPATCH_FINISHED') {
+      if (settleGptDispatchWaiter(msg)) {
+        sendResponse?.({ ok: true });
+        return;
+      }
       if (msg.taskId && activeTaskId && msg.taskId !== activeTaskId) {
         sendResponse?.({ ok: true, ignored: true });
         return;
       }
+      if (gptHandoffInProgress) {
+        sendResponse?.({ ok: true, ignored: true });
+        return;
+      }
+      hideLoading(true);
       applyGptDispatchResult(msg);
       sendResponse?.({ ok: true });
       return;
     }
     if (msg.type === 'GPT_ACTION_APPROVAL_NEEDED') {
-      setGptPipelineState('waiting', msg.message || 'Open the pinned Custom GPT tab and click Allow.');
-      showAlert('main-alert', msg.message || 'Custom GPT needs Action approval — open the pinned GPT tab and click Allow.', 'warn');
+      setGptPipelineState('waiting', msg.message || 'Custom GPT Actions — auto-clicking Allow…');
+      sendResponse?.({ ok: true });
+      return;
+    }
+    if (msg.type === 'GPT_PAGE_STATUS') {
+      if (msg.taskId && activeTaskId && msg.taskId !== activeTaskId) {
+        sendResponse?.({ ok: true, ignored: true });
+        return;
+      }
+      if (msg.allowClicked && msg.clickedLabel) {
+        const action = msg.hasSubmitTaskPackage ? 'submitTaskPackage' : (msg.hasGetTaskContext ? 'getTaskContext' : 'GPT Action');
+        setGptPipelineState('waiting', `Clicked Allow (${msg.clickedLabel}) for ${action}…`);
+      } else if (msg.hasApprovalDialog && !msg.allowButtonCount) {
+        setGptPipelineState('waiting', 'Approval dialog visible — searching for Allow button…');
+      } else if (msg.hasApprovalDialog) {
+        setGptPipelineState('waiting', 'Approval dialog visible — clicking Allow…');
+      } else if (msg.thinking) {
+        setGptPipelineState('waiting', 'Custom GPT is thinking…');
+      } else if (msg.taskSaved) {
+        setGptPipelineState('waiting', 'GPT package saved — waiting for server…');
+      }
+      sendResponse?.({ ok: true });
+      return;
+    }
+    if (msg.type === 'GPT_PAGE_WATCH_FINISHED') {
+      if (msg.taskId && activeTaskId && msg.taskId !== activeTaskId) {
+        sendResponse?.({ ok: true, ignored: true });
+        return;
+      }
+      if (msg.ok) {
+        setGptPipelineState('waiting', `GPT Actions complete (${msg.totalAllowClicks || 0} Allow click(s)). Polling server…`);
+      } else if (msg.error) {
+        setGptPipelineState('error', msg.error);
+      }
       sendResponse?.({ ok: true });
       return;
     }
@@ -250,9 +473,20 @@ document.addEventListener('DOMContentLoaded', async () => {
       return;
     }
     if (msg.type === 'SET_SOURCE_TAB' && msg.tabId) {
-      chrome.tabs.get(msg.tabId).then((tab) => {
+      Promise.all([
+        chrome.storage.local.get(['qtsCustomGptTabId']),
+        chrome.tabs.get(msg.tabId),
+      ]).then(async ([stored, tab]) => {
+        if (stored.qtsCustomGptTabId === msg.tabId) {
+          sendResponse({ ok: false, ignored: true });
+          return;
+        }
         const gptId = window.__qtsCustomGpt?.CUSTOM_GPT_ID;
-        if (gptId && tab?.url?.includes(gptId)) {
+        const onGpt = Boolean(
+          (gptId && tab?.url?.includes(gptId))
+          || /qts[- ]job[- ]tracking/i.test(tab?.title || '')
+        );
+        if (onGpt) {
           sendResponse({ ok: false, ignored: true });
           return;
         }
@@ -298,11 +532,31 @@ async function bootstrapPopupFast() {
     if (Array.isArray(cache?.candidates) && cache.candidates.length) {
       applyCandidatesData(cache.candidates, cache.stacks || []);
     }
+    defaultCandidateId = await readDefaultCandidateId(sessionUser.bidderId);
+    if (await needsDefaultCandidateSelection(sessionUser)) {
+      hideLoading(true);
+      await showDefaultCandidateStep(sessionUser);
+      return;
+    }
+    if (!(await readAutoApplyEnabled())) {
+      hideLoading(true);
+      setSession(sessionUser);
+      showJobSection();
+      await loadCurrentTab({ preferCache: true, allowExtract: false });
+      updateJobSummary();
+      updateDefaultCandidateUi();
+      updateAutoApplyBarUi();
+      scheduleFitPopup();
+      refreshWorkspaceInBackground();
+      return;
+    }
     setSession(sessionUser);
     showJobSection();
     hideLoading(true);
+    updateAutoApplyBarUi();
     await loadCurrentTab({ preferCache: true, allowExtract: false });
     updateJobSummary();
+    updateDefaultCandidateUi();
     scheduleFitPopup();
     refreshWorkspaceInBackground();
     return;
@@ -320,8 +574,10 @@ async function refreshWorkspaceInBackground() {
   try {
     const workspace = await fetchWorkspaceData(true);
     if (workspace?.success && workspace.user) {
+      defaultCandidateId = await readDefaultCandidateId(workspace.user.bidderId);
       renderCandidates();
       updateJobSummary();
+      updateDefaultCandidateUi();
     }
   } catch { /* non-fatal */ }
 }
@@ -383,6 +639,317 @@ function normalizeCandidateList(list) {
     .filter((candidate) => candidate && candidate.is_active !== false);
 }
 
+function getBidderIdFromUser(user) {
+  const bidderId = Number(user?.bidderId);
+  return Number.isFinite(bidderId) && bidderId > 0 ? bidderId : null;
+}
+
+async function readDefaultCandidateMap() {
+  const stored = await new Promise((resolve) => {
+    chrome.storage.local.get([DEFAULT_CANDIDATE_KEY], (result) => resolve(result[DEFAULT_CANDIDATE_KEY] || {}));
+  });
+  return stored && typeof stored === 'object' ? stored : {};
+}
+
+async function readDefaultCandidateId(bidderId) {
+  const id = getBidderIdFromUser({ bidderId });
+  if (!id) return null;
+  const map = await readDefaultCandidateMap();
+  const candidateId = Number(map[String(id)]);
+  return Number.isFinite(candidateId) ? candidateId : null;
+}
+
+async function storeDefaultCandidateId(bidderId, candidateId) {
+  const id = getBidderIdFromUser({ bidderId });
+  if (!id) throw new Error('Missing bidder account.');
+  const numericCandidateId = Number(candidateId);
+  if (!Number.isFinite(numericCandidateId)) throw new Error('Select a candidate.');
+  const map = await readDefaultCandidateMap();
+  map[String(id)] = numericCandidateId;
+  await new Promise((resolve) => {
+    chrome.storage.local.set({ [DEFAULT_CANDIDATE_KEY]: map }, resolve);
+  });
+  defaultCandidateId = numericCandidateId;
+}
+
+async function readAutoApplyEnabled() {
+  const stored = await chrome.storage.local.get([AUTO_APPLY_ENABLED_KEY]);
+  return stored[AUTO_APPLY_ENABLED_KEY] === true;
+}
+
+async function setAutoApplyEnabled(enabled) {
+  await new Promise((resolve) => {
+    chrome.storage.local.set({ [AUTO_APPLY_ENABLED_KEY]: Boolean(enabled) }, resolve);
+  });
+  updateAutoApplyBarUi();
+}
+
+function getDefaultCandidate() {
+  if (!defaultCandidateId) return null;
+  return candidates.find((c) => Number(c.id) === Number(defaultCandidateId)) || null;
+}
+
+function isValidDefaultCandidateId(candidateId) {
+  const id = Number(candidateId);
+  if (!Number.isFinite(id)) return false;
+  const candidate = candidates.find((c) => Number(c.id) === id);
+  return Boolean(candidate && candidate.is_active !== false);
+}
+
+async function needsDefaultCandidateSelection(user) {
+  const bidderId = getBidderIdFromUser(user);
+  if (!bidderId) return false;
+  const savedId = await readDefaultCandidateId(bidderId);
+  if (!savedId) return true;
+  if (!candidates.length) {
+    defaultCandidateId = savedId;
+    return false;
+  }
+  return !isValidDefaultCandidateId(savedId);
+}
+
+function populateDefaultCandidateSelect(selectEl, { includePlaceholder = true } = {}) {
+  if (!selectEl) return;
+  const previous = selectEl.value;
+  const options = [];
+  if (includePlaceholder) {
+    options.push('<option value="">— Select candidate —</option>');
+  } else {
+    options.push('<option value="">Default…</option>');
+  }
+  candidates.forEach((candidate) => {
+    const label = `${candidate.name}${candidate.stack ? ` (${candidate.stack})` : ''}`;
+    options.push(`<option value="${candidate.id}">${escHtml(label)}</option>`);
+  });
+  selectEl.innerHTML = options.join('');
+  if (previous && [...selectEl.options].some((opt) => opt.value === previous)) {
+    selectEl.value = previous;
+  } else if (defaultCandidateId) {
+    selectEl.value = String(defaultCandidateId);
+  }
+}
+
+function resetLoginFormView() {
+  document.getElementById('login-form')?.classList.remove('hidden');
+  document.getElementById('login-candidate-step')?.classList.add('hidden');
+  const signedInEl = document.getElementById('login-signed-in-as');
+  if (signedInEl) signedInEl.textContent = '';
+}
+
+async function showDefaultCandidateStep(user, { armOnly = false } = {}) {
+  setSession(user);
+  document.getElementById('login-section')?.classList.remove('hidden');
+  document.getElementById('job-section')?.classList.add('hidden');
+  document.getElementById('action-bar')?.classList.add('hidden');
+  document.getElementById('login-form')?.classList.add('hidden');
+  document.getElementById('login-candidate-step')?.classList.remove('hidden');
+
+  const signedInEl = document.getElementById('login-signed-in-as');
+  if (signedInEl) {
+    const label = (user?.username || user?.bidderName || 'Bidder').trim();
+    signedInEl.textContent = armOnly
+      ? `Signed in as ${label} — press Start when you are ready to apply on job pages`
+      : `Signed in as ${label}`;
+  }
+
+  if (!candidates.length) {
+    showLoading('Loading candidates…');
+    try {
+      await fetchWorkspaceData(true);
+    } finally {
+      hideLoading(true);
+    }
+  }
+
+  defaultCandidateId = await readDefaultCandidateId(user?.bidderId);
+  const select = document.getElementById('login-default-candidate');
+  populateDefaultCandidateSelect(select, { includePlaceholder: true });
+  if (defaultCandidateId && isValidDefaultCandidateId(defaultCandidateId)) {
+    select.value = String(defaultCandidateId);
+  } else if (candidates.length === 1) {
+    select.value = String(candidates[0].id);
+  }
+
+  clearAlert('login-alert');
+  scheduleFitPopup();
+}
+
+function readSelectedDefaultCandidateId() {
+  const select = document.getElementById('login-default-candidate');
+  const candidateId = parseInt(select?.value, 10);
+  if (!Number.isFinite(candidateId) || !isValidDefaultCandidateId(candidateId)) {
+    throw new Error('Choose a default candidate first.');
+  }
+  return candidateId;
+}
+
+async function armAutoApplyOnCurrentJobTab() {
+  const tabId = targetTabId || await resolveTargetTabOnLoad();
+  if (!tabId) {
+    throw new Error('Open a job page in your browser first.');
+  }
+  await chrome.storage.local.set({ qtsJobSourceTabId: tabId });
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage({ type: 'START_AUTO_APPLY_ON_TAB', jobTabId: tabId }, (res) => {
+      if (chrome.runtime.lastError) {
+        resolve(tabId);
+        return;
+      }
+      if (res?.ok === false) {
+        reject(new Error(res.error || 'Could not start auto-apply on the job page.'));
+        return;
+      }
+      resolve(tabId);
+    });
+  });
+}
+
+async function startAutoApplyFromLoginStep() {
+  const user = currentUser || await readSessionUser();
+  if (!user || !isBidderSession(user)) {
+    throw new Error('Sign in first.');
+  }
+  const candidateId = readSelectedDefaultCandidateId();
+  await storeDefaultCandidateId(user.bidderId, candidateId);
+  await setAutoApplyEnabled(true);
+  expandedCandidateIds.add(candidateId);
+  resetLoginFormView();
+  await armAutoApplyOnCurrentJobTab();
+}
+
+async function dismissSetupWithoutAutoApply() {
+  const user = currentUser || await readSessionUser();
+  if (!user || !isBidderSession(user)) {
+    throw new Error('Sign in first.');
+  }
+  const select = document.getElementById('login-default-candidate');
+  const candidateId = parseInt(select?.value, 10);
+  if (Number.isFinite(candidateId) && isValidDefaultCandidateId(candidateId)) {
+    await storeDefaultCandidateId(user.bidderId, candidateId);
+  }
+  await setAutoApplyEnabled(false);
+  resetLoginFormView();
+  showToast('Auto-apply is off. Job pages will not run until you press Start.', 'info');
+  await enterJobWorkspace(user, { skipBackgroundRefresh: false });
+  chrome.runtime.sendMessage({
+    type: 'DISMISS_CAPTURE_WINDOW',
+    jobTabId: targetTabId,
+  }).catch(() => {});
+}
+
+async function toggleAutoApplyFromPopup() {
+  const user = currentUser || await readSessionUser();
+  if (!user || !isBidderSession(user)) {
+    throw new Error('Sign in first.');
+  }
+  if (!(await readAutoApplyEnabled())) {
+    const select = document.getElementById('main-default-candidate');
+    const fromMain = parseInt(select?.value, 10);
+    if (Number.isFinite(fromMain) && isValidDefaultCandidateId(fromMain)) {
+      await storeDefaultCandidateId(user.bidderId, fromMain);
+    }
+    if (!defaultCandidateId || !isValidDefaultCandidateId(defaultCandidateId)) {
+      await showDefaultCandidateStep(user);
+      throw new Error('Choose a default candidate, then press Start applying on job pages.');
+    }
+    await setAutoApplyEnabled(true);
+    await armAutoApplyOnCurrentJobTab();
+    return;
+  }
+  await setAutoApplyEnabled(false);
+  chrome.runtime.sendMessage({ type: 'RESET_AUTO_PIPELINE_STATE' }).catch(() => {});
+  showToast('Auto-apply stopped. Job pages will not run until you press Start again.', 'info');
+}
+
+function updateAutoApplyBarUi() {
+  const bar = document.getElementById('auto-apply-bar');
+  const statusEl = document.getElementById('auto-apply-status');
+  const toggleBtn = document.getElementById('btn-toggle-auto-apply');
+  if (!bar || !statusEl || !toggleBtn) return;
+
+  readAutoApplyEnabled().then((enabled) => {
+    bar.classList.remove('hidden');
+    bar.classList.toggle('is-active', enabled);
+    const def = getDefaultCandidate();
+    if (enabled) {
+      statusEl.textContent = def
+        ? `Auto-apply: on (${def.name})`
+        : 'Auto-apply: on';
+      toggleBtn.textContent = 'Stop on job pages';
+      toggleBtn.className = 'btn btn-ghost btn-sm';
+    } else {
+      statusEl.textContent = def
+        ? `Auto-apply: off — default ${def.name}`
+        : 'Auto-apply: off';
+      toggleBtn.textContent = 'Start on job pages';
+      toggleBtn.className = 'btn btn-primary btn-sm';
+    }
+  }).catch(() => {});
+}
+
+async function onMainDefaultCandidateChange(event) {
+  const user = currentUser;
+  if (!user || !isBidderSession(user)) return;
+  const candidateId = parseInt(event.target.value, 10);
+  if (!Number.isFinite(candidateId)) return;
+  if (!isValidDefaultCandidateId(candidateId)) {
+    event.target.value = defaultCandidateId ? String(defaultCandidateId) : '';
+    throw new Error('That candidate is not available.');
+  }
+  await storeDefaultCandidateId(user.bidderId, candidateId);
+  expandedCandidateIds.add(candidateId);
+  renderCandidates();
+  updateDefaultCandidateUi();
+  showToast(`Default candidate: ${getDefaultCandidate()?.name || 'updated'}`, 'success');
+}
+
+function updateDefaultCandidateUi() {
+  const quickBtn = document.getElementById('btn-start-default-candidate');
+  const mainSelect = document.getElementById('main-default-candidate');
+  const def = getDefaultCandidate();
+
+  if (mainSelect) {
+    if (candidates.length) {
+      mainSelect.classList.remove('hidden');
+      populateDefaultCandidateSelect(mainSelect, { includePlaceholder: false });
+      mainSelect.value = defaultCandidateId ? String(defaultCandidateId) : '';
+    } else {
+      mainSelect.classList.add('hidden');
+    }
+  }
+
+  if (quickBtn) {
+    if (def && !isCandidateLocked(def.id)) {
+      quickBtn.classList.remove('hidden');
+      quickBtn.textContent = `Start Application (${def.name})`;
+    } else {
+      quickBtn.classList.add('hidden');
+    }
+  }
+}
+
+async function startApplicationWithDefault() {
+  const def = getDefaultCandidate();
+  if (!def) {
+    throw new Error('Choose a default candidate on the login screen or from the Candidates dropdown.');
+  }
+  if (isCandidateLocked(def.id)) {
+    throw new Error(`${def.name} is already marked applied for this job.`);
+  }
+  await startApplication(def.id);
+}
+
+async function ensureWorkspaceReady(user) {
+  if (!user || !isBidderSession(user)) return false;
+  if (await needsDefaultCandidateSelection(user)) {
+    await showDefaultCandidateStep(user);
+    return false;
+  }
+  defaultCandidateId = await readDefaultCandidateId(user.bidderId);
+  updateAutoApplyBarUi();
+  return true;
+}
+
 function setSession(user) {
   currentUser = user;
   const bar = document.getElementById('session-bar');
@@ -409,6 +976,7 @@ function setSession(user) {
 
 function clearSession() {
   currentUser = null;
+  defaultCandidateId = null;
   const bar = document.getElementById('session-bar');
   if (bar) bar.classList.add('hidden');
 }
@@ -537,13 +1105,27 @@ async function doLogin() {
       await storeSessionUser(r);
       setSession(r);
       clearAlert('login-alert');
-      showJobSection();
       try {
         await fetchWorkspaceData(true);
       } catch { /* session already saved */ }
+      defaultCandidateId = await readDefaultCandidateId(r.bidderId);
+      if (await needsDefaultCandidateSelection(r)) {
+        hideLoading(true);
+        await showDefaultCandidateStep(r);
+        return;
+      }
+      if (!(await readAutoApplyEnabled())) {
+        hideLoading(true);
+        await showDefaultCandidateStep(r, { armOnly: true });
+        return;
+      }
+      showJobSection();
+      resetLoginFormView();
       hideLoading(true);
       await loadCurrentTab({ preferCache: true, allowExtract: false });
       updateJobSummary();
+      updateDefaultCandidateUi();
+      updateAutoApplyBarUi();
       scheduleFitPopup();
     } else if (r.success) {
       showAlert(
@@ -594,18 +1176,34 @@ function applyCandidatesData(nextCandidates, nextStacks) {
     candidateStatuses[c.id] = 'none';
     candidateLocked[c.id] = false;
   }
+  if (defaultCandidateId && isValidDefaultCandidateId(defaultCandidateId)) {
+    expandedCandidateIds.add(defaultCandidateId);
+  }
   populateStackFilter();
   renderCandidates();
+  updateDefaultCandidateUi();
+}
+
+async function applyWorkspaceCustomGpt(customGpt, user) {
+  if (!customGpt?.url || !global.__qtsCustomGpt?.persistCustomGptConfig) return;
+  await global.__qtsCustomGpt.persistCustomGptConfig({
+    url: customGpt.url,
+    id: customGpt.id,
+    source: customGpt.source || 'bidder',
+    bidderId: user?.bidderId ?? null,
+  });
 }
 
 async function fetchWorkspaceFromApi() {
   const boot = await window.api.extensionBootstrap();
   if (boot.success && boot.user) {
+    await applyWorkspaceCustomGpt(boot.customGpt, boot.user);
     return {
       success: true,
       user: boot.user,
       candidates: normalizeCandidateList(boot.candidates),
       stacks: boot.stacks || [],
+      customGpt: boot.customGpt || null,
       _httpStatus: boot._httpStatus,
     };
   }
@@ -647,6 +1245,7 @@ async function fetchWorkspaceData(forceRefresh = false) {
 
   applyCandidatesData(workspace.candidates, workspace.stacks);
   if (workspace.user) await storeSessionUser(workspace.user);
+  if (workspace.customGpt) await applyWorkspaceCustomGpt(workspace.customGpt, workspace.user);
   if (workspace.candidates.length) {
     await writeCandidateCache(workspace.candidates, workspace.stacks, workspace.user);
   } else {
@@ -692,12 +1291,16 @@ async function clearCandidateCache() {
 }
 
 async function enterJobWorkspace(user, { skipBackgroundRefresh = false } = {}) {
+  if (!(await ensureWorkspaceReady(user))) return;
   setSession(user);
   showJobSection();
+  resetLoginFormView();
   hideLoading(true);
   await loadCurrentTab({ preferCache: true, allowExtract: false });
   updateJobSummary();
   renderCandidates();
+  updateDefaultCandidateUi();
+  updateAutoApplyBarUi();
   scheduleFitPopup();
   if (!skipBackgroundRefresh) {
     refreshWorkspaceInBackground();
@@ -747,6 +1350,13 @@ async function clearAuthState() {
   await clearToken();
   await clearSessionUser();
   await clearCandidateCache();
+  await new Promise((resolve) => {
+    chrome.storage.local.remove([AUTO_APPLY_ENABLED_KEY], resolve);
+  });
+  await new Promise((resolve) => {
+    chrome.storage.local.remove(['qtsCustomGptConfig', 'qtsCustomGptTabId'], resolve);
+  });
+  global.__qtsCustomGpt?.applyCustomGptConfig?.(null);
   clearSession();
 }
 
@@ -1021,14 +1631,31 @@ function isCandidateLocked(candidateId) {
 function updateApplyTemplateSummary() {
   const el = document.getElementById('summary-apply-template');
   if (!el) return;
-  if (!detectedApplyTemplate?.templateName) {
+  if (!detectedApplyTemplate?.applyMethod && !detectedApplyTemplate?.templateName) {
     el.textContent = '—';
     el.title = '';
     return;
   }
-  const formNote = detectedApplyTemplate.formOpen ? ' · form open' : '';
-  el.textContent = `${detectedApplyTemplate.templateName}${formNote}`;
-  el.title = detectedApplyTemplate.templateDescription || detectedApplyTemplate.templateId || '';
+  const method = detectedApplyTemplate.applyMethodLabel
+    || detectedApplyTemplate.templateName
+    || '—';
+  const flowNote = detectedApplyTemplate.flowTypeLabel
+    ? ` · ${detectedApplyTemplate.flowTypeLabel}`
+    : '';
+  const formNote = (detectedApplyTemplate.formOpen || detectedApplyTemplate.signals?.applyModalConfirmed)
+    ? ' · form open'
+    : '';
+  const stepNote = detectedApplyTemplate.stepHints?.isMultiStep
+    ? ` · step ${detectedApplyTemplate.stepHints.currentStep || '?'}/${detectedApplyTemplate.stepHints.totalSteps || '?'}`
+    : '';
+  el.textContent = `${method}${flowNote}${formNote}${stepNote}`;
+  const titleParts = [
+    detectedApplyTemplate.applyMethodDescription,
+    detectedApplyTemplate.templateDescription,
+    detectedApplyTemplate.templateId,
+    detectedApplyTemplate.externalUrl ? `External: ${detectedApplyTemplate.externalUrl}` : '',
+  ].filter(Boolean);
+  el.title = titleParts.join(' — ');
 }
 
 async function loadApplyTemplateForTab(tabId) {
@@ -1163,7 +1790,6 @@ async function dispatchGptTask(applicationId, { pollAndApply = false, taskId: ex
   }
   const taskId = activeTaskId;
   const prompt = gpt.buildPrompt(taskId);
-  await copyTextToClipboard(prompt);
 
   if (targetTabId) {
     await chrome.storage.local.set({ qtsJobSourceTabId: targetTabId });
@@ -1174,26 +1800,27 @@ async function dispatchGptTask(applicationId, { pollAndApply = false, taskId: ex
     throw new Error(dispatchRes.message || 'Could not register GPT task on server.');
   }
 
-  setGptPipelineState('dispatching', `Sending ${taskId} to Custom GPT tab…`);
+  setGptPipelineState('dispatching', `Sending ${taskId} to Custom GPT…`);
   gptDispatchSent = true;
   renderGptActionSteps(lastGptTaskStatus);
-  showLoading(`Opening Custom GPT and sending ${taskId}…`);
+  hideLoading(true);
 
   let handoffResult;
+  gptHandoffInProgress = true;
   try {
-    handoffResult = await chrome.runtime.sendMessage({
-      type: 'DISPATCH_GPT_TASK',
+    handoffResult = await sendGptTaskToBackground({
       taskId,
-      prompt,
       jobTabId: targetTabId,
       applicationId: id,
       pollAndApply,
     });
+  } catch (sendErr) {
+    throw new Error(sendErr?.message || 'Could not send PROCESS_TASK to Custom GPT.');
   } finally {
-    hideLoading(true);
+    gptHandoffInProgress = false;
   }
 
-  if (!handoffResult?.ok) {
+  if (!handoffResult?.ok || handoffResult?.handoff?.sent === false) {
     throw new Error(handoffResult?.handoff?.error || handoffResult?.error || 'GPT handoff failed.');
   }
 
@@ -1524,6 +2151,8 @@ function renderCandidates() {
     const appliedAt = candidateAppliedAt[c.id];
     const nameColor = pickCandidateColor(c, i);
     const isExpanded = expandedCandidateIds.has(c.id);
+    const isDefault = Number(defaultCandidateId) === Number(c.id);
+    const defaultBadge = isDefault ? '<span class="cand-default-badge">DEFAULT</span>' : '';
 
     const statusLabel = locked ? 'APPLIED' : (status === 'applied' ? 'APPLIED' : 'NOT APPLIED');
 
@@ -1550,7 +2179,7 @@ function renderCandidates() {
             <span class="cand-expand-icon" aria-hidden="true">▸</span>
             <span class="cand-info">
               <span class="cand-name-line">
-                <span class="cand-name" style="color:${nameColor}">${escHtml(c.name)}</span>${stackHtml}
+                <span class="cand-name" style="color:${nameColor}">${escHtml(c.name)}</span>${defaultBadge}${stackHtml}
               </span>
             </span>
           </button>
@@ -1860,13 +2489,14 @@ function buildDevCaptureFromWorkflow({
   };
 }
 
-function showApplicationPreview(discovery, classifiedFields, fillPolicy = null, fillPolicyContext = null) {
+function showApplicationPreview(discovery, classifiedFields, fillPolicy = null, fillPolicyContext = null, options = {}) {
   const preview = window.__qtsApplicationPreview;
   return new Promise((resolve) => {
     const panel = document.getElementById('application-preview');
     const flowEl = document.getElementById('application-preview-flow');
     const statsEl = document.getElementById('application-preview-stats');
     const warningsEl = document.getElementById('application-preview-warnings');
+    const noteEl = document.getElementById('application-preview-note');
     const bodyEl = document.getElementById('application-preview-body');
     const confirmBtn = document.getElementById('btn-preview-confirm');
     const cancelBtn = document.getElementById('btn-preview-cancel');
@@ -1875,8 +2505,20 @@ function showApplicationPreview(discovery, classifiedFields, fillPolicy = null, 
       return;
     }
 
+    hideLoading(true);
     const flow = window.__qtsApplicationFlow;
     const counts = flow?.summarizeDiscoveryCounts(classifiedFields) || { total: classifiedFields.length };
+    const willUseCustomGpt = options.willUseCustomGpt !== false
+      && (options.willUseCustomGpt === true || needsCustomGptHandoff(classifiedFields));
+
+    if (willUseCustomGpt) {
+      prewarmCustomGptTab();
+      if (noteEl) {
+        noteEl.textContent = 'Review discovered fields, then click Confirm. Custom GPT is preloading in the background for resume/PDF generation. After confirm, profile fields fill on the job page, then PROCESS_TASK is sent automatically.';
+      }
+    } else if (noteEl) {
+      noteEl.textContent = 'Review discovered fields, then click Confirm. Profile fields fill on the job page. You submit manually on the job site.';
+    }
     if (flowEl) {
       const templateLabel = discovery?.templateName ? `${discovery.templateName} · ` : '';
       flowEl.textContent = `${templateLabel}${flow?.formatFlowType(discovery?.flowType) || 'Application form'}`;
@@ -1934,6 +2576,9 @@ function showApplicationPreview(discovery, classifiedFields, fillPolicy = null, 
     };
 
     const onConfirm = () => {
+      if (willUseCustomGpt) {
+        prewarmCustomGptTab();
+      }
       let nextFields = preview?.applyPreviewEdits(classifiedFields) || classifiedFields;
       if (fillPolicy && window.__qtsFillPolicy?.applyFillPolicy) {
         nextFields = window.__qtsFillPolicy.applyFillPolicy(nextFields, fillPolicy, fillPolicyContext || {});
@@ -1946,6 +2591,11 @@ function showApplicationPreview(discovery, classifiedFields, fillPolicy = null, 
     cancelBtn.addEventListener('click', onCancel);
     panel.classList.remove('hidden');
     panel.setAttribute('aria-hidden', 'false');
+    try {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } catch {
+      window.scrollTo(0, 0);
+    }
     scheduleFitPopup();
   });
 }
@@ -2001,6 +2651,16 @@ async function refreshApplicationStatus() {
   }
 }
 
+function needsCustomGptHandoff(fields) {
+  return (fields || []).some((field) => field.category === 'ai_generation'
+    || field.category === 'document_upload'
+    || field.fieldType === 'file');
+}
+
+function prewarmCustomGptTab() {
+  chrome.runtime.sendMessage({ type: 'PREWARM_CUSTOM_GPT_TAB', background: true }).catch(() => {});
+}
+
 async function startApplication(candidateId) {
   const candidate = candidates.find((c) => Number(c.id) === Number(candidateId));
   if (!candidate) {
@@ -2031,39 +2691,6 @@ async function startApplication(candidateId) {
     }
 
     const fullCandidate = profileRes.candidate;
-    showLoading('Creating application session…');
-    const sessionRes = await window.api.createApplicationSession({
-      candidateId,
-      jobId: existingJobId || null,
-      jobUrl,
-      jobTitle: jobTitle || null,
-      company: company || null,
-      jobDescription,
-      platform: detectPlatformFromUrl(jobUrl),
-      currentStep: 'scan',
-      metadata: {
-        sourceTabId: targetTabId,
-        extensionVersion: chrome.runtime.getManifest().version,
-      },
-    });
-
-    if (!sessionRes.success || !sessionRes.session) {
-      showAlert('main-alert', window.api.formatApiMessage(sessionRes, 'Could not create application session.'), 'error');
-      return;
-    }
-
-    activeApplicationId = sessionRes.session.applicationId;
-    activeTaskId = sessionRes.taskId
-      || sessionRes.session?.metadata?.publicTaskId
-      || sessionRes.session?.metadata?.taskId
-      || null;
-    if (!activeTaskId) {
-      console.warn('Server did not return taskId for session', activeApplicationId);
-    }
-    gptDispatchSent = false;
-    gptAppliedToForm = false;
-    lastGptTaskStatus = null;
-    const savedAnswers = sessionRes.savedAnswers || [];
 
     showLoading('Discovering application form…');
     hideLoading(true);
@@ -2118,6 +2745,40 @@ async function startApplication(candidateId) {
       return;
     }
 
+    showLoading('Creating application session…');
+    const sessionRes = await window.api.createApplicationSession({
+      candidateId,
+      jobId: existingJobId || null,
+      jobUrl,
+      jobTitle: jobTitle || null,
+      company: company || null,
+      jobDescription,
+      platform: detectPlatformFromUrl(jobUrl),
+      currentStep: 'scan',
+      metadata: {
+        sourceTabId: targetTabId,
+        extensionVersion: chrome.runtime.getManifest().version,
+      },
+    });
+
+    if (!sessionRes.success || !sessionRes.session) {
+      showAlert('main-alert', window.api.formatApiMessage(sessionRes, 'Could not create application session.'), 'error');
+      return;
+    }
+
+    activeApplicationId = sessionRes.session.applicationId;
+    activeTaskId = sessionRes.taskId
+      || sessionRes.session?.metadata?.publicTaskId
+      || sessionRes.session?.metadata?.taskId
+      || null;
+    if (!activeTaskId) {
+      console.warn('Server did not return taskId for session', activeApplicationId);
+    }
+    gptDispatchSent = false;
+    gptAppliedToForm = false;
+    lastGptTaskStatus = null;
+    const savedAnswers = sessionRes.savedAnswers || [];
+
     let classifiedFields = window.__qtsFieldClassifier.classifyFields(scannedFields);
     classifiedFields = window.__qtsCandidateMatcher.applyFieldClassificationFill(
       classifiedFields,
@@ -2135,17 +2796,37 @@ async function startApplication(candidateId) {
       );
     }
 
+    renderDevCaptureDebug(buildDevCaptureFromWorkflow({
+      applicationId: activeApplicationId,
+      platform: detectPlatformFromUrl(jobUrl),
+      scanMeta,
+      scannedFields,
+      classifiedFields,
+      discovery,
+    }));
+    const devPanel = document.getElementById('dev-capture-debug');
+    if (devPanel && classifiedFields.length) {
+      devPanel.classList.remove('hidden');
+    }
+
+    hideLoading(true);
+    const willUseCustomGpt = needsCustomGptHandoff(classifiedFields);
     const previewResult = await showApplicationPreview(
       discovery,
       classifiedFields,
       fillPolicy,
-      fillPolicyContext
+      fillPolicyContext,
+      { willUseCustomGpt }
     );
     if (!previewResult.confirmed || !previewResult.fields) {
       showAlert('main-alert', 'Application cancelled — nothing was filled on the job page.', 'info');
       return;
     }
     classifiedFields = previewResult.fields;
+
+    if (willUseCustomGpt) {
+      setGptPipelineState('dispatching', 'Fields confirmed — finishing profile fill, then Custom GPT…');
+    }
 
     const fillableFields = classifiedFields.filter(
       (field) => field.category !== 'ai_generation'
@@ -2243,16 +2924,26 @@ async function startApplication(candidateId) {
     ).length;
     const pendingTextCount = pendingCount - pendingUploadCount;
 
-    if (pendingCount > 0) {
+    if (willUseCustomGpt && activeTaskId) {
       try {
+        await chrome.runtime.sendMessage({
+          type: 'RELEASE_UI_FOR_GPT',
+          jobTabId: targetTabId,
+        }).catch(() => {});
         await dispatchGptTask(activeApplicationId, { pollAndApply: true, taskId: activeTaskId });
       } catch (e) {
         showAlert(
           'main-alert',
-          `Session #${activeApplicationId} created, but GPT handoff failed: ${e?.message || e}. Use "Send to Custom GPT".`,
+          `Session #${activeApplicationId} saved, but Custom GPT handoff failed: ${e?.message || e}. Use "Send PROCESS_TASK".`,
           'warn'
         );
       }
+    } else if (pendingCount > 0) {
+      showAlert(
+        'main-alert',
+        `Session #${activeApplicationId}: ${filledCount} filled, ${pendingCount} field(s) still pending.`,
+        'warn'
+      );
     } else {
       showAlert(
         'main-alert',
@@ -2360,6 +3051,7 @@ function showLogin() {
   document.getElementById('job-section').classList.add('hidden');
   document.getElementById('action-bar').classList.add('hidden');
   clearSession();
+  resetLoginFormView();
   scheduleFitPopup();
   return prepareLoginForm();
 }

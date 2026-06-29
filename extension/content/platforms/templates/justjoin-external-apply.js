@@ -52,6 +52,9 @@
   }
 
   function detect(context) {
+    const easyModal = window.__qtsJustjoinEasyApplyTemplate?.hooks?.isJustjoinEasyApplyModalOpen?.();
+    if (easyModal) return 0;
+
     const external = context?.external || detectExternalApplyLink();
     if (!external?.external) return 0;
     return 200;
@@ -78,6 +81,8 @@
     platform: 'justjoin',
     name: 'justjoin External Apply',
     description: 'Apply button redirects to employer ATS or career site.',
+    applyMethod: 'external_redirect',
+    anticipatedFlowType: 'external_redirect',
     priority: 200,
     urlPatterns: [/^https:\/\/(www\.)?justjoin\.it\/job-offer\//i],
     guestApply: true,

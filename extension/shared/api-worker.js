@@ -96,6 +96,51 @@ function workerInferFileDocumentType(field) {
   return 'resume';
 }
 
+async function workerCheckDefaultCandidateApplied(jobUrl, candidateId) {
+  const id = Number(candidateId);
+  if (!Number.isFinite(id) || id <= 0) {
+    return { applied: false, jobSaved: false, candidateId: null };
+  }
+
+  const url = String(jobUrl || '').trim();
+  if (!url) {
+    return { applied: false, jobSaved: false, candidateId: id };
+  }
+
+  const res = await workerApiRequest(
+    'GET',
+    `/api/jobs/by-url?url=${encodeURIComponent(url)}`
+  );
+
+  if (!res.success) {
+    if (res._httpStatus === 404) {
+      return { applied: false, jobSaved: false, candidateId: id };
+    }
+    return {
+      applied: false,
+      jobSaved: false,
+      candidateId: id,
+      error: res.message || 'Could not check applied status.',
+    };
+  }
+
+  const job = res.job || {};
+  const statuses = job.candidateStatuses || job.candidate_statuses || [];
+  const row = statuses.find((entry) => {
+    const entryId = Number(entry.candidate_id ?? entry.candidateId);
+    return entryId === id;
+  });
+
+  return {
+    applied: row?.status === 'applied',
+    jobSaved: true,
+    jobId: job.id ?? null,
+    candidateId: id,
+    candidateName: row?.name || null,
+    appliedAt: row?.applied_at ?? row?.appliedAt ?? null,
+  };
+}
+
 async function workerBuildFileUploadFields(applicationId, fields) {
   const fileFields = (fields || []).filter((field) => field.fieldType === 'file');
   const uploads = [];
@@ -126,6 +171,7 @@ if (typeof self !== 'undefined') {
     workerFetchDocumentBase64,
     workerParseApplicationId,
     workerInferFileDocumentType,
+    workerCheckDefaultCandidateApplied,
     workerBuildFileUploadFields,
   };
 }

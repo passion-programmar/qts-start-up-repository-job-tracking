@@ -3,6 +3,7 @@
 const API_SERVER = 'https://qts-job-tracking.vercel.app';
 const PREFETCH_CANDIDATE_CACHE_KEY = 'qtsCandidateCache';
 const PREFETCH_SESSION_USER_KEY = 'qtsSessionUser';
+const PREFETCH_CUSTOM_GPT_CONFIG_KEY = 'qtsCustomGptConfig';
 const PREFETCH_SAVED_JOB_CACHE_KEY = 'qtsSavedJobCache';
 const PREFETCH_WORKSPACE_TTL_MS = 5 * 60 * 1000;
 const PREFETCH_SAVED_JOB_TTL_MS = 3 * 60 * 1000;
@@ -84,6 +85,24 @@ async function prefetchWriteSessionUser(user) {
   });
 }
 
+async function prefetchWriteCustomGptConfig(customGpt, user) {
+  if (!customGpt?.url) return;
+  const payload = {
+    url: customGpt.url,
+    id: customGpt.id || null,
+    source: customGpt.source || 'bidder',
+    bidderId: user?.bidderId ?? null,
+    savedAt: Date.now(),
+  };
+  if (typeof global.__qtsCustomGpt?.persistCustomGptConfig === 'function') {
+    await global.__qtsCustomGpt.persistCustomGptConfig(payload);
+    return;
+  }
+  return new Promise((resolve) => {
+    chrome.storage.local.set({ [PREFETCH_CUSTOM_GPT_CONFIG_KEY]: payload }, resolve);
+  });
+}
+
 async function prefetchWorkspace(force = false) {
   if (!force) {
     const cached = await prefetchReadCandidateCache();
@@ -98,10 +117,11 @@ async function prefetchWorkspace(force = false) {
   const candidates = boot.candidates || [];
   const stacks = boot.stacks || [];
   await prefetchWriteSessionUser(boot.user);
+  await prefetchWriteCustomGptConfig(boot.customGpt, boot.user);
   if (candidates.length) {
     await prefetchWriteCandidateCache(candidates, stacks, boot.user);
   }
-  return { success: true, user: boot.user, candidates, stacks };
+  return { success: true, user: boot.user, candidates, stacks, customGpt: boot.customGpt || null };
 }
 
 async function prefetchWorkspaceIfStale() {

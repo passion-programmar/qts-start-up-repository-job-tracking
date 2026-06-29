@@ -1,5 +1,5 @@
 // justjoin.it — Easy Apply modal template (guest apply, no justjoin login).
-// Example: https://justjoin.it/job-offer/team-connect-senior-cloud-platform-engineer-warszawa-devops
+// Canonical example: https://justjoin.it/job-offer/7n-sp-z-o-o--fullstack-developer-java-react--warszawa-java
 
 (function registerJustjoinEasyApplyTemplate() {
   if (window.__qtsJustjoinEasyApplyTemplate) return;
@@ -96,7 +96,39 @@
     return actions;
   }
 
+  function detectApplyModalFingerprint() {
+    const roots = getModalRoots();
+    let best = { matched: false, score: 0, root: null };
+
+    for (const root of roots) {
+      const text = cleanText(root.textContent).toLowerCase();
+      let score = 0;
+      if (/you apply for|aplikujesz na/i.test(text)) score += 80;
+      if (/first and last name|imię i nazwisko/i.test(text)) score += 40;
+      if (/\bemail\b|e-mail/i.test(text)) score += 30;
+      if (/add document|dodaj dokument|załącz/i.test(text)) score += 40;
+      if (/attach a message|wiadomość dla pracodawcy|dołącz wiadomość/i.test(text)) score += 25;
+      if (/terms of service|privacy policy|tworząc konto/i.test(text)) score += 20;
+      if (/pdf,\s*docx|max size 5\s*mb/i.test(text)) score += 15;
+      if (root.querySelector('input[type="file"]')) score += 30;
+      if (root.querySelector('input[type="email"], input[autocomplete*="email" i]')) score += 20;
+      if (root.querySelector('[role="switch"], input[type="checkbox"]')) score += 10;
+
+      const matched = score >= 120;
+      if (score > best.score) {
+        best = { matched, score, root };
+      }
+    }
+
+    return best;
+  }
+
+  function isJustjoinEasyApplyModalOpen() {
+    return detectApplyModalFingerprint().matched;
+  }
+
   function hasVisibleModalForm() {
+    if (isJustjoinEasyApplyModalOpen()) return true;
     return getModalRoots().some((root) => root.querySelector('form, input, textarea, select, [role="textbox"]'));
   }
 
@@ -154,11 +186,15 @@
   }
 
   function collectPageSignals(context = {}) {
+    const modalFingerprint = detectApplyModalFingerprint();
     return {
       jobOfferUrl: /justjoin\.it\/job-offer\//i.test(context.url || window.location.href),
       nativeApplyButton: hasNativeApplyButton(),
       summaryApplyPanel: hasSummaryApplyPanel(),
       modalOpen: hasVisibleModalForm(),
+      applyModalConfirmed: modalFingerprint.matched,
+      youApplyForModal: modalFingerprint.matched,
+      applyModalScore: modalFingerprint.score,
       applyModalInputs: Boolean(getModalRoots().some((root) => root.querySelector('input[type="file"], input[type="email"]'))),
       externalApplyLink: Boolean(context.external?.external),
     };
@@ -168,6 +204,11 @@
     const url = context?.url || window.location.href;
     if (!/justjoin\.it\/job-offer\//i.test(url)) return 0;
     if (context?.external?.external) return 0;
+
+    const modalFingerprint = detectApplyModalFingerprint();
+    if (modalFingerprint.matched) {
+      return 500;
+    }
 
     const signals = collectPageSignals(context);
     let score = 40;
@@ -237,6 +278,9 @@
     platform: 'justjoin',
     name: 'justjoin Easy Apply',
     description: 'Guest apply modal on job-offer pages — name, email, CV, consents, optional message toggle.',
+    applyMethod: 'easy_apply',
+    anticipatedFlowType: 'modal',
+    canonicalExampleUrl: 'https://justjoin.it/job-offer/7n-sp-z-o-o--fullstack-developer-java-react--warszawa-java',
     priority: 100,
     urlPatterns: [/^https:\/\/(www\.)?justjoin\.it\/job-offer\//i],
     guestApply: true,
@@ -257,6 +301,9 @@
       skipSavedAnswerKeys: ['terms_accepted', 'gdpr_consent', 'cover_message', 'marketing_opt_in'],
       skipCategories: ['ai_generation', 'unknown'],
       deferDocumentUploadToGpt: true,
+      fillProfileBeforeGpt: true,
+      gptDocumentSlots: ['resume'],
+      gptApplyDocumentsOnly: true,
     },
     expectedFields: EXPECTED_FIELDS,
     hooks: {
@@ -268,6 +315,8 @@
       detectFlowType,
       buildWarnings: (scan, context) => buildWarnings(scan, context, EXPECTED_FIELDS),
       collectPageSignals,
+      detectApplyModalFingerprint,
+      isJustjoinEasyApplyModalOpen,
     },
   };
 

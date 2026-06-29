@@ -144,16 +144,21 @@ function applyFieldClassificationFill(fields, candidate, savedAnswers, options =
   });
 }
 
+const candidateMatcherExport = {
+  splitName,
+  normalizePhone,
+  normalizeUrlValue,
+  normalizeMonthYear,
+  buildCandidateProfileMap,
+  buildSavedAnswerMap,
+  resolveFillValue,
+  applyFieldClassificationFill,
+  PROFILE_AUTOCOMPLETE_MAP,
+};
+
 if (typeof window !== 'undefined') {
-  window.__qtsCandidateMatcher = {
-    splitName,
-    normalizePhone,
-    normalizeUrlValue,
-    normalizeMonthYear,
-    buildCandidateProfileMap,
-    buildSavedAnswerMap,
-    resolveFillValue,
-    applyFieldClassificationFill,
-    PROFILE_AUTOCOMPLETE_MAP,
-  };
+  window.__qtsCandidateMatcher = candidateMatcherExport;
+}
+if (typeof self !== 'undefined' && typeof importScripts === 'function') {
+  self.__qtsCandidateMatcher = candidateMatcherExport;
 }

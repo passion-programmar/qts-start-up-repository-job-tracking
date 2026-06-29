@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "QTS_Startup",
-  "version": "1.8.7",
+  "version": "1.13.0",
   "description": "Capture job postings with QTS_Startup.",
-  "permissions": ["activeTab", "storage", "tabs", "scripting", "windows", "webNavigation", "debugger"],
+  "permissions": ["activeTab", "storage", "tabs", "scripting", "windows", "webNavigation"],
   "host_permissions": [
     "https://chatgpt.com/*",
     "https://chat.openai.com/*",
@@ -37,7 +37,7 @@
         "shared/chatgpt-composer-handoff.js",
         "content/chatgpt-handoff.js"
       ],
-      "run_at": "document_end"
+      "run_at": "document_idle"
     }
   ],
   "action": {

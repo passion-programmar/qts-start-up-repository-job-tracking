@@ -5,7 +5,11 @@ importScripts(
   '../shared/api-prefetch.js',
   '../shared/custom-gpt.js',
   '../shared/api-worker.js',
-  '../shared/chatgpt-composer-handoff.js'
+  '../shared/gpt-worker-handoff.js',
+  '../shared/field-classifier.js',
+  '../shared/candidate-matcher.js',
+  '../shared/fill-policy.js',
+  '../shared/auto-application-pipeline.js'
 );
 
 function isExtractablePageUrl(url) {
@@ -55,7 +59,10 @@ const JUSTJOIN_EXTERNAL_APPLY_FILE = 'content/platforms/templates/justjoin-exter
 const JUSTJOIN_APPLY_FILE = 'content/platforms/justjoin-apply.js';
 const APPLICATION_DISCOVERY_FILE = 'content/application-discovery.js';
 const APPLY_TEMPLATE_DETECTOR_FILE = 'content/apply-template-detector.js';
+const APPLY_MODAL_WATCH_FILE = 'content/apply-modal-watch.js';
+const APPLICATION_FLOW_FILE = 'shared/application-flow.js';
 const FORM_SCAN_SCRIPT_FILES = [
+  APPLICATION_FLOW_FILE,
   FORM_SCAN_FILE,
   TEMPLATE_REGISTRY_FILE,
   JUSTJOIN_EASY_APPLY_FILE,
@@ -64,13 +71,40 @@ const FORM_SCAN_SCRIPT_FILES = [
   APPLICATION_DISCOVERY_FILE,
   APPLY_TEMPLATE_DETECTOR_FILE,
 ];
-const CHATGPT_HANDOFF_FILE = 'content/chatgpt-handoff.js';
-const CHATGPT_MAIN_HANDOFF_FILE = 'content/chatgpt-main-handoff.js';
+const APPLY_MODAL_WATCH_FILE_LIST = [APPLY_MODAL_WATCH_FILE];
 const GPT_TAB_STORAGE_KEY = 'qtsCustomGptTabId';
 const JOB_SOURCE_TAB_STORAGE_KEY = 'qtsJobSourceTabId';
+const PENDING_GPT_DISPATCH_KEY = 'qtsPendingGptDispatch';
 const APPLY_TEMPLATE_TAB_KEY = 'qtsApplyTemplateByTab';
+let lastApplyMethodDetectKeyByTab = new Map();
 let gptApprovalWatchTimer = null;
 let gptPollApplyJob = null;
+let gptDispatchInFlight = false;
+let gptPrewarmPromise = null;
+let gptPageWatchJob = null;
+const autoPipelineInFlight = new Set();
+const lastAutoPipelineKeyByTab = new Map();
+const AUTO_PIPELINE_DELAY_MS = 1200;
+let autoPipelineDepsReady = false;
+
+function ensureAutoPipelineDeps() {
+  if (autoPipelineDepsReady) return;
+  self.__qtsAutoApplicationPipeline?.registerDeps?.({
+    getTab,
+    setJobSourceTab: async (tabId) => {
+      lastSourceTabId = tabId;
+      await chrome.storage.local.set({ [JOB_SOURCE_TAB_STORAGE_KEY]: tabId });
+    },
+    discoverApplicationFormOnTab,
+    fillApplicationFormOnTab,
+    detectApplyTemplateOnTab,
+    executeSendGptTask,
+    preloadCustomGptTab,
+    releaseUiForGptHandoff,
+    showPageDetectAlert,
+  });
+  autoPipelineDepsReady = true;
+}
 
 function stopGptPollAndApply() {
   gptPollApplyJob = null;
@@ -120,10 +154,6 @@ async function applyGptPackageToJobTab(applicationId, jobTabId) {
     }));
 
   const fileUploadFields = await api.workerBuildFileUploadFields(applicationId, result.fields || []);
-  const payload = [...fillFields, ...remainingFields, ...fileUploadFields];
-  if (!payload.length) {
-    throw new Error('No GPT answers or documents found on server yet.');
-  }
 
   let tabId = jobTabId;
   if (!tabId) {
@@ -132,6 +162,17 @@ async function applyGptPackageToJobTab(applicationId, jobTabId) {
   }
   if (!tabId) {
     throw new Error('No job tab found for GPT apply.');
+  }
+
+  const detectedTemplate = await getApplyTemplateForTab(tabId);
+  const fillPolicy = self.__qtsFillPolicy?.getFillPolicyForTemplate?.(detectedTemplate?.templateId);
+  let payload = [...fillFields, ...remainingFields, ...fileUploadFields];
+  if (fillPolicy?.gptApplyDocumentsOnly) {
+    payload = fileUploadFields;
+  }
+
+  if (!payload.length) {
+    throw new Error('No GPT answers or documents found on server yet.');
   }
 
   try {
@@ -155,7 +196,9 @@ async function applyGptPackageToJobTab(applicationId, jobTabId) {
 
   await showPageDetectAlert(
     tabId,
-    `GPT package applied (${filledCount} field(s)).${uploadNote} Review before submit.`,
+    fillPolicy?.gptApplyDocumentsOnly
+      ? `Resume uploaded from Custom GPT.${uploadNote} Review name, email & CV before submit.`
+      : `GPT package applied (${filledCount} field(s)).${uploadNote} Review before submit.`,
     uploadedCount ? 'success' : 'warn'
   );
 
@@ -379,9 +422,21 @@ async function removeApplyTemplateForTab(tabId) {
 }
 
 function notifyApplyTemplateDetected(tabId) {
-  if (captureWindowId === null) return;
-  if (lastSourceTabId !== tabId) return;
   chrome.runtime.sendMessage({ type: 'APPLY_TEMPLATE_DETECTED', tabId }).catch(() => {});
+}
+
+async function injectApplyModalWatch(tabId, url) {
+  if (!/justjoin\.it\/job-offer\//i.test(url || '')) return false;
+  await injectFormScan(tabId);
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: APPLY_MODAL_WATCH_FILE_LIST,
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function detectApplyTemplateOnTab(tabId, url) {
@@ -402,7 +457,11 @@ async function detectApplyTemplateOnTab(tabId, url) {
         : null),
     });
     const detection = results[0]?.result;
-    if (!detection?.templateId) {
+    if (!detection) {
+      await removeApplyTemplateForTab(tabId);
+      return null;
+    }
+    if (!detection.templateId && !detection.applyMethod && !detection.platform) {
       await removeApplyTemplateForTab(tabId);
       return detection;
     }
@@ -451,456 +510,6 @@ async function waitForTabSettled(tabId, timeoutMs = 12000) {
     };
     chrome.tabs.onUpdated.addListener(listener);
   });
-}
-
-async function ensureChatGptHandoffScript(tabId) {
-  try {
-    await chrome.scripting.executeScript({ target: { tabId }, files: [CHATGPT_HANDOFF_FILE] });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function ensureChatGptMainHandoffScript(tabId) {
-  try {
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      world: 'MAIN',
-      files: ['shared/chatgpt-composer-handoff.js', CHATGPT_MAIN_HANDOFF_FILE],
-    });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function focusComposerBoxForDebugger(tabId) {
-  await ensureChatGptComposerHandoffScript(tabId);
-  const results = await chrome.scripting.executeScript({
-    target: { tabId },
-    world: 'MAIN',
-    func: () => {
-      const handoff = window.__qtsChatGptComposerHandoff;
-      const editor = handoff?.findUnifiedComposerEditor?.()
-        || document.querySelector('div#prompt-textarea.ProseMirror[contenteditable="true"]');
-      if (!(editor instanceof HTMLElement)) return null;
-      handoff?.activateComposer?.(editor);
-      const rect = editor.getBoundingClientRect();
-      if (rect.width < 24 || rect.height < 8) return null;
-      return {
-        x: Math.round(rect.left + rect.width / 2),
-        y: Math.round(rect.top + rect.height / 2),
-      };
-    },
-  });
-  return results?.[0]?.result || null;
-}
-
-async function typeViaDebugger(tabId, text) {
-  const debuggee = { tabId };
-  let attached = false;
-  try {
-    const box = await focusComposerBoxForDebugger(tabId);
-    if (!box) {
-      return { ok: false, sent: false, phase: 'no_editor', error: 'Composer not ready for trusted typing.' };
-    }
-
-    await chrome.debugger.attach(debuggee, '1.3');
-    attached = true;
-
-    await chrome.debugger.sendCommand(debuggee, 'Input.dispatchMouseEvent', {
-      type: 'mousePressed',
-      x: box.x,
-      y: box.y,
-      button: 'left',
-      clickCount: 1,
-    });
-    await chrome.debugger.sendCommand(debuggee, 'Input.dispatchMouseEvent', {
-      type: 'mouseReleased',
-      x: box.x,
-      y: box.y,
-      button: 'left',
-      clickCount: 1,
-    });
-    await sleep(250);
-
-    await chrome.debugger.sendCommand(debuggee, 'Input.insertText', { text: String(text || '') });
-    await sleep(400);
-
-    const verify = await chrome.scripting.executeScript({
-      target: { tabId },
-      world: 'MAIN',
-      func: (snippet) => {
-        const editor = window.__qtsChatGptComposerHandoff?.findUnifiedComposerEditor?.();
-        const current = window.__qtsChatGptComposerHandoff?.readEditorText?.(editor) || '';
-        return current.includes(snippet);
-      },
-      args: [String(text || '').slice(0, 8)],
-    });
-    if (!verify?.[0]?.result) {
-      return { ok: false, sent: false, phase: 'insert_failed', error: 'Trusted typing did not update composer.' };
-    }
-
-    await chrome.debugger.sendCommand(debuggee, 'Input.dispatchKeyEvent', {
-      type: 'rawKeyDown',
-      windowsVirtualKeyCode: 13,
-      unmodifiedText: '\r',
-      text: '\r',
-    });
-    await chrome.debugger.sendCommand(debuggee, 'Input.dispatchKeyEvent', {
-      type: 'keyUp',
-      windowsVirtualKeyCode: 13,
-      key: 'Enter',
-      code: 'Enter',
-    });
-    await sleep(600);
-
-    const cleared = await chrome.scripting.executeScript({
-      target: { tabId },
-      world: 'MAIN',
-      func: () => {
-        const editor = window.__qtsChatGptComposerHandoff?.findUnifiedComposerEditor?.();
-        return window.__qtsChatGptComposerHandoff?.readEditorText?.(editor) === '';
-      },
-    });
-    if (cleared?.[0]?.result) {
-      return { ok: true, sent: true, method: 'debugger_insertText', phase: 'typed_and_sent' };
-    }
-
-    return {
-      ok: true,
-      sent: false,
-      needsManualSend: true,
-      method: 'debugger_insertText',
-      phase: 'typed_needs_enter',
-    };
-  } catch (e) {
-    return {
-      ok: false,
-      sent: false,
-      phase: 'debugger_failed',
-      error: e?.message || 'Trusted keyboard input failed.',
-    };
-  } finally {
-    if (attached) {
-      try {
-        await chrome.debugger.detach(debuggee);
-      } catch {
-        // ignore
-      }
-    }
-  }
-}
-
-async function installGptClickPasteOverlay(tabId, message) {
-  try {
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      world: 'MAIN',
-      func: (msg) => {
-        document.getElementById('qts-gpt-paste-overlay')?.remove();
-        const root = document.body || document.documentElement;
-        if (!root) return;
-
-        const overlay = document.createElement('div');
-        overlay.id = 'qts-gpt-paste-overlay';
-        overlay.style.cssText = [
-          'position:fixed', 'inset:0', 'z-index:2147483646',
-          'background:rgba(15,23,42,.55)', 'display:flex', 'align-items:center', 'justify-content:center',
-        ].join(';');
-
-        const card = document.createElement('button');
-        card.type = 'button';
-        card.style.cssText = [
-          'background:#fff', 'border:0', 'border-radius:12px', 'padding:22px 26px',
-          'max-width:min(520px,92vw)', 'text-align:center', 'cursor:pointer',
-          'box-shadow:0 16px 48px rgba(0,0,0,.35)', 'font:15px/1.45 system-ui,sans-serif',
-        ].join(';');
-        card.innerHTML = [
-          '<div style="font-weight:700;color:#b45309;margin-bottom:8px">QTS Job Tracking</div>',
-          '<div>Click here to paste <strong>PROCESS_TASK</strong> into ChatGPT</div>',
-          '<div style="font-size:13px;color:#64748b;margin-top:10px">Then press Enter and click Allow for Actions</div>',
-        ].join('');
-
-        card.addEventListener('click', () => {
-          const run = window.__qtsChatGptComposerHandoff?.runUnifiedComposerHandoff?.(msg);
-          if (!run?.sent && !run?.needsManualSend) {
-            try {
-              navigator.clipboard.writeText(msg);
-            } catch {
-              // ignore
-            }
-            const editor = window.__qtsChatGptComposerHandoff?.findUnifiedComposerEditor?.();
-            if (editor) {
-              window.__qtsChatGptComposerHandoff?.activateComposer?.(editor);
-              try {
-                document.execCommand('insertText', false, msg);
-              } catch {
-                // ignore
-              }
-            }
-          }
-          overlay.remove();
-        }, { once: true });
-
-        overlay.appendChild(card);
-        root.appendChild(overlay);
-      },
-      args: [message],
-    });
-  } catch {
-    // non-fatal
-  }
-}
-
-async function runGptMainWorldHandoff(tabId, message, timeoutMs = 90000) {
-  const started = Date.now();
-  let lastPhase = 'no_editor';
-  let lastError = 'ChatGPT composer not ready — wait for the page to finish loading.';
-
-  while (Date.now() - started < timeoutMs) {
-    try {
-      const tab = await getTab(tabId);
-      if (!tab?.id || !String(tab.url || '').includes('chatgpt.com')) {
-        lastError = 'Custom GPT tab navigated away during handoff.';
-        await sleep(800);
-        continue;
-      }
-
-      const step = await executeGptHandoffStep(tabId, message);
-      if (!step) {
-        lastError = 'GPT handoff script could not run on this tab.';
-      } else if (step.fatal) {
-        return { ok: false, sent: false, error: step.error || lastError, phase: step.phase };
-      } else if (step.sent) {
-        return { ok: true, sent: true, method: step.method, phase: step.phase };
-      } else if (step.needsManualSend) {
-        return {
-          ok: true,
-          sent: false,
-          needsManualSend: true,
-          method: step.method,
-          phase: step.phase,
-          message,
-        };
-      } else {
-        if (step.phase) lastPhase = step.phase;
-        if (step.error) lastError = step.error;
-      }
-    } catch (e) {
-      lastError = e.message || lastError;
-    }
-    await sleep(900);
-  }
-
-  return { ok: false, sent: false, error: lastError, phase: lastPhase };
-}
-
-function gptHandoffStepInline(text) {
-  const handoff = self.__qtsChatGptComposerHandoff?.runUnifiedComposerHandoff?.(text);
-  return handoff || { ok: false, sent: false, phase: 'no_module', error: 'Composer handoff module missing.' };
-}
-
-async function ensureChatGptComposerHandoffScript(tabId) {
-  try {
-    await chrome.scripting.executeScript({
-      target: { tabId, allFrames: true },
-      world: 'MAIN',
-      files: ['shared/chatgpt-composer-handoff.js'],
-    });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function executeGptHandoffAllFrames(tabId, message) {
-  try {
-    await ensureChatGptComposerHandoffScript(tabId);
-
-    const mainResults = await chrome.scripting.executeScript({
-      target: { tabId },
-      world: 'MAIN',
-      func: (text) => {
-        const handoff = window.__qtsChatGptComposerHandoff?.runUnifiedComposerHandoff?.(text);
-        return handoff || { ok: false, sent: false, phase: 'no_module', error: 'Composer handoff module missing.' };
-      },
-      args: [message],
-    });
-    const mainStep = mainResults?.[0]?.result;
-    if (mainStep?.sent || mainStep?.needsManualSend) return mainStep;
-    if (mainStep && mainStep.phase && mainStep.phase !== 'no_editor') return mainStep;
-
-    const results = await chrome.scripting.executeScript({
-      target: { tabId, allFrames: true },
-      world: 'MAIN',
-      func: (text) => {
-        const handoff = window.__qtsChatGptComposerHandoff?.runUnifiedComposerHandoff?.(text);
-        return handoff || { ok: false, sent: false, phase: 'no_module', error: 'Composer handoff module missing.' };
-      },
-      args: [message],
-    });
-    for (const entry of results || []) {
-      const step = entry?.result;
-      if (step?.sent || step?.needsManualSend) return step;
-    }
-    for (const entry of results || []) {
-      const step = entry?.result;
-      if (step && step.phase && step.phase !== 'no_editor') return step;
-    }
-    return mainStep || results?.[0]?.result || null;
-  } catch {
-    return null;
-  }
-}
-
-async function forceQtsGptBanner(tabId, message, type = 'warn') {
-  const bg = type === 'success' ? '#15803d' : type === 'error' ? '#b91c1c' : '#b45309';
-  try {
-    await chrome.scripting.executeScript({
-      target: { tabId, allFrames: true },
-      world: 'MAIN',
-      func: (msg, color) => {
-        const root = document.body || document.documentElement;
-        if (!root) return { ok: false, href: location.href };
-        let el = document.getElementById('qts-gpt-handoff-toast');
-        if (!el) {
-          el = document.createElement('div');
-          el.id = 'qts-gpt-handoff-toast';
-          el.style.cssText = [
-            'position:fixed', 'top:12px', 'left:50%', 'transform:translateX(-50%)',
-            'z-index:2147483647', 'max-width:min(560px,94vw)', 'padding:12px 16px',
-            'border-radius:10px', 'font:14px/1.4 system-ui,sans-serif',
-            'box-shadow:0 8px 24px rgba(0,0,0,.3)', 'color:#fff',
-          ].join(';');
-          root.appendChild(el);
-        }
-        el.style.background = color;
-        el.textContent = msg;
-        return { ok: true, href: location.href, top: window.top === window.self };
-      },
-      args: [message, bg],
-    });
-    return true;
-  } catch (e) {
-    await chrome.storage.local.set({ qtsLastGptBannerError: String(e?.message || e) });
-    return false;
-  }
-}
-
-async function executeGptHandoffStep(tabId, message) {
-  const allFrames = await executeGptHandoffAllFrames(tabId, message);
-  if (allFrames?.sent || allFrames?.needsManualSend) {
-    await chrome.storage.local.set({
-      qtsLastGptHandoffDebug: { at: Date.now(), tabId, response: allFrames, via: 'allFrames' },
-    });
-    return allFrames;
-  }
-
-  await ensureChatGptHandoffScript(tabId);
-
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    try {
-      const response = await chrome.tabs.sendMessage(tabId, {
-        type: 'QTS_GPT_HANDOFF_STEP',
-        message,
-      });
-      if (response) {
-        await chrome.storage.local.set({
-          qtsLastGptHandoffDebug: { at: Date.now(), tabId, response, via: 'sendMessage' },
-        });
-        return response;
-      }
-    } catch (e) {
-      await sleep(600);
-    }
-  }
-
-  try {
-    const isolated = await chrome.scripting.executeScript({
-      target: { tabId },
-      func: (text) => window.__qtsChatGptHandoff?.runHandoffStep?.(text),
-      args: [message],
-    });
-    if (isolated[0]?.result) {
-      await chrome.storage.local.set({
-        qtsLastGptHandoffDebug: { at: Date.now(), tabId, response: isolated[0].result, via: 'isolated' },
-      });
-      return isolated[0].result;
-    }
-  } catch {
-    // fall through
-  }
-
-  try {
-    await ensureChatGptMainHandoffScript(tabId);
-    const loaded = await chrome.scripting.executeScript({
-      target: { tabId },
-      world: 'MAIN',
-      func: (text) => window.__qtsRunChatGptMainHandoffStep?.(text),
-      args: [message],
-    });
-    if (loaded[0]?.result) return loaded[0].result;
-  } catch {
-    // fall through
-  }
-
-  try {
-    await ensureChatGptComposerHandoffScript(tabId);
-    const inline = await chrome.scripting.executeScript({
-      target: { tabId, allFrames: true },
-      world: 'MAIN',
-      func: (text) => window.__qtsChatGptComposerHandoff?.runUnifiedComposerHandoff?.(text),
-      args: [message],
-    });
-    return inline[0]?.result || null;
-  } catch {
-    return null;
-  }
-}
-
-async function showGptTabHandoffToast(tabId, message, type = 'warn') {
-  if (await forceQtsGptBanner(tabId, message, type)) return;
-  await ensureChatGptHandoffScript(tabId);
-  try {
-    await chrome.tabs.sendMessage(tabId, {
-      type: 'QTS_GPT_SHOW_TOAST',
-      message,
-      toastType: type,
-    });
-    return;
-  } catch {
-    // fall through
-  }
-  try {
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      func: (msg, toastType) => window.__qtsChatGptHandoff?.showHandoffToast?.(msg, toastType),
-      args: [message, type],
-    });
-  } catch {
-    // non-fatal
-  }
-}
-
-async function waitForGptComposer(tabId, timeoutMs = 45000) {
-  const started = Date.now();
-  while (Date.now() - started < timeoutMs) {
-    try {
-      await ensureChatGptComposerHandoffScript(tabId);
-      const results = await chrome.scripting.executeScript({
-        target: { tabId, allFrames: true },
-        world: 'MAIN',
-        func: () => Boolean(window.__qtsChatGptComposerHandoff?.findUnifiedComposerEditor?.()),
-      });
-      if (results.some((entry) => entry?.result)) return true;
-    } catch {
-      // tab may still be loading
-    }
-    await sleep(500);
-  }
-  return false;
 }
 
 async function scanApplicationFormOnTab(tabId, options = {}) {
@@ -1050,112 +659,115 @@ async function fillApplicationFormOnTab(tabId, fields) {
   }
 }
 
-function isCustomGptUrl(url) {
+function isCustomGptUrl(url, title = '') {
+  const worker = self.__qtsGptWorkerHandoff;
+  if (worker?.isQtsGptTab) {
+    return worker.isQtsGptTab({ url: url || '', title: title || '' });
+  }
   const gptId = self.__qtsCustomGpt?.CUSTOM_GPT_ID;
   return Boolean(url && gptId && url.includes(gptId));
 }
 
-function needsFreshGptConversation(url) {
-  return self.__qtsCustomGpt?.needsFreshGptConversation?.(url) ?? (
-    isCustomGptUrl(url) && /\/c\//.test(String(url))
-  );
-}
-
-async function waitForTabComplete(tabId, timeoutMs = 45000) {
-  const tab = await getTab(tabId);
-  if (!tab?.id) throw new Error('GPT tab not found.');
-  if (tab.status === 'complete') return tab;
-
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      chrome.tabs.onUpdated.removeListener(listener);
-      reject(new Error('Custom GPT tab load timeout.'));
-    }, timeoutMs);
-
-    function listener(updatedTabId, info) {
-      if (updatedTabId !== tabId || info.status !== 'complete') return;
-      clearTimeout(timer);
-      chrome.tabs.onUpdated.removeListener(listener);
-      getTab(tabId).then(resolve).catch(reject);
-    }
-
-    chrome.tabs.onUpdated.addListener(listener);
-  });
-}
-
-async function ensureCustomGptTab({ active = false } = {}) {
-  const gpt = self.__qtsCustomGpt;
-  if (!gpt?.CUSTOM_GPT_URL) throw new Error('Custom GPT URL is not configured.');
-
+async function getPinnedGptTabId() {
+  const worker = self.__qtsGptWorkerHandoff;
+  if (worker?.readPinnedGptTabId) {
+    return worker.readPinnedGptTabId(GPT_TAB_STORAGE_KEY);
+  }
   const stored = await chrome.storage.local.get([GPT_TAB_STORAGE_KEY]);
-  if (stored[GPT_TAB_STORAGE_KEY]) {
-    try {
-      const tab = await chrome.tabs.get(stored[GPT_TAB_STORAGE_KEY]);
-      if (tab?.id && isCustomGptUrl(tab.url)) {
-        await chrome.tabs.update(tab.id, { pinned: true, active });
-        return tab.id;
-      }
-    } catch {
-      // stale tab id
-    }
-  }
-
-  const tabs = await chrome.tabs.query({ url: 'https://chatgpt.com/*' });
-  const existing = tabs.find((tab) => isCustomGptUrl(tab.url));
-  if (existing?.id) {
-    await chrome.tabs.update(existing.id, { pinned: true, active });
-    if (!isCustomGptUrl(existing.url)) {
-      await chrome.tabs.update(existing.id, { url: gpt.CUSTOM_GPT_URL, active });
-    }
-    await chrome.storage.local.set({ [GPT_TAB_STORAGE_KEY]: existing.id });
-    return existing.id;
-  }
-
-  const created = await chrome.tabs.create({
-    url: gpt.CUSTOM_GPT_URL,
-    pinned: true,
-    active,
-  });
-  await chrome.storage.local.set({ [GPT_TAB_STORAGE_KEY]: created.id });
-  return created.id;
+  return stored[GPT_TAB_STORAGE_KEY] || null;
 }
 
-async function injectChatGptTask(tabId, prompt, taskId, options = {}) {
-  if (!prompt && !taskId) return { ok: false, error: 'Missing GPT task prompt.' };
-  const message = prompt || self.__qtsCustomGpt?.buildPrompt(taskId);
-  const tid = taskId || String(message || '').match(/task_[\w-]+/i)?.[0] || null;
-  const preferStarter = options.preferStarter === true;
-  const composerWaitMs = options.composerWaitMs || 45000;
+async function isPinnedGptTab(tabId) {
+  const worker = self.__qtsGptWorkerHandoff;
+  if (worker?.isPinnedGptTabId) {
+    return worker.isPinnedGptTabId(tabId, GPT_TAB_STORAGE_KEY);
+  }
+  const pinnedId = await getPinnedGptTabId();
+  return Number(pinnedId) === Number(tabId);
+}
 
-  await waitForTabComplete(tabId, 45000).catch(() => {});
-  await waitForGptComposer(tabId, composerWaitMs);
-  await ensureChatGptHandoffScript(tabId);
-  await sleep(300);
-
+function isExtensionOrInternalUrl(url) {
+  if (!url) return true;
   try {
-    const response = await chrome.tabs.sendMessage(tabId, {
-      type: 'QTS_GPT_RUN_HANDOFF',
-      taskId: tid,
-      message,
-      preferStarter,
-      composerWaitMs,
-    });
-    if (response) return response;
+    const protocol = new URL(url).protocol.replace(':', '');
+    return protocol === 'chrome' || protocol === 'chrome-extension' || protocol === 'edge' || protocol === 'about';
   } catch {
-    // fall through to executeScript
+    return false;
+  }
+}
+
+async function resolveJobTabIdForCapture(preferredTabId) {
+  const tab = preferredTabId ? await getTab(preferredTabId) : null;
+  if (tab?.id && tab.url && !isExtensionOrInternalUrl(tab.url) && !(await isPinnedGptTab(tab.id))) {
+    return tab.id;
   }
 
-  const results = await chrome.scripting.executeScript({
-    target: { tabId },
-    func: (msg, id, preferStarter, waitMs) => window.__qtsChatGptHandoff?.runHandoff({
-      message: msg,
-      taskId: id,
-      preferStarter,
-      composerWaitMs: waitMs,
-    }),
-    args: [message, tid, preferStarter, composerWaitMs],
-  });
-  return results[0]?.result || { ok: false, error: 'GPT handoff script returned no result.' };
+  const stored = await chrome.storage.local.get([JOB_SOURCE_TAB_STORAGE_KEY]);
+  const storedTabId = stored[JOB_SOURCE_TAB_STORAGE_KEY];
+  if (storedTabId) {
+    const storedTab = await getTab(storedTabId);
+    if (storedTab?.id && storedTab.url && !isExtensionOrInternalUrl(storedTab.url) && !(await isPinnedGptTab(storedTab.id))) {
+      return storedTab.id;
+    }
+  }
+
+  if (lastSourceTabId) {
+    const lastTab = await getTab(lastSourceTabId);
+    if (lastTab?.id && lastTab.url && !isExtensionOrInternalUrl(lastTab.url) && !(await isPinnedGptTab(lastTab.id))) {
+      return lastTab.id;
+    }
+  }
+
+  const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  if (activeTab?.id && activeTab.url && !isExtensionOrInternalUrl(activeTab.url) && !(await isPinnedGptTab(activeTab.id))) {
+    return activeTab.id;
+  }
+
+  return null;
+}
+
+async function focusCaptureUi(jobTabId) {
+  if (captureWindowId == null) return false;
+  try {
+    await chrome.windows.update(captureWindowId, { focused: true, drawAttention: true });
+    return true;
+  } catch {
+    captureWindowId = null;
+    return false;
+  }
+}
+
+async function closeCaptureWindow() {
+  if (captureWindowId == null) return;
+  const windowId = captureWindowId;
+  captureWindowId = null;
+  try {
+    await chrome.windows.remove(windowId);
+  } catch {
+    // window may already be closed
+  }
+}
+
+async function focusBrowserWindowForTab(tabId) {
+  if (!tabId) return;
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    if (tab?.windowId == null) return;
+    await chrome.windows.update(tab.windowId, { focused: true, drawAttention: true });
+    await chrome.tabs.update(tabId, { active: true });
+  } catch {
+    // tab or window may be closed
+  }
+}
+
+async function releaseUiForGptHandoff({ jobTabId, gptTabId } = {}) {
+  await closeCaptureWindow();
+  const focusTabId = gptTabId || await getPinnedGptTabId();
+  if (focusTabId) {
+    await focusBrowserWindowForTab(focusTabId);
+  } else if (jobTabId) {
+    await focusBrowserWindowForTab(jobTabId);
+  }
 }
 
 function stopGptApprovalWatcher() {
@@ -1163,10 +775,92 @@ function stopGptApprovalWatcher() {
     clearInterval(gptApprovalWatchTimer);
     gptApprovalWatchTimer = null;
   }
+  const tabId = gptPageWatchJob?.tabId;
+  if (tabId) {
+    void self.__qtsGptWorkerHandoff?.stopAllowWatchInTab?.(tabId);
+  }
+  gptPageWatchJob = null;
+}
+
+function notifyGptPageStatus(payload) {
+  chrome.runtime.sendMessage({
+    type: 'GPT_PAGE_STATUS',
+    ...payload,
+  }).catch(() => {});
+}
+
+function startGptPageWatch(tabId, taskId, options = {}) {
+  stopGptApprovalWatcher();
+  const job = {
+    tabId,
+    taskId,
+    applicationId: options.applicationId,
+    pollAndApply: options.pollAndApply,
+    jobTabId: options.jobTabId,
+    cancelled: false,
+  };
+  gptPageWatchJob = job;
+
+  (async () => {
+    const worker = self.__qtsGptWorkerHandoff;
+    if (!worker?.watchGptTabAfterSend) return;
+
+    try {
+      await releaseUiForGptHandoff({
+        jobTabId: options.jobTabId || lastSourceTabId,
+        gptTabId: tabId,
+      });
+
+      const result = await worker.watchGptTabAfterSend(tabId, taskId, {
+        timeoutMs: options.timeoutMs || 180000,
+        pollMs: options.pollMs || 1200,
+        defocusWindowId: captureWindowId,
+        onStatus: (snap) => {
+          if (gptPageWatchJob !== job || job.cancelled) return;
+          notifyGptPageStatus(snap);
+        },
+      });
+
+      if (gptPageWatchJob !== job || job.cancelled) return;
+
+      chrome.runtime.sendMessage({
+        type: 'GPT_PAGE_WATCH_FINISHED',
+        taskId,
+        applicationId: options.applicationId,
+        ...result,
+      }).catch(() => {});
+
+      if (options.pollAndApply && options.applicationId) {
+        if (result.ok || (result.totalAllowClicks || 0) > 0) {
+          startGptPollAndApply({
+            taskId,
+            applicationId: options.applicationId,
+            jobTabId: options.jobTabId || lastSourceTabId,
+          });
+        }
+      }
+    } catch (e) {
+      chrome.runtime.sendMessage({
+        type: 'GPT_PAGE_WATCH_FINISHED',
+        taskId,
+        applicationId: options.applicationId,
+        ok: false,
+        error: e?.message || String(e),
+      }).catch(() => {});
+    } finally {
+      if (gptPageWatchJob === job) gptPageWatchJob = null;
+      await worker?.stopAllowWatchInTab?.(tabId);
+      await restoreJobBrowserFocus(options.jobTabId || job.jobTabId || lastSourceTabId);
+    }
+  })();
 }
 
 async function notifyGptActionApprovalNeeded(jobTabId, taskId) {
   const message = 'Custom GPT is waiting for Action approval. Open the pinned GPT tab and click Allow.';
+  const pinnedGptTabId = await getPinnedGptTabId();
+  if (pinnedGptTabId) {
+    await focusBrowserWindowForTab(pinnedGptTabId);
+  }
   if (jobTabId) {
     await showPageDetectAlert(jobTabId, message, 'warn');
   }
@@ -1181,7 +875,7 @@ async function focusJobTab(jobTabId) {
   if (!jobTabId) return;
   try {
     const tab = await getTab(jobTabId);
-    if (tab?.id && !isCustomGptUrl(tab.url)) {
+    if (tab?.id && !isCustomGptUrl(tab.url, tab.title) && !(await isPinnedGptTab(tab.id))) {
       await chrome.tabs.update(jobTabId, { active: true });
     }
   } catch {
@@ -1189,15 +883,25 @@ async function focusJobTab(jobTabId) {
   }
 }
 
-async function activateGptTabForHandoff(gptTabId) {
-  const tab = await getTab(gptTabId);
-  if (!tab?.id) throw new Error('Custom GPT tab not found.');
-  if (tab.windowId) {
-    await chrome.windows.update(tab.windowId, { focused: true, drawAttention: true });
-  }
-  await chrome.tabs.update(gptTabId, { active: true, highlighted: true });
-  await sleep(900);
-  return tab;
+async function preloadCustomGptTab() {
+  if (gptPrewarmPromise) return gptPrewarmPromise;
+
+  gptPrewarmPromise = (async () => {
+    const worker = self.__qtsGptWorkerHandoff;
+    if (!worker?.ensurePinnedGptTab) {
+      throw new Error('GPT worker handoff module not loaded.');
+    }
+
+    return worker.ensurePinnedGptTab({
+      storageKey: GPT_TAB_STORAGE_KEY,
+      focus: false,
+      preparePage: true,
+    });
+  })().finally(() => {
+    gptPrewarmPromise = null;
+  });
+
+  return gptPrewarmPromise;
 }
 
 async function restoreCaptureWindowFocus() {
@@ -1209,21 +913,81 @@ async function restoreCaptureWindowFocus() {
   }
 }
 
-async function dispatchCustomGptTask(taskId, prompt, jobTabId) {
-  const message = prompt || self.__qtsCustomGpt?.buildPrompt(taskId);
-  const keepalive = setInterval(() => {
-    chrome.runtime.getPlatformInfo(() => {});
-  }, 15000);
-  let handoff = null;
-  let gptTabId = null;
+async function restoreJobBrowserFocus(jobTabId) {
+  if (jobTabId) {
+    await focusBrowserWindowForTab(jobTabId);
+    return;
+  }
+  if (lastSourceTabId) {
+    await focusBrowserWindowForTab(lastSourceTabId);
+  }
+}
 
-  try {
-  let sourceTabId = jobTabId || lastSourceTabId;
+async function persistPendingGptDispatch(payload) {
+  if (!payload?.taskId) return;
+  await chrome.storage.local.set({
+    [PENDING_GPT_DISPATCH_KEY]: {
+      ...payload,
+      startedAt: Date.now(),
+    },
+  });
+}
 
+async function clearPendingGptDispatch() {
+  await chrome.storage.local.remove(PENDING_GPT_DISPATCH_KEY);
+}
+
+async function readPendingGptDispatch() {
+  const stored = await chrome.storage.local.get([PENDING_GPT_DISPATCH_KEY]);
+  return stored[PENDING_GPT_DISPATCH_KEY] || null;
+}
+
+function notifyGptDispatchFinished(payload) {
+  chrome.runtime.sendMessage({
+    type: 'GPT_DISPATCH_FINISHED',
+    ...payload,
+  }).catch(() => {});
+}
+
+async function resumePendingGptDispatchIfAny() {
+  if (gptDispatchInFlight) return null;
+  const pending = await readPendingGptDispatch();
+  if (!pending?.taskId || pending.sent) return null;
+  if (Date.now() - (pending.startedAt || 0) < 2000) return null;
+
+  const result = await runSendGptTask({
+    taskId: pending.taskId,
+    jobTabId: pending.jobTabId,
+    applicationId: pending.applicationId,
+    pollAndApply: pending.pollAndApply,
+  });
+
+  if (result.handoff?.sent) {
+    await clearPendingGptDispatch();
+    notifyGptDispatchFinished({
+      taskId: pending.taskId,
+      applicationId: pending.applicationId,
+      ...result,
+    });
+  }
+
+  return result;
+}
+
+async function runSendGptTask(msg) {
+  const taskId = String(msg?.taskId || '').trim();
+  if (!taskId) throw new Error('Missing task id');
+
+  const worker = self.__qtsGptWorkerHandoff;
+  if (!worker?.sendTaskToCustomGpt) {
+    throw new Error('GPT worker handoff module not loaded.');
+  }
+
+  let sourceTabId = msg.jobTabId || lastSourceTabId;
   if (sourceTabId) {
     try {
       const sourceTab = await getTab(sourceTabId);
-      if (!sourceTab?.id || isCustomGptUrl(sourceTab.url)) {
+      if (!sourceTab?.id || isCustomGptUrl(sourceTab.url, sourceTab.title) || await isPinnedGptTab(sourceTab.id)) {
         sourceTabId = null;
       }
     } catch {
@@ -1236,148 +1000,207 @@ async function dispatchCustomGptTask(taskId, prompt, jobTabId) {
     lastSourceTabId = sourceTabId;
   }
 
-  gptTabId = await ensureCustomGptTab({ active: false });
-  const gptUrl = self.__qtsCustomGpt?.CUSTOM_GPT_URL;
-  const currentGptTab = await getTab(gptTabId);
-  const currentUrl = currentGptTab?.url || '';
-  const onGptBase = self.__qtsCustomGpt?.isCustomGptBaseUrl?.(currentUrl) ?? false;
-  const mustOpenFreshChat = gptUrl && (needsFreshGptConversation(currentUrl) || !isCustomGptUrl(currentUrl));
-
-  await chrome.tabs.update(gptTabId, { pinned: true });
-  await activateGptTabForHandoff(gptTabId);
-  await forceQtsGptBanner(gptTabId, 'QTS: extension connected — starting handoff…', 'warn');
-
-  if (mustOpenFreshChat) {
-    await forceQtsGptBanner(gptTabId, 'QTS: opening fresh Custom GPT conversation…', 'warn');
-    await chrome.tabs.update(gptTabId, { url: gptUrl, active: true });
-    await waitForTabComplete(gptTabId, 60000).catch(() => {});
-    await activateGptTabForHandoff(gptTabId);
-    await waitForGptComposer(gptTabId, 45000);
-    await sleep(2500);
-  } else {
-    await sleep(1500);
-    await waitForGptComposer(gptTabId, 20000);
-  }
-
-  await chrome.storage.local.set({
-    qtsLastGptHandoffDebug: {
-      at: Date.now(),
-      tabId: gptTabId,
-      urlBefore: currentUrl,
-      onGptBase,
-      mustOpenFreshChat,
-    },
+  const prompt = self.__qtsCustomGpt?.buildPrompt?.(taskId) || `PROCESS_TASK: ${taskId}`;
+  await persistPendingGptDispatch({
+    taskId,
+    prompt,
+    jobTabId: sourceTabId,
+    applicationId: msg.applicationId,
+    pollAndApply: msg.pollAndApply,
+    sent: false,
   });
-  await forceQtsGptBanner(gptTabId, 'QTS: typing PROCESS_TASK into composer…', 'warn');
 
-  await activateGptTabForHandoff(gptTabId);
-  handoff = await runGptMainWorldHandoff(gptTabId, message, 12000);
-
-  if (!handoff?.sent && !handoff?.needsManualSend) {
-    await forceQtsGptBanner(gptTabId, 'QTS: using trusted keyboard input…', 'warn');
-    await activateGptTabForHandoff(gptTabId);
-    const debuggerHandoff = await typeViaDebugger(gptTabId, message);
-    if (debuggerHandoff?.sent || debuggerHandoff?.needsManualSend) {
-      handoff = debuggerHandoff;
-    }
+  if (gptPrewarmPromise) {
+    await gptPrewarmPromise.catch(() => {});
   }
 
-  if (!handoff?.sent && !handoff?.needsManualSend) {
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      await sleep(2000);
-      await activateGptTabForHandoff(gptTabId);
-      const fallback = await injectChatGptTask(gptTabId, message, taskId, {
-        preferStarter: false,
-        composerWaitMs: 20000,
-      });
-      if (fallback?.sent || fallback?.needsManualSend) {
-        handoff = fallback;
-        break;
-      }
-      handoff = fallback;
-    }
+  const sendResult = await worker.sendTaskToCustomGpt(taskId, {
+    storageKey: GPT_TAB_STORAGE_KEY,
+    loadTimeoutMs: 45000,
+    composerTimeoutMs: 30000,
+    sendTimeoutMs: 15000,
+  });
+
+  if (sendResult.tabId) {
+    await releaseUiForGptHandoff({ jobTabId: sourceTabId, gptTabId: sendResult.tabId });
   }
 
-  if (!handoff?.sent && !handoff?.needsManualSend) {
-    handoff = {
-      ok: true,
-      sent: false,
-      needsManualSend: true,
-      method: 'clipboard_fallback',
-      phase: 'manual_paste_required',
-      error: handoff?.error || 'Could not type into ChatGPT automatically.',
-      message,
-    };
-    await installGptClickPasteOverlay(gptTabId, message);
-  }
+  const handoff = sendResult.handoff || {
+    ok: sendResult.ok,
+    sent: Boolean(sendResult.ok && sendResult.handoff?.sent !== false),
+    error: sendResult.error,
+    message: sendResult.message || prompt,
+  };
 
-  if (handoff?.sent) {
-    await showGptTabHandoffToast(gptTabId, 'PROCESS_TASK sent. Click Allow when ChatGPT asks.', 'success');
-  } else if (handoff?.needsManualSend) {
-    await showGptTabHandoffToast(
-      gptTabId,
-      'PROCESS_TASK is in the box below — press Enter, then click Allow.',
-      'warn'
-    );
+  if (handoff.sent) {
+    await clearPendingGptDispatch();
   } else {
-    await showGptTabHandoffToast(
-      gptTabId,
-      handoff?.error || 'Could not type PROCESS_TASK — paste from clipboard (click GPT task in extension).',
-      'error'
-    );
+    await persistPendingGptDispatch({
+      taskId,
+      prompt,
+      jobTabId: sourceTabId,
+      applicationId: msg.applicationId,
+      pollAndApply: msg.pollAndApply,
+      sent: false,
+      error: handoff.error,
+    });
   }
 
   if (sourceTabId) {
-    const handoffNote = handoff?.sent
-      ? 'PROCESS_TASK sent to Custom GPT. Click Allow if ChatGPT asks.'
-      : handoff?.needsManualSend
-        ? 'PROCESS_TASK is in the Custom GPT composer — press Enter, then click Allow.'
-        : handoff?.error
-          ? `GPT handoff: ${handoff.error}`
-          : 'GPT handoff failed — paste PROCESS_TASK manually in the pinned GPT tab.';
-    await showPageDetectAlert(sourceTabId, handoffNote, handoff?.sent ? 'success' : 'warn');
+    const handoffNote = handoff.sent
+      ? 'PROCESS_TASK sent. Extension is clicking Allow and watching Custom GPT Actions.'
+      : `GPT handoff failed: ${handoff.error || 'Could not send PROCESS_TASK.'}`;
+    await showPageDetectAlert(sourceTabId, handoffNote, handoff.sent ? 'success' : 'warn');
   }
 
-  await notifyGptActionApprovalNeeded(sourceTabId, taskId);
-
-  if (sourceTabId && handoff?.sent) {
-    await focusJobTab(sourceTabId);
+  if (!handoff.sent) {
+    await chrome.storage.local.set({ qtsLastProcessTaskPrompt: prompt });
   }
 
-  if (!handoff?.sent) {
-    try {
-      await chrome.scripting.executeScript({
-        target: { tabId: gptTabId },
-        world: 'MAIN',
-        func: (text) => {
-          window.__qtsLastProcessTask = text;
-          try {
-            navigator.clipboard.writeText(text);
-          } catch {
-            // ignore
-          }
-        },
-        args: [message],
-      });
-    } catch {
-      // ignore
-    }
-    await chrome.storage.local.set({ qtsLastProcessTaskPrompt: message });
+  if (handoff.sent && sendResult.tabId) {
+    startGptPageWatch(sendResult.tabId, taskId, {
+      applicationId: msg.applicationId,
+      pollAndApply: msg.pollAndApply,
+      jobTabId: sourceTabId,
+    });
+  } else {
+    await notifyGptActionApprovalNeeded(sourceTabId, taskId);
   }
 
   return {
-    ok: Boolean(handoff?.sent || handoff?.needsManualSend || handoff?.ok),
-    tabId: gptTabId,
-    jobTabId: sourceTabId,
+    ok: Boolean(handoff.sent || sendResult.ok),
+    tabId: sendResult.tabId || null,
+    taskId,
     handoff,
+    gptWatchStarted: Boolean(handoff.sent && sendResult.tabId),
   };
+}
+
+async function executeSendGptTask(msg) {
+  if (gptDispatchInFlight) {
+    throw new Error('GPT handoff already in progress.');
+  }
+  gptDispatchInFlight = true;
+  const keepalive = setInterval(() => {
+    chrome.runtime.getPlatformInfo(() => {});
+  }, 3000);
+  try {
+    return await runSendGptTask(msg);
   } finally {
+    gptDispatchInFlight = false;
     clearInterval(keepalive);
-    if (handoff?.sent) {
-      await restoreCaptureWindowFocus();
-    } else if (gptTabId) {
-      await activateGptTabForHandoff(gptTabId);
+  }
+}
+
+async function dispatchCustomGptTask(taskId, prompt, jobTabId, options = {}) {
+  const worker = self.__qtsGptWorkerHandoff;
+  const message = prompt || self.__qtsCustomGpt?.buildPrompt(taskId);
+  const keepalive = setInterval(() => {
+    chrome.runtime.getPlatformInfo(() => {});
+  }, 4000);
+  let handoff = null;
+  let gptTabId = null;
+
+  if (gptDispatchInFlight) {
+    throw new Error('GPT handoff already in progress.');
+  }
+  gptDispatchInFlight = true;
+
+  try {
+    let sourceTabId = jobTabId || lastSourceTabId;
+
+    if (sourceTabId) {
+      try {
+        const sourceTab = await getTab(sourceTabId);
+        if (!sourceTab?.id || isCustomGptUrl(sourceTab.url, sourceTab.title) || await isPinnedGptTab(sourceTab.id)) {
+          sourceTabId = null;
+        }
+      } catch {
+        sourceTabId = null;
+      }
     }
+
+    if (sourceTabId) {
+      await chrome.storage.local.set({ [JOB_SOURCE_TAB_STORAGE_KEY]: sourceTabId });
+      lastSourceTabId = sourceTabId;
+    }
+
+    if (!worker?.sendTaskToCustomGpt) {
+      throw new Error('GPT worker handoff module not loaded.');
+    }
+
+    await persistPendingGptDispatch({
+      taskId,
+      prompt: message,
+      jobTabId: sourceTabId,
+      applicationId: options.applicationId,
+      pollAndApply: options.pollAndApply,
+      sent: false,
+    });
+
+    const sendResult = await worker.sendTaskToCustomGpt(taskId || message, {
+      storageKey: GPT_TAB_STORAGE_KEY,
+      loadTimeoutMs: 45000,
+      composerTimeoutMs: 30000,
+      sendTimeoutMs: 15000,
+    });
+    gptTabId = sendResult.tabId || null;
+    handoff = sendResult.handoff || {
+      ok: sendResult.ok,
+      sent: Boolean(sendResult.ok),
+      method: 'gpt_worker_dom',
+      error: sendResult.error,
+      message: sendResult.message || message,
+    };
+
+    if (handoff.sent) {
+      await clearPendingGptDispatch();
+    } else {
+      await persistPendingGptDispatch({
+        taskId,
+        prompt: message,
+        jobTabId: sourceTabId,
+        applicationId: options.applicationId,
+        pollAndApply: options.pollAndApply,
+        sent: false,
+        error: handoff.error,
+      });
+    }
+
+    if (sourceTabId) {
+      const handoffNote = handoff.sent
+        ? 'PROCESS_TASK sent. Extension is clicking Allow and watching Custom GPT Actions.'
+        : `GPT handoff failed: ${handoff.error || 'Could not send PROCESS_TASK.'}`;
+      await showPageDetectAlert(sourceTabId, handoffNote, handoff.sent ? 'success' : 'warn');
+    }
+
+    if (handoff.sent && gptTabId) {
+      startGptPageWatch(gptTabId, taskId, {
+        applicationId: options.applicationId,
+        pollAndApply: options.pollAndApply,
+        jobTabId: sourceTabId,
+      });
+    } else if (!handoff.sent) {
+      await notifyGptActionApprovalNeeded(sourceTabId, taskId);
+      await chrome.storage.local.set({ qtsLastProcessTaskPrompt: message });
+    }
+
+    const result = {
+      ok: Boolean(handoff.sent || handoff.ok),
+      tabId: gptTabId,
+      jobTabId: sourceTabId,
+      taskId,
+      handoff,
+    };
+
+    if (options.notify) {
+      notifyGptDispatchFinished(result);
+    }
+
+    return result;
+  } finally {
+    gptDispatchInFlight = false;
+    clearInterval(keepalive);
   }
 }
 
@@ -1390,22 +1213,28 @@ async function injectDetectToast(tabId) {
   }
 }
 
-async function showPageDetectAlert(tabId, message, type) {
+async function showPageDetectAlert(tabId, message, type, durationMs) {
   if (!(await injectDetectToast(tabId))) return;
   try {
     await chrome.scripting.executeScript({
       target: { tabId },
-      func: (msg, toastType) => {
-        window.__showQtsDetectToast?.(msg, toastType);
+      func: (msg, toastType, hideMs) => {
+        window.__showQtsDetectToast?.(msg, toastType, hideMs);
       },
-      args: [message, type],
+      args: [message, type, durationMs ?? null],
     });
   } catch {
     // non-fatal
   }
 }
 
-async function autoDetectJob(tabId, url, { showAlert = true } = {}) {
+async function isAutoApplyArmed() {
+  return Boolean(await self.__qtsAutoApplicationPipeline?.isAutoApplyEnabled?.());
+}
+
+async function autoDetectJob(tabId, url, { showAlert = true, forcePipeline = false } = {}) {
+  if (!forcePipeline && !(await isAutoApplyArmed())) return;
+
   if (!isExtractablePageUrl(url) || isIgnoredSite(url)) return;
 
   const generation = (detectGenerationByTab.get(tabId) || 0) + 1;
@@ -1433,16 +1262,88 @@ async function autoDetectJob(tabId, url, { showAlert = true } = {}) {
   prefetchTabContext(tabId).catch(() => {});
   detectApplyTemplateOnTab(tabId, pageUrl).catch(() => {});
 
-  if (!showAlert) return;
-
-  const toastAction = getDetectToastAction(pageUrl, entry);
-  if (toastAction === 'success') {
-    await showPageDetectAlert(tabId, DETECT_SUCCESS_MESSAGE, 'success');
-  } else if (toastAction === 'fail') {
-    await showPageDetectAlert(tabId, DETECT_FAIL_MESSAGE, 'fail');
+  if (showAlert) {
+    const toastAction = getDetectToastAction(pageUrl, entry);
+    if (toastAction === 'success') {
+      await showPageDetectAlert(tabId, DETECT_SUCCESS_MESSAGE, 'success');
+    } else if (toastAction === 'fail') {
+      await showPageDetectAlert(tabId, DETECT_FAIL_MESSAGE, 'fail');
+    }
   }
 
   notifyCapturePopup(tabId);
+  maybeStartAutoApplicationPipeline(tabId, pageUrl, entry, {
+    force: Boolean(forcePipeline),
+  }).catch(() => {});
+}
+
+async function startAutoApplyOnJobTab(tabId) {
+  const tab = await getTab(tabId);
+  if (!tab?.id || !tab.url) {
+    throw new Error('Open a job page in your browser first.');
+  }
+  if (!isExtractablePageUrl(tab.url) || isIgnoredSite(tab.url)) {
+    throw new Error('This tab is not a supported job page.');
+  }
+
+  const pipeline = self.__qtsAutoApplicationPipeline;
+  if (!(await pipeline?.isAutoApplyEnabled?.())) {
+    throw new Error('Auto-apply is not armed.');
+  }
+
+  lastAutoPipelineKeyByTab.delete(tabId);
+  lastAutoOpenKeyByTab.delete(tabId);
+  lastSourceTabId = tabId;
+  await chrome.storage.local.set({ [JOB_SOURCE_TAB_STORAGE_KEY]: tabId });
+
+  await closeCaptureWindow();
+  await restoreJobBrowserFocus(tabId);
+  await showPageDetectAlert(tabId, 'QTS: Discovering job details and starting application…', 'info');
+  await autoDetectJob(tabId, tab.url, { showAlert: false, forcePipeline: true });
+}
+
+async function maybeStartAutoApplicationPipeline(tabId, url, detectedEntry, options = {}) {
+  ensureAutoPipelineDeps();
+  const pipeline = self.__qtsAutoApplicationPipeline;
+  if (!pipeline?.runAutoApplicationPipeline) return;
+
+  if (!(await pipeline.isAutoApplyEnabled())) return;
+  const candidateId = await pipeline.resolveDefaultCandidateId();
+  if (!candidateId) return;
+  if (autoPipelineInFlight.has(tabId)) return;
+
+  const normalizedUrl = pipeline.normalizePipelineUrl(url);
+  const pipelineKey = `${tabId}:${normalizedUrl}`;
+  const force = Boolean(options.force);
+  if (!force && lastAutoPipelineKeyByTab.get(tabId) === pipelineKey) return;
+
+  autoPipelineInFlight.add(tabId);
+  try {
+    if (!force) {
+      await sleep(AUTO_PIPELINE_DELAY_MS);
+    } else {
+      await sleep(200);
+    }
+    const tab = await getTab(tabId);
+    if (!tab?.id || pipeline.normalizePipelineUrl(tab.url) !== normalizedUrl) return;
+
+    const result = await pipeline.runAutoApplicationPipeline(tabId, {
+      candidateId,
+      jobUrl: normalizedUrl,
+      detectedJob: detectedEntry,
+    });
+
+    if (result?.ok || result?.reason === 'already_applied') {
+      lastAutoPipelineKeyByTab.set(tabId, pipelineKey);
+    }
+  } catch (err) {
+    const message = err?.message || String(err);
+    if (!/no application fields|external apply|apply button/i.test(message)) {
+      await showPageDetectAlert(tabId, `QTS auto-apply: ${message}`, 'warn');
+    }
+  } finally {
+    autoPipelineInFlight.delete(tabId);
+  }
 }
 
 function notifyCapturePopup(tabId) {
@@ -1450,7 +1351,22 @@ function notifyCapturePopup(tabId) {
   chrome.runtime.sendMessage({ type: 'JOB_DETECTED_UPDATE', tabId }).catch(() => {});
 }
 
+function maybeDetectApplyMethodOnOpen(tabId, url) {
+  if (!url || isIgnoredSite(url)) return;
+  if (!isTemplateCandidateUrl(url)) return;
+  const autoKey = `${tabId}:${url}`;
+  if (lastApplyMethodDetectKeyByTab.get(tabId) === autoKey) {
+    injectApplyModalWatch(tabId, url).catch(() => {});
+    return;
+  }
+  lastApplyMethodDetectKeyByTab.set(tabId, autoKey);
+  detectApplyTemplateOnTab(tabId, url)
+    .then(() => injectApplyModalWatch(tabId, url))
+    .catch(() => {});
+}
+
 async function runDetectForActiveTab(tabId) {
+  if (!(await isAutoApplyArmed())) return;
   const tab = await getTab(tabId);
   if (!tab?.id || !tab.url) return;
   if (!isExtractablePageUrl(tab.url) || isIgnoredSite(tab.url)) return;
@@ -1460,16 +1376,69 @@ async function runDetectForActiveTab(tabId) {
 
 function maybeTrackAutoOpen(tabId, url) {
   if (!isExtractablePageUrl(url) || isIgnoredSite(url)) return;
-  const autoKey = `${tabId}:${url}`;
-  if (lastAutoOpenKeyByTab.get(tabId) === autoKey) return;
-  lastAutoOpenKeyByTab.set(tabId, autoKey);
-  autoDetectJob(tabId, url).catch(() => {});
+  (async () => {
+    if (!(await isAutoApplyArmed())) return;
+    const autoKey = `${tabId}:${url}`;
+    if (lastAutoOpenKeyByTab.get(tabId) === autoKey) return;
+    lastAutoOpenKeyByTab.set(tabId, autoKey);
+    await autoDetectJob(tabId, url, { showAlert: true });
+  })().catch(() => {});
 }
 
 chrome.action.onClicked.addListener((tab) => {
   if (!tab?.id) return;
-  openCaptureWindow(tab.id).catch((err) => {
+
+  (async () => {
+    const tabUrl = tab.url || '';
+
+    if (isCustomGptUrl(tabUrl, tab.title) || await isPinnedGptTab(tab.id)) {
+      const jobTabId = await resolveJobTabIdForCapture(null);
+      if (jobTabId) {
+        await openCaptureWindow(jobTabId);
+      } else if (captureWindowId != null) {
+        await focusCaptureUi();
+      }
+      return;
+    }
+
+    if (isExtensionOrInternalUrl(tabUrl)) {
+      const jobTabId = await resolveJobTabIdForCapture(null);
+      if (jobTabId) {
+        await openCaptureWindow(jobTabId);
+      }
+      return;
+    }
+
+    await clearPendingGptDispatch();
+    await openCaptureWindow(tab.id, { focus: true });
+  })().catch((err) => {
     console.warn('[QTS_Startup] Could not open capture window:', err);
+  });
+});
+
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== 'qts-gpt-handoff') return;
+
+  port.onMessage.addListener((msg) => {
+    if (msg?.type !== 'SEND_GPT_TASK') return;
+
+    executeSendGptTask(msg)
+      .then((result) => {
+        const payload = { type: 'GPT_HANDOFF_RESULT', ...result };
+        port.postMessage(payload);
+        notifyGptDispatchFinished(result);
+      })
+      .catch((e) => {
+        const payload = {
+          type: 'GPT_HANDOFF_RESULT',
+          ok: false,
+          taskId: msg.taskId,
+          error: e.message || 'Could not send PROCESS_TASK.',
+          handoff: { ok: false, sent: false, error: e.message || 'Could not send PROCESS_TASK.' },
+        };
+        port.postMessage(payload);
+        notifyGptDispatchFinished(payload);
+      });
   });
 });
 
@@ -1514,11 +1483,24 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
-  if (msg.type === 'GET_CURRENT_TAB_URL') {
+  if (msg.type === 'REGISTER_JOB_TAB') {
     (async () => {
       const tabId = msg.tabId || lastSourceTabId;
-      if (tabId) {
-        const tab = await getTab(tabId);
+      const jobTabId = await resolveJobTabIdForCapture(tabId);
+      if (jobTabId) {
+        lastSourceTabId = jobTabId;
+        await chrome.storage.local.set({ [JOB_SOURCE_TAB_STORAGE_KEY]: jobTabId });
+      }
+      sendResponse({ ok: true, tabId: jobTabId || tabId || null });
+    })().catch((e) => sendResponse({ ok: false, error: e.message }));
+    return true;
+  }
+
+  if (msg.type === 'GET_CURRENT_TAB_URL') {
+    (async () => {
+      const jobTabId = await resolveJobTabIdForCapture(msg.tabId || lastSourceTabId);
+      if (jobTabId) {
+        const tab = await getTab(jobTabId);
         if (tab) {
           sendResponse({ url: tab.url, title: tab.title, tabId: tab.id });
           return;
@@ -1540,12 +1522,24 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return false;
   }
 
+  if (msg.type === 'APPLY_MODAL_CHANGED') {
+    const tabId = sender.tab?.id;
+    const url = msg.url || sender.tab?.url;
+    if (!tabId || !url || !isTemplateCandidateUrl(url)) return false;
+    detectApplyTemplateOnTab(tabId, url).catch(() => {});
+    return false;
+  }
+
   if (msg.type === 'JOB_PANEL_CHANGED') {
     const tabId = sender.tab?.id;
     const url = msg.url || sender.tab?.url;
     if (!tabId || !url || !isExtractablePageUrl(url) || isIgnoredSite(url)) return false;
-    lastAutoOpenKeyByTab.delete(tabId);
-    autoDetectJob(tabId, url).catch(() => {});
+    (async () => {
+      if (!(await isAutoApplyArmed())) return;
+      lastAutoOpenKeyByTab.delete(tabId);
+      lastAutoPipelineKeyByTab.delete(tabId);
+      await autoDetectJob(tabId, url).catch(() => {});
+    })().catch(() => {});
     return false;
   }
 
@@ -1664,6 +1658,29 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  if (msg.type === 'SEND_GPT_TASK') {
+    const run = async () => executeSendGptTask(msg);
+
+    if (msg.async !== false) {
+      run()
+        .then((result) => notifyGptDispatchFinished({ taskId: msg.taskId, applicationId: msg.applicationId, ...result }))
+        .catch((e) => notifyGptDispatchFinished({
+          taskId: msg.taskId,
+          applicationId: msg.applicationId,
+          ok: false,
+          error: e.message || 'Could not send PROCESS_TASK.',
+          handoff: { ok: false, sent: false, error: e.message || 'Could not send PROCESS_TASK.' },
+        }));
+      sendResponse({ ok: true, started: true });
+      return false;
+    }
+
+    run()
+      .then((result) => sendResponse({ ...result }))
+      .catch((e) => sendResponse({ ok: false, error: e.message || 'Could not send PROCESS_TASK.' }));
+    return true;
+  }
+
   if (msg.type === 'DISPATCH_GPT_TASK') {
     const runDispatch = async () => {
       const taskId = msg.taskId;
@@ -1671,34 +1688,31 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (!taskId) {
         return { ok: false, error: 'taskId is required.' };
       }
-      const result = await dispatchCustomGptTask(taskId, prompt, msg.jobTabId);
-      if (msg.pollAndApply && result.ok) {
-        startGptPollAndApply({
-          taskId,
-          applicationId: msg.applicationId,
-          jobTabId: msg.jobTabId || lastSourceTabId,
-        });
-      }
+      const result = await dispatchCustomGptTask(taskId, prompt, msg.jobTabId, {
+        applicationId: msg.applicationId,
+        pollAndApply: msg.pollAndApply,
+        focus: msg.focus === true,
+        notify: Boolean(msg.async),
+      });
       if (msg.async) {
-        chrome.runtime.sendMessage({
-          type: 'GPT_DISPATCH_FINISHED',
+        notifyGptDispatchFinished({
           taskId,
           applicationId: msg.applicationId,
           ...result,
-        }).catch(() => {});
+        });
       }
       return result;
     };
 
     if (msg.async) {
       runDispatch().catch((e) => {
-        chrome.runtime.sendMessage({
-          type: 'GPT_DISPATCH_FINISHED',
+        notifyGptDispatchFinished({
           taskId: msg.taskId,
           applicationId: msg.applicationId,
           ok: false,
           error: e.message || 'Could not dispatch GPT task.',
-        }).catch(() => {});
+          handoff: { ok: false, sent: false, error: e.message || 'Could not dispatch GPT task.' },
+        });
       });
       sendResponse({ ok: true, started: true });
       return false;
@@ -1710,21 +1724,100 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  if (msg.type === 'START_AUTO_APPLY_ON_TAB') {
+    (async () => {
+      const stored = await chrome.storage.local.get([JOB_SOURCE_TAB_STORAGE_KEY]);
+      const jobTabId = msg.jobTabId || stored[JOB_SOURCE_TAB_STORAGE_KEY] || lastSourceTabId;
+      if (!jobTabId) {
+        sendResponse({ ok: false, error: 'No job tab found. Open a job listing first.' });
+        return;
+      }
+      await startAutoApplyOnJobTab(jobTabId);
+      sendResponse({ ok: true, tabId: jobTabId });
+    })().catch((e) => sendResponse({ ok: false, error: e?.message || String(e) }));
+    return true;
+  }
+
+  if (msg.type === 'RESET_AUTO_PIPELINE_STATE') {
+    lastAutoPipelineKeyByTab.clear();
+    autoPipelineInFlight.clear();
+    stopGptApprovalWatcher();
+    stopGptPollAndApply();
+    sendResponse({ ok: true });
+    return false;
+  }
+
+  if (msg.type === 'DISMISS_CAPTURE_WINDOW') {
+    (async () => {
+      const stored = await chrome.storage.local.get([JOB_SOURCE_TAB_STORAGE_KEY]);
+      const jobTabId = msg.jobTabId || stored[JOB_SOURCE_TAB_STORAGE_KEY] || lastSourceTabId;
+      await closeCaptureWindow();
+      await restoreJobBrowserFocus(jobTabId);
+      sendResponse({ ok: true });
+    })().catch((e) => sendResponse({ ok: false, error: e?.message || String(e) }));
+    return true;
+  }
+
+  if (msg.type === 'RELEASE_UI_FOR_GPT') {
+    releaseUiForGptHandoff({ jobTabId: msg.jobTabId || lastSourceTabId, gptTabId: msg.gptTabId })
+      .then(() => sendResponse({ ok: true }))
+      .catch((e) => sendResponse({ ok: false, error: e?.message || String(e) }));
+    return true;
+  }
+
+  if (msg.type === 'GPT_ALLOW_AUTO_CLICKED') {
+    notifyGptPageStatus({
+      taskId: gptPageWatchJob?.taskId,
+      tabId: sender?.tab?.id,
+      totalAllowClicks: msg.clicked || (msg.allowClicked ? 1 : 0),
+      allowClicked: Boolean(msg.allowClicked || msg.clicked),
+      clickedLabel: msg.clickedLabel || msg.labels?.[0],
+      allowButtonCount: msg.allowButtonCount,
+      hasApprovalDialog: msg.hasApprovalDialog,
+      hasGetTaskContext: msg.hasGetTaskContext,
+      hasSubmitTaskPackage: msg.hasSubmitTaskPackage,
+      taskSaved: msg.taskSaved,
+      thinking: msg.thinking,
+      stoppedThinking: msg.stoppedThinking,
+      snippet: msg.snippet,
+      source: 'content_auto_watch',
+    });
+    sendResponse({ ok: true });
+    return false;
+  }
+
   if (msg.type === 'STOP_GPT_APPROVAL_WATCH') {
     stopGptApprovalWatcher();
     sendResponse({ ok: true });
     return false;
   }
 
-  if (msg.type === 'ENSURE_CUSTOM_GPT_TAB') {
+  if (msg.type === 'ENSURE_CUSTOM_GPT_TAB' || msg.type === 'PREWARM_CUSTOM_GPT_TAB') {
     (async () => {
       try {
-        const tabId = await ensureCustomGptTab({ active: Boolean(msg.active) });
-        sendResponse({ ok: true, tabId });
+        const worker = self.__qtsGptWorkerHandoff;
+        if (!worker?.ensurePinnedGptTab) {
+          throw new Error('GPT worker handoff module not loaded.');
+        }
+        const background = msg.type === 'PREWARM_CUSTOM_GPT_TAB' || msg.background !== false;
+        const result = await worker.ensurePinnedGptTab({
+          storageKey: GPT_TAB_STORAGE_KEY,
+          focus: !background,
+          preparePage: true,
+        });
+        sendResponse({ ...result, prewarmed: background });
       } catch (e) {
         sendResponse({ ok: false, error: e.message || 'Could not open Custom GPT tab.' });
       }
     })().catch((e) => sendResponse({ ok: false, error: e.message || 'Could not open Custom GPT tab.' }));
+    return true;
+  }
+
+  if (msg.type === 'GET_PINNED_GPT_TAB') {
+    (async () => {
+      const tabId = await getPinnedGptTabId();
+      sendResponse({ ok: true, tabId });
+    })().catch(() => sendResponse({ ok: false, tabId: null }));
     return true;
   }
 });
@@ -1741,17 +1834,24 @@ chrome.storage.onChanged.addListener((changes, area) => {
 });
 
 chrome.runtime.onInstalled.addListener(() => {
+  self.__qtsCustomGpt?.loadCustomGptConfigFromStorage?.().catch(() => {});
   prefetchWorkspaceIfStale().catch(() => {});
 });
 
+self.__qtsCustomGpt?.loadCustomGptConfigFromStorage?.().catch(() => {});
+
 chrome.tabs.onActivated.addListener(async (activeInfo) => {
   const tab = await getTab(activeInfo.tabId);
-  if (tab?.url && !isCustomGptUrl(tab.url)) {
-    runDetectForActiveTab(activeInfo.tabId).catch(() => {});
+  const onPinnedGpt = await isPinnedGptTab(activeInfo.tabId);
+  if (tab?.url && !onPinnedGpt) {
+    maybeDetectApplyMethodOnOpen(activeInfo.tabId, tab.url);
+    if (await isAutoApplyArmed()) {
+      runDetectForActiveTab(activeInfo.tabId).catch(() => {});
+    }
+    prefetchTabContext(activeInfo.tabId).catch(() => {});
   }
-  prefetchTabContext(activeInfo.tabId).catch(() => {});
   if (captureWindowId === null) return;
-  if (tab?.url && isCustomGptUrl(tab.url)) return;
+  if (onPinnedGpt) return;
   lastSourceTabId = activeInfo.tabId;
   chrome.runtime.sendMessage({ type: 'SET_SOURCE_TAB', tabId: activeInfo.tabId }).catch(() => {});
 });
@@ -1759,12 +1859,15 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.status === 'loading') {
     lastAutoOpenKeyByTab.delete(tabId);
+    lastAutoPipelineKeyByTab.delete(tabId);
+    lastApplyMethodDetectKeyByTab.delete(tabId);
     return;
   }
 
   const url = changeInfo.url || tab.url;
   if (!url || !isExtractablePageUrl(url)) return;
   if (changeInfo.status === 'complete' || changeInfo.url) {
+    maybeDetectApplyMethodOnOpen(tabId, url);
     maybeTrackAutoOpen(tabId, url);
   }
 });
@@ -1775,18 +1878,24 @@ chrome.webNavigation.onCommitted.addListener((details) => {
   injectExtractors(details.tabId).catch(() => {});
   if (details.transitionQualifiers?.includes('reload') || details.transitionType === 'reload') {
     lastAutoOpenKeyByTab.delete(details.tabId);
+    lastApplyMethodDetectKeyByTab.delete(details.tabId);
     maybeTrackAutoOpen(details.tabId, details.url);
   }
+  maybeDetectApplyMethodOnOpen(details.tabId, details.url);
 });
 
 chrome.webNavigation.onHistoryStateUpdated.addListener((details) => {
   if (details.frameId !== 0) return;
   if (!isExtractablePageUrl(details.url)) return;
+  maybeDetectApplyMethodOnOpen(details.tabId, details.url);
   maybeTrackAutoOpen(details.tabId, details.url);
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   lastAutoOpenKeyByTab.delete(tabId);
+  lastAutoPipelineKeyByTab.delete(tabId);
+  lastApplyMethodDetectKeyByTab.delete(tabId);
+  autoPipelineInFlight.delete(tabId);
   injectedExtractorTabs.delete(tabId);
   detectGenerationByTab.delete(tabId);
   removeDetectedJobForTab(tabId).catch(() => {});
@@ -1835,7 +1944,7 @@ async function maybeOpenCaptureWindow(tabId, url) {
   if (prefs.autoOpenPopup === false) return;
   if (!prefs.authToken) return;
 
-  await openCaptureWindow(tabId);
+  await openCaptureWindow(tabId, { focus: false });
 }
 
 function captureWindowUrl(tabId) {
@@ -1874,8 +1983,9 @@ async function captureWindowPlacement(sourceTabId) {
   }
 }
 
-async function focusCaptureWindow(tabId) {
+async function focusCaptureWindow(tabId, options = {}) {
   if (captureWindowId === null) return false;
+  const shouldFocus = options.focus === true;
   const height = await getCaptureWindowHeight(tabId);
 
   try {
@@ -1885,35 +1995,24 @@ async function focusCaptureWindow(tabId) {
       return false;
     }
 
-    if (lastSourceTabId === tabId) {
-      await chrome.windows.update(captureWindowId, {
-        focused: true,
-        width: CAPTURE_WINDOW_WIDTH,
-        height,
-      });
-      return true;
-    }
-
-    try {
-      await chrome.runtime.sendMessage({ type: 'SET_SOURCE_TAB', tabId });
-      await chrome.windows.update(captureWindowId, {
-        focused: true,
-        width: CAPTURE_WINDOW_WIDTH,
-        height,
-      });
-      return true;
-    } catch {
-      const popupTab = existing.tabs?.[0];
-      if (popupTab?.id) {
-        await chrome.tabs.update(popupTab.id, { url: captureWindowUrl(tabId) });
-        await chrome.windows.update(captureWindowId, {
-          focused: true,
-          width: CAPTURE_WINDOW_WIDTH,
-          height,
-        });
-        return true;
+    const popupTab = existing.tabs?.[0];
+    if (popupTab?.id) {
+      const nextUrl = captureWindowUrl(tabId);
+      const currentUrl = popupTab.url || popupTab.pendingUrl || '';
+      if (!currentUrl.includes(`tabId=${tabId}`)) {
+        await chrome.tabs.update(popupTab.id, { url: nextUrl });
       }
     }
+
+    await chrome.windows.update(captureWindowId, {
+      focused: shouldFocus,
+      drawAttention: shouldFocus,
+      width: CAPTURE_WINDOW_WIDTH,
+      height,
+      state: 'normal',
+    });
+    lastSourceTabId = tabId;
+    return true;
   } catch {
     captureWindowId = null;
   }
@@ -1921,26 +2020,55 @@ async function focusCaptureWindow(tabId) {
   return false;
 }
 
-async function openCaptureWindow(tabId) {
-  runDetectForActiveTab(tabId).catch(() => {});
-  prefetchTabContext(tabId).catch(() => {});
-
-  if (await focusCaptureWindow(tabId)) {
-    lastSourceTabId = tabId;
+async function openCaptureWindow(tabId, options = {}) {
+  const jobTabId = await resolveJobTabIdForCapture(tabId);
+  if (!jobTabId) {
+    console.warn('[QTS_Startup] No job tab available for capture window.');
     return;
   }
 
-  lastSourceTabId = tabId;
-  const placement = await captureWindowPlacement(tabId);
-  const height = await getCaptureWindowHeight(tabId);
+  const shouldFocus = options.focus === true;
+
+  if (await isAutoApplyArmed()) {
+    runDetectForActiveTab(jobTabId).catch(() => {});
+  }
+  prefetchTabContext(jobTabId).catch(() => {});
+
+  if (captureWindowId !== null) {
+    try {
+      await chrome.windows.get(captureWindowId);
+    } catch {
+      captureWindowId = null;
+    }
+  }
+
+  if (await focusCaptureWindow(jobTabId, { focus: shouldFocus })) {
+    lastSourceTabId = jobTabId;
+    await chrome.storage.local.set({ [JOB_SOURCE_TAB_STORAGE_KEY]: jobTabId });
+    if (!shouldFocus) {
+      await focusBrowserWindowForTab(jobTabId);
+    }
+    return;
+  }
+
+  lastSourceTabId = jobTabId;
+  await chrome.storage.local.set({ [JOB_SOURCE_TAB_STORAGE_KEY]: jobTabId });
+  const placement = await captureWindowPlacement(jobTabId);
+  const height = await getCaptureWindowHeight(jobTabId);
   const win = await chrome.windows.create({
-    url: captureWindowUrl(tabId),
+    url: captureWindowUrl(jobTabId),
     type: 'popup',
     width: CAPTURE_WINDOW_WIDTH,
     height,
-    focused: true,
+    focused: shouldFocus,
+    state: 'normal',
     ...placement,
   });
 
   captureWindowId = win.id;
+  if (shouldFocus) {
+    await chrome.windows.update(captureWindowId, { focused: true, drawAttention: true });
+  } else {
+    await focusBrowserWindowForTab(jobTabId);
+  }
 }

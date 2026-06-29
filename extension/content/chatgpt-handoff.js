@@ -6,9 +6,10 @@
 
   function isAllowLabel(label) {
     const text = cleanText(label).toLowerCase();
-    if (!text || text.length > 48) return false;
+    if (!text || text.length > 64) return false;
+    if (/\bdeny\b/i.test(text)) return false;
     if (/always allow/.test(text)) return true;
-    if (/^allow(\b|$|\.)/.test(text)) return true;
+    if (/\ballow\b/i.test(text)) return true;
     if (ALLOW_LABELS.test(text)) return true;
     return false;
   }
@@ -141,31 +142,133 @@
     if (typeof target.click === 'function') target.click();
   }
 
+  function visitAllRoots(visitor) {
+    const seen = new Set();
+    const walk = (root) => {
+      if (!root || seen.has(root)) return;
+      seen.add(root);
+      visitor(root);
+      try {
+        root.querySelectorAll('*').forEach((el) => {
+          if (el.shadowRoot) walk(el.shadowRoot);
+        });
+      } catch {
+        // ignore
+      }
+    };
+    walk(document);
+  }
+
+  function domOrderScore(el) {
+    const rect = el.getBoundingClientRect();
+    return rect.top * 10000 + rect.left;
+  }
+
+  function scrapePageState() {
+    const bodyText = cleanText(document.body?.innerText || '');
+    return {
+      hasApprovalDialog: /wants to talk to/i.test(bodyText),
+      hasGetTaskContext: /getTaskContext/i.test(bodyText),
+      hasSubmitTaskPackage: /submitTaskPackage/i.test(bodyText),
+      taskSaved: /task\s+task_[\w-]+\s+saved/i.test(bodyText)
+        || /Extension will apply answers/i.test(bodyText),
+      thinking: /\bThinking\b/i.test(bodyText),
+      stoppedThinking: /Stopped thinking/i.test(bodyText),
+      snippet: bodyText.slice(0, 600),
+    };
+  }
+
   function findAllowButtons() {
     const matches = [];
-    document.querySelectorAll('button, [role="button"], a').forEach((el) => {
-      if (!isVisible(el)) return;
-      const label = getClickableLabel(el);
-      if (!label || label.length > 48) return;
-      if (!isAllowLabel(label)) return;
-      if (el.closest('nav, header, footer')) return;
-      let score = 10;
-      if (/always allow/i.test(label)) score += 30;
-      if (/^allow$/i.test(label)) score += 20;
-      matches.push({ el, label, score });
+    visitAllRoots((root) => {
+      root.querySelectorAll('button, [role="button"], a, div[tabindex="0"]').forEach((el) => {
+        if (!isVisible(el)) return;
+        const label = getClickableLabel(el);
+        if (!label || label.length > 64) return;
+        if (!isAllowLabel(label)) return;
+        if (el.closest('nav, header, footer')) return;
+        let score = 10;
+        if (/always allow/i.test(label)) score += 30;
+        if (/^allow$/i.test(label)) score += 40;
+        if (el.closest('[role="dialog"], [class*="modal" i], [class*="popover" i], [class*="layer" i]')) score += 35;
+        if (/wants to talk to/i.test(el.parentElement?.innerText || '')) score += 25;
+        matches.push({ el, label, score, order: domOrderScore(el) });
+      });
     });
-    matches.sort((a, b) => b.score - a.score);
+    matches.sort((a, b) => b.order - a.order || b.score - a.score);
     return matches.map((m) => m.el);
   }
 
   function clickAllowButtons() {
     const buttons = findAllowButtons();
-    let clicked = 0;
-    for (const btn of buttons) {
-      clickElement(btn);
-      clicked += 1;
+    if (!buttons.length) {
+      return { clicked: 0, labels: [], allowButtonCount: 0, allowClicked: false, ...scrapePageState() };
     }
-    return { clicked, labels: buttons.map((b) => getClickableLabel(b)) };
+    const btn = buttons[0];
+    clickElement(btn);
+    const label = getClickableLabel(btn);
+    return {
+      clicked: 1,
+      labels: [label],
+      allowClicked: true,
+      clickedLabel: label,
+      allowButtonCount: buttons.length,
+      ...scrapePageState(),
+    };
+  }
+
+  let allowAutoWatchActive = false;
+  let allowAutoWatchObserver = null;
+  let allowAutoWatchTimer = null;
+
+  function stopAllowAutoWatch() {
+    allowAutoWatchActive = false;
+    if (allowAutoWatchTimer) {
+      clearTimeout(allowAutoWatchTimer);
+      allowAutoWatchTimer = null;
+    }
+    try {
+      allowAutoWatchObserver?.disconnect();
+    } catch {
+      // ignore
+    }
+    allowAutoWatchObserver = null;
+  }
+
+  function scheduleAllowAutoClick() {
+    if (!allowAutoWatchActive) return;
+    if (allowAutoWatchTimer) clearTimeout(allowAutoWatchTimer);
+    allowAutoWatchTimer = setTimeout(() => {
+      allowAutoWatchTimer = null;
+      if (!allowAutoWatchActive) return;
+      const result = clickAllowButtons();
+      if (result.clicked > 0) {
+        chrome.runtime.sendMessage({
+          type: 'GPT_ALLOW_AUTO_CLICKED',
+          ...result,
+        }).catch(() => {});
+      }
+    }, 120);
+  }
+
+  function startAllowAutoWatch() {
+    if (allowAutoWatchActive) return { ok: true, already: true };
+    allowAutoWatchActive = true;
+    scheduleAllowAutoClick();
+    allowAutoWatchObserver = new MutationObserver(scheduleAllowAutoClick);
+    allowAutoWatchObserver.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+    });
+    const interval = setInterval(() => {
+      if (!allowAutoWatchActive) {
+        clearInterval(interval);
+        return;
+      }
+      scheduleAllowAutoClick();
+    }, 800);
+    return { ok: true, started: true };
   }
 
   async function clickConversationStarter(taskId, message) {
@@ -317,24 +420,300 @@
     };
   }
 
-  function showHandoffToast(message, type) {
-    const root = document.body || document.documentElement;
-    if (!root) return;
-    const id = 'qts-gpt-handoff-toast';
-    let el = document.getElementById(id);
-    if (!el) {
-      el = document.createElement('div');
-      el.id = id;
-      el.style.cssText = [
-        'position:fixed', 'top:16px', 'left:50%', 'transform:translateX(-50%)',
-        'z-index:2147483647', 'max-width:min(520px,92vw)', 'padding:12px 16px',
-        'border-radius:10px', 'font:14px/1.4 system-ui,sans-serif',
-        'box-shadow:0 8px 24px rgba(0,0,0,.25)', 'color:#fff',
-      ].join(';');
-      root.appendChild(el);
+  const GPT_STATUS_HOST_ID = 'qts-gpt-status-host';
+  const GPT_STATUS_STYLE_ID = 'qts-gpt-status-style';
+  const GPT_STATUS_FINISH_MS = 4500;
+
+  const GPT_PIPELINE_STEPS = [
+    { id: 'loaded', label: 'Page loaded successfully' },
+    { id: 'scraping', label: 'Scanning page' },
+    { id: 'typing', label: 'Typing PROCESS_TASK' },
+    { id: 'sending', label: 'Sending message' },
+    { id: 'allowing', label: 'Allowing Actions' },
+    { id: 'finished', label: 'Task finished' },
+  ];
+
+  const GPT_PHASE_STEP_INDEX = {
+    loading: 0,
+    loaded: 0,
+    scraping: 1,
+    typing: 2,
+    sending: 3,
+    allowing: 4,
+    thinking: 4,
+    running: 4,
+    finished: 5,
+    error: -1,
+  };
+
+  const GPT_STATUS_PHASES = {
+    loading: { message: 'Loading Custom GPT…', type: 'info', label: 'Loading' },
+    loaded: { message: 'Page loaded successfully', type: 'info', label: 'Ready' },
+    scraping: { message: 'Scanning page…', type: 'info', label: 'Scanning' },
+    typing: { message: 'Typing PROCESS_TASK…', type: 'info', label: 'Typing' },
+    sending: { message: 'Sending message…', type: 'info', label: 'Sending' },
+    allowing: { message: 'Waiting for Action approval…', type: 'warn', label: 'Allowing' },
+    thinking: { message: 'Custom GPT is thinking…', type: 'info', label: 'Thinking' },
+    running: { message: 'Running GPT Actions…', type: 'info', label: 'Running' },
+    finished: { message: 'Task finished successfully', type: 'success', label: 'Done' },
+    error: { message: 'Task failed', type: 'error', label: 'Error' },
+  };
+
+  let gptStatusFinishTimer = null;
+  let gptStatusTaskId = null;
+  let gptStatusActiveIndex = 0;
+  const gptCompletedSteps = new Set();
+
+  function escapeHtml(value) {
+    return String(value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function getPhaseStepIndex(phase) {
+    return GPT_PHASE_STEP_INDEX[String(phase || '').toLowerCase()] ?? 0;
+  }
+
+  function syncCompletedSteps(phase, taskId) {
+    if (taskId && taskId !== gptStatusTaskId) {
+      gptStatusTaskId = taskId;
+      gptStatusActiveIndex = 0;
+      gptCompletedSteps.clear();
     }
-    el.style.background = type === 'success' ? '#15803d' : type === 'error' ? '#b91c1c' : '#b45309';
-    el.textContent = message;
+    const idx = getPhaseStepIndex(phase);
+    if (phase === 'finished') {
+      gptStatusActiveIndex = GPT_PIPELINE_STEPS.length - 1;
+      GPT_PIPELINE_STEPS.forEach((step) => gptCompletedSteps.add(step.id));
+      return gptStatusActiveIndex;
+    }
+    if (phase === 'error') {
+      return gptStatusActiveIndex;
+    }
+    gptStatusActiveIndex = Math.max(gptStatusActiveIndex, idx);
+    for (let i = 0; i < idx; i += 1) {
+      gptCompletedSteps.add(GPT_PIPELINE_STEPS[i].id);
+    }
+    return idx;
+  }
+
+  function renderStepIcon(state) {
+    if (state === 'done') {
+      return `<span class="qts-gpt-step-icon qts-gpt-step-icon--done" aria-hidden="true">
+        <svg viewBox="0 0 16 16" width="16" height="16" focusable="false">
+          <circle cx="8" cy="8" r="8" fill="#22c55e"></circle>
+          <path d="M4.5 8.2 L7 10.7 L11.5 5.8" stroke="#fff" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"></path>
+        </svg>
+      </span>`;
+    }
+    if (state === 'active') {
+      return '<span class="qts-gpt-step-icon qts-gpt-step-icon--active" aria-hidden="true"></span>';
+    }
+    if (state === 'error') {
+      return `<span class="qts-gpt-step-icon qts-gpt-step-icon--error" aria-hidden="true">
+        <svg viewBox="0 0 16 16" width="16" height="16" focusable="false">
+          <circle cx="8" cy="8" r="8" fill="#ef4444"></circle>
+          <path d="M5.2 5.2 L10.8 10.8 M10.8 5.2 L5.2 10.8" stroke="#fff" stroke-width="1.8" stroke-linecap="round"></path>
+        </svg>
+      </span>`;
+    }
+    return '<span class="qts-gpt-step-icon qts-gpt-step-icon--pending" aria-hidden="true"></span>';
+  }
+
+  function renderStepList(phase, message) {
+    const idx = phase === 'error' ? gptStatusActiveIndex : getPhaseStepIndex(phase);
+    const isFinished = phase === 'finished';
+    const isError = phase === 'error';
+
+    const items = GPT_PIPELINE_STEPS.map((step, stepIdx) => {
+      let state = 'pending';
+      if (isFinished || gptCompletedSteps.has(step.id)) {
+        state = 'done';
+      } else if (isError && stepIdx === idx) {
+        state = 'error';
+      } else if (stepIdx === idx) {
+        state = 'active';
+      } else if (stepIdx < idx) {
+        state = 'done';
+      }
+
+      const label = state === 'active' && message ? message : step.label;
+      return `<li class="qts-gpt-step qts-gpt-step--${state}">
+        ${renderStepIcon(state)}
+        <span class="qts-gpt-step-text">${escapeHtml(label)}</span>
+      </li>`;
+    }).join('');
+
+    return `<ol class="qts-gpt-status-steps">${items}</ol>`;
+  }
+
+  function ensureGptStatusStyles() {
+    if (document.getElementById(GPT_STATUS_STYLE_ID)) return;
+    const style = document.createElement('style');
+    style.id = GPT_STATUS_STYLE_ID;
+    style.textContent = `
+      #${GPT_STATUS_HOST_ID} {
+        position: fixed;
+        top: 16px;
+        right: 16px;
+        z-index: 2147483647;
+        max-width: min(400px, calc(100vw - 32px));
+        padding: 14px 16px;
+        border-radius: 12px;
+        font: 600 13px/1.4 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+        color: #fff;
+        box-shadow: 0 12px 32px rgba(15, 23, 42, 0.28);
+        pointer-events: none;
+        opacity: 0;
+        transform: translateY(-8px);
+        transition: opacity 0.2s ease, transform 0.2s ease, background 0.2s ease;
+      }
+      #${GPT_STATUS_HOST_ID}.is-visible {
+        opacity: 1;
+        transform: translateY(0);
+      }
+      #${GPT_STATUS_HOST_ID} .qts-gpt-status-body { min-width: 0; }
+      #${GPT_STATUS_HOST_ID} .qts-gpt-status-label {
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        opacity: 0.88;
+        margin-bottom: 10px;
+      }
+      #${GPT_STATUS_HOST_ID} .qts-gpt-status-steps {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      #${GPT_STATUS_HOST_ID} .qts-gpt-step {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        line-height: 1.35;
+      }
+      #${GPT_STATUS_HOST_ID} .qts-gpt-step-text {
+        font-size: 13px;
+        font-weight: 600;
+        word-break: break-word;
+        padding-top: 1px;
+      }
+      #${GPT_STATUS_HOST_ID} .qts-gpt-step--done .qts-gpt-step-text {
+        opacity: 0.92;
+      }
+      #${GPT_STATUS_HOST_ID} .qts-gpt-step--pending .qts-gpt-step-text {
+        opacity: 0.45;
+        font-weight: 500;
+      }
+      #${GPT_STATUS_HOST_ID} .qts-gpt-step--active .qts-gpt-step-text {
+        opacity: 1;
+      }
+      #${GPT_STATUS_HOST_ID} .qts-gpt-step--error .qts-gpt-step-text {
+        opacity: 1;
+      }
+      #${GPT_STATUS_HOST_ID} .qts-gpt-step-icon {
+        width: 16px;
+        height: 16px;
+        flex: 0 0 16px;
+        margin-top: 1px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      }
+      #${GPT_STATUS_HOST_ID} .qts-gpt-step-icon--pending {
+        border: 2px solid rgba(255,255,255,0.28);
+        border-radius: 50%;
+        box-sizing: border-box;
+      }
+      #${GPT_STATUS_HOST_ID} .qts-gpt-step-icon--active {
+        border: 2px solid rgba(255,255,255,0.35);
+        border-top-color: #fff;
+        border-radius: 50%;
+        box-sizing: border-box;
+        animation: qts-gpt-spin 0.8s linear infinite;
+      }
+      #${GPT_STATUS_HOST_ID} .qts-gpt-step-icon--done svg,
+      #${GPT_STATUS_HOST_ID} .qts-gpt-step-icon--error svg {
+        display: block;
+      }
+      #${GPT_STATUS_HOST_ID}.qts-gpt-status--success { background: #15803d; border: 1px solid #166534; }
+      #${GPT_STATUS_HOST_ID}.qts-gpt-status--error { background: #b91c1c; border: 1px solid #991b1b; }
+      #${GPT_STATUS_HOST_ID}.qts-gpt-status--warn { background: #b45309; border: 1px solid #92400e; }
+      #${GPT_STATUS_HOST_ID}.qts-gpt-status--info { background: #1d4ed8; border: 1px solid #1e40af; }
+      @keyframes qts-gpt-spin { to { transform: rotate(360deg); } }
+    `;
+    (document.head || document.documentElement).appendChild(style);
+  }
+
+  function dismissGptLiveStatus() {
+    clearTimeout(gptStatusFinishTimer);
+    gptStatusFinishTimer = null;
+    gptStatusTaskId = null;
+    gptStatusActiveIndex = 0;
+    gptCompletedSteps.clear();
+    const host = document.getElementById(GPT_STATUS_HOST_ID);
+    if (!host) return;
+    host.classList.remove('is-visible');
+    window.setTimeout(() => host.remove(), 220);
+  }
+
+  function showGptLiveStatus(options = {}) {
+    const phase = String(options.phase || 'info').toLowerCase();
+    const defaults = GPT_STATUS_PHASES[phase] || GPT_STATUS_PHASES.running;
+    const message = cleanText(options.message || defaults.message || 'Working…');
+    const type = options.type || defaults.type || 'info';
+    const label = cleanText(options.label || defaults.label || 'QTS');
+    const taskId = cleanText(options.taskId || '');
+    const persistent = options.persistent !== false
+      && phase !== 'finished'
+      && phase !== 'error';
+
+    syncCompletedSteps(phase, taskId || gptStatusTaskId);
+
+    ensureGptStatusStyles();
+    clearTimeout(gptStatusFinishTimer);
+    gptStatusFinishTimer = null;
+
+    let host = document.getElementById(GPT_STATUS_HOST_ID);
+    if (!host) {
+      host = document.createElement('div');
+      host.id = GPT_STATUS_HOST_ID;
+      host.setAttribute('role', 'status');
+      host.setAttribute('aria-live', 'polite');
+      (document.body || document.documentElement).appendChild(host);
+    }
+
+    host.className = `qts-gpt-status--${type}`;
+    host.innerHTML = `
+      <div class="qts-gpt-status-body">
+        <div class="qts-gpt-status-label">QTS Job Tracking${taskId ? ` · ${escapeHtml(taskId)}` : ''}</div>
+        ${renderStepList(phase, message)}
+      </div>
+    `;
+
+    requestAnimationFrame(() => {
+      host.classList.add('is-visible');
+    });
+
+    if (!persistent) {
+      gptStatusFinishTimer = window.setTimeout(dismissGptLiveStatus, GPT_STATUS_FINISH_MS);
+    }
+
+    return { ok: true, phase, persistent };
+  }
+
+  function showHandoffToast(message, type) {
+    const toastType = type === 'success' ? 'success' : type === 'error' ? 'error' : 'warn';
+    showGptLiveStatus({
+      phase: toastType === 'success' ? 'finished' : toastType === 'error' ? 'error' : 'running',
+      message,
+      type: toastType,
+      persistent: false,
+    });
   }
 
   async function waitForComposer(maxMs = 45000) {
@@ -473,24 +852,38 @@
     return { sent: false, method: 'composer_paste' };
   }
 
-  async function trySendFromComposer(message, { maxWaitMs = 45000 } = {}) {
+  async function trySendFromComposer(message, { maxWaitMs = 45000, taskId = null } = {}) {
     const text = cleanText(message);
     if (!text) return { ok: false, sent: false, error: 'Empty PROCESS_TASK message.' };
+    const tid = taskId || parseTaskId(text);
+
+    showGptLiveStatus({ phase: 'scraping', taskId: tid, message: 'Scanning page for composer…' });
 
     const editor = await waitForComposer(maxWaitMs);
     if (!editor) {
+      showGptLiveStatus({ phase: 'error', taskId: tid, message: 'ChatGPT composer not ready yet.' });
       return { ok: false, sent: false, error: 'ChatGPT composer not ready yet.' };
     }
 
+    showGptLiveStatus({ phase: 'typing', taskId: tid, message: 'Typing PROCESS_TASK…' });
+
     if (!insertTextIntoEditor(editor, text)) {
+      showGptLiveStatus({ phase: 'error', taskId: tid, message: 'Could not type into ChatGPT composer.' });
       return { ok: false, sent: false, error: 'Could not insert text into ChatGPT composer.' };
     }
 
     await sleep(500);
+    showGptLiveStatus({ phase: 'sending', taskId: tid, message: 'Sending message…' });
 
     for (let attempt = 0; attempt < 8; attempt += 1) {
       const submit = await performSubmitWithFallback(editor);
       if (submit.sent) {
+        showGptLiveStatus({
+          phase: 'allowing',
+          taskId: tid,
+          message: 'PROCESS_TASK sent — watching for GPT Actions…',
+          type: 'warn',
+        });
         return { ok: true, sent: true, method: submit.method, attempt };
       }
       await sleep(350);
@@ -514,7 +907,10 @@
       if (starterResult.sent) return starterResult;
     }
 
-    const composerResult = await trySendFromComposer(fullMessage, { maxWaitMs: composerWaitMs });
+    const composerResult = await trySendFromComposer(fullMessage, {
+      maxWaitMs: composerWaitMs,
+      taskId: tid,
+    });
     if (composerResult?.sent) {
       return { ...composerResult, taskId: tid };
     }
@@ -553,6 +949,22 @@
         sendResponse({ ok: true });
         return false;
       }
+      if (msg.type === 'QTS_GPT_SET_STATUS') {
+        sendResponse(showGptLiveStatus({
+          phase: msg.phase,
+          message: msg.message,
+          type: msg.statusType,
+          label: msg.label,
+          taskId: msg.taskId,
+          persistent: msg.persistent,
+        }));
+        return false;
+      }
+      if (msg.type === 'QTS_GPT_CLEAR_STATUS') {
+        dismissGptLiveStatus();
+        sendResponse({ ok: true });
+        return false;
+      }
       if (msg.type === 'QTS_GPT_RUN_HANDOFF') {
         runHandoff({
           taskId: msg.taskId,
@@ -562,8 +974,22 @@
         }).then(sendResponse).catch((e) => sendResponse({ ok: false, error: e.message }));
         return true;
       }
+      if (msg.type === 'QTS_GPT_PING') {
+        sendResponse({ ok: true, allowWatch: allowAutoWatchActive });
+        return false;
+      }
+      if (msg.type === 'QTS_GPT_START_ALLOW_WATCH') {
+        sendResponse(startAllowAutoWatch());
+        return false;
+      }
+      if (msg.type === 'QTS_GPT_STOP_ALLOW_WATCH') {
+        stopAllowAutoWatch();
+        sendResponse({ ok: true });
+        return false;
+      }
       if (msg.type === 'QTS_GPT_CLICK_ALLOW') {
-        sendResponse({ clicked: 0, skipped: true, reason: 'manual_approval_required' });
+        const result = clickAllowButtons();
+        sendResponse({ ok: true, ...result });
         return false;
       }
       return false;
@@ -575,8 +1001,13 @@
     runHandoff,
     runHandoffStep,
     showHandoffToast,
+    showGptLiveStatus,
+    dismissGptLiveStatus,
     clickConversationStarter,
     clickAllowButtons,
+    startAllowAutoWatch,
+    stopAllowAutoWatch,
+    scrapePageState,
     findConversationStarter,
     findPromptEditor,
     waitForComposer,
