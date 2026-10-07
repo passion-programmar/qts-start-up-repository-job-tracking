@@ -44,7 +44,7 @@ npm install
 npm start
 ```
 
-This starts both:
+This starts the UI and API. If the API is already healthy on port 1028, `npm start` reuses it and starts only the UI.
 
 - **QTS_Startup UI** on http://localhost:1027/login
 - **API server** on http://localhost:1028/api
