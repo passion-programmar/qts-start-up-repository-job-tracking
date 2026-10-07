@@ -2,13 +2,14 @@ import { Router, Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
-import { queryAll, queryOne } from '../../database/connection';
+import { execute, queryAll, queryOne } from '../../database/connection';
 import { config } from '../../config/env';
 import { getCandidateStacks } from '../../config/candidate-stacks';
 import { requireAuth, AuthRequest } from '../../middleware/auth';
 import { normalizeRole } from '../../lib/roles';
 import { logger } from '../../utilities/logger';
 import { resolveCustomGptConfig } from '../../utilities/custom-gpt-url';
+import { encryptCredential } from '../../utilities/credential-crypto';
 
 const router = Router();
 
@@ -16,6 +17,12 @@ const LoginSchema = z.object({
   username: z.string().min(1),
   password: z.string().min(1),
   extension: z.boolean().optional().default(false),
+});
+
+const UpdateOwnAuthSchema = z.object({
+  currentPassword: z.string().min(1),
+  username: z.string().trim().min(1).max(100),
+  newPassword: z.string().min(8).max(200).optional(),
 });
 
 async function validateAccountLogin(user: {
@@ -180,6 +187,85 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
     accountId: req.accountId ?? null,
     accountName: req.accountName ?? null,
   });
+});
+
+router.put('/me', requireAuth, async (req: AuthRequest, res: Response) => {
+  if (req.role !== 'super' || !req.userId) {
+    res.status(403).json({ success: false, message: 'Only Super can update these authentication settings.' });
+    return;
+  }
+
+  const parsed = UpdateOwnAuthSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({
+      success: false,
+      message: 'Enter your current password, a username, and a new password of at least 8 characters if changing it.',
+    });
+    return;
+  }
+
+  const { currentPassword, username, newPassword } = parsed.data;
+  const user = await queryOne<{
+    id: number;
+    username: string;
+    password_hash: string;
+    role: string;
+    account_id: number | null;
+  }>(
+    'SELECT id, username, password_hash, role, account_id FROM admins WHERE id = $1',
+    [req.userId]
+  );
+  if (!user) {
+    res.status(404).json({ success: false, message: 'Super account not found.' });
+    return;
+  }
+  if (user.role !== 'super') {
+    res.status(403).json({ success: false, message: 'Only Super can update these authentication settings.' });
+    return;
+  }
+
+  if (!(await bcrypt.compare(currentPassword, user.password_hash))) {
+    res.status(401).json({ success: false, message: 'Current password is incorrect.' });
+    return;
+  }
+
+  const existingUsername = await queryOne<{ id: number }>(
+    'SELECT id FROM admins WHERE username = $1 AND id <> $2',
+    [username, user.id]
+  );
+  if (existingUsername) {
+    res.status(409).json({ success: false, message: 'That username is already in use.' });
+    return;
+  }
+
+  const passwordHash = newPassword ? await bcrypt.hash(newPassword, 12) : null;
+  const passwordEncrypted = newPassword ? encryptCredential(newPassword) : null;
+  await execute(
+    `UPDATE admins
+     SET username = $1,
+         password_hash = COALESCE($2, password_hash),
+         password_encrypted = COALESCE($3, password_encrypted),
+         updated_at = NOW()
+     WHERE id = $4`,
+    [username, passwordHash, passwordEncrypted, user.id]
+  );
+
+  const token = jwt.sign(
+    {
+      id: user.id,
+      username,
+      role: user.role,
+      accountId: user.account_id,
+      accountName: req.accountName ?? null,
+    },
+    config.jwtSecret,
+    { expiresIn: config.jwtExpiry } as jwt.SignOptions
+  );
+  const decoded = jwt.decode(token) as { exp?: number } | null;
+  const expiresAt = decoded?.exp ? decoded.exp * 1000 : Date.now() + 24 * 60 * 60 * 1000;
+
+  logger.info('Super authentication updated', { id: user.id, username });
+  res.json({ success: true, token, expiresAt, username, message: 'Authentication settings updated.' });
 });
 
 router.get('/extension-bootstrap', requireAuth, async (req: AuthRequest, res: Response) => {

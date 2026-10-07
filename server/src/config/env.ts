@@ -26,7 +26,7 @@ export const config = {
   jwtSecret: process.env.JWT_SECRET || 'change-this-secret',
   jwtExpiry: process.env.JWT_EXPIRY || '24h',
   adminUsername: process.env.ADMIN_USERNAME || 'super',
-  adminPassword: process.env.ADMIN_PASSWORD || '',
+  adminPassword: process.env.ADMIN_PASSWORD || 'super',
   managerUsername: process.env.MANAGER_USERNAME || 'manager',
   managerPassword: process.env.MANAGER_PASSWORD || 'user',
   accountUsername: process.env.ACCOUNT_USERNAME || 'account',

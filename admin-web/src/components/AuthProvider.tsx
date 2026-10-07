@@ -22,6 +22,7 @@ interface AuthContextValue {
   canAddJobs: boolean;
   canAddCandidates: boolean;
   canAddInterviews: boolean;
+  updateUser: (updates: Partial<Pick<AuthUser, 'username'>>) => void;
   logout: () => Promise<void>;
 }
 
@@ -118,6 +119,10 @@ export function AuthProvider({
     }
   }, [router]);
 
+  const updateUser = useCallback((updates: Partial<Pick<AuthUser, 'username'>>) => {
+    setUser((current) => current ? { ...current, ...updates } : current);
+  }, []);
+
   const canWrite = mode === 'admin' || mode === 'manager';
   const canManageTeam = mode === 'admin' || mode === 'manager';
   const canAddJobs = mode === 'admin' || mode === 'account';
@@ -125,8 +130,8 @@ export function AuthProvider({
   const canAddInterviews = mode === 'admin' || mode === 'manager' || mode === 'caller';
 
   const value = useMemo(
-    () => ({ user, loading, canWrite, canManageTeam, canAddJobs, canAddCandidates, canAddInterviews, logout }),
-    [user, loading, canWrite, canManageTeam, canAddJobs, canAddCandidates, canAddInterviews, logout]
+    () => ({ user, loading, canWrite, canManageTeam, canAddJobs, canAddCandidates, canAddInterviews, updateUser, logout }),
+    [user, loading, canWrite, canManageTeam, canAddJobs, canAddCandidates, canAddInterviews, updateUser, logout]
   );
 
   if (loading) {

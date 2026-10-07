@@ -1,8 +1,10 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useAuth } from '@/components/AuthProvider';
 import { useAdminUiMode } from '@/components/AdminUiModeProvider';
-import { api } from '@/lib/api';
+import { PasswordField } from '@/components/PasswordField';
+import { api, setToken } from '@/lib/api';
 import { APP_NAME } from '@/lib/branding';
 import {
   ADMIN_UI_MODE_OPTIONS,
@@ -17,7 +19,9 @@ import {
 } from '../../shared/candidate-stacks';
 
 export function SettingsView() {
+  const { user, updateUser } = useAuth();
   const { setAdminUiMode, refreshAdminUiMode } = useAdminUiMode();
+  const [activeTab, setActiveTab] = useState<'application' | 'authentication'>('application');
   const [serverName, setServerName] = useState(APP_NAME);
   const [defaultSource, setDefaultSource] = useState('');
   const [tokenExpiry, setTokenExpiry] = useState('24h');
@@ -30,6 +34,12 @@ export function SettingsView() {
   const [newStack, setNewStack] = useState('');
   const [stacksAlert, setStacksAlert] = useState<string | null>(null);
   const [stacksError, setStacksError] = useState(false);
+  const [authUsername, setAuthUsername] = useState(user?.username || '');
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [authAlert, setAuthAlert] = useState<string | null>(null);
+  const [authError, setAuthError] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -81,6 +91,40 @@ export function SettingsView() {
       setBackupAlert(r.message || 'Backup failed.');
       setBackupError(true);
     }
+  }
+
+  async function saveAuthentication() {
+    setAuthAlert(null);
+    if (newPassword && newPassword !== confirmPassword) {
+      setAuthAlert('New password and confirmation do not match.');
+      setAuthError(true);
+      return;
+    }
+
+    const response = await api<{
+      success: boolean;
+      token?: string;
+      username?: string;
+      message?: string;
+    }>('PUT', '/api/auth/me', {
+      currentPassword,
+      username: authUsername.trim(),
+      ...(newPassword ? { newPassword } : {}),
+    });
+    if (!response.success || !response.token || !response.username) {
+      setAuthAlert(response.message || 'Could not update authentication settings.');
+      setAuthError(true);
+      return;
+    }
+
+    setToken(response.token);
+    updateUser({ username: response.username });
+    setAuthUsername(response.username);
+    setCurrentPassword('');
+    setNewPassword('');
+    setConfirmPassword('');
+    setAuthAlert(response.message || 'Authentication settings updated.');
+    setAuthError(false);
   }
 
   function updateStackAt(index: number, value: string) {
@@ -135,104 +179,183 @@ export function SettingsView() {
 
   return (
     <div className="settings-page">
-      <div className="card settings-card">
-        <div className="card-title">Application Settings</div>
-        {settingsAlert && (
-          <div className={`alert ${settingsError ? 'alert-error' : 'alert-success'}`}>{settingsAlert}</div>
-        )}
-        <div className="form-group">
-          <label>Server Name</label>
-          <input value={serverName} onChange={(e) => setServerName(e.target.value)} />
-        </div>
-        <div className="form-group">
-          <label>Default Source Label</label>
-          <input value={defaultSource} onChange={(e) => setDefaultSource(e.target.value)} />
-        </div>
-        <div className="form-group">
-          <label>Token Expiration</label>
-          <input value={tokenExpiry} onChange={(e) => setTokenExpiry(e.target.value)} />
-        </div>
-        <div className="form-group">
-          <label>Admin Dashboard Mode</label>
-          <select
-            value={adminUiMode}
-            onChange={(e) => setAdminUiModeLocal(e.target.value as AdminUiMode)}
-          >
-            {ADMIN_UI_MODE_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </select>
-          <p className="form-hint">
-            {ADMIN_UI_MODE_OPTIONS.find((option) => option.value === adminUiMode)?.description}
-          </p>
-        </div>
-        <button className="btn btn-primary" type="button" onClick={() => { void saveSettings(); }}>
-          Save Settings
+      <div className="search-row" role="tablist" aria-label="Settings sections">
+        <button
+          className={`btn ${activeTab === 'application' ? 'btn-primary' : 'btn-ghost'}`}
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'application'}
+          onClick={() => setActiveTab('application')}
+        >
+          Application
         </button>
-      </div>
-
-      <div className="card settings-card" style={{ marginTop: 16 }}>
-        <div className="card-title">Candidate Stacks</div>
-        <p className="text-muted" style={{ marginBottom: 12 }}>
-          Manage stack options shown when adding or editing candidates.
-        </p>
-        {stacksAlert && (
-          <div className={`alert ${stacksError ? 'alert-error' : 'alert-success'}`}>{stacksAlert}</div>
+        {user?.role === 'super' && (
+          <button
+            className={`btn ${activeTab === 'authentication' ? 'btn-primary' : 'btn-ghost'}`}
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'authentication'}
+            onClick={() => setActiveTab('authentication')}
+          >
+            Authentication
+          </button>
         )}
-        <div className="stack-editor">
-          {candidateStacks.map((stack, index) => (
-            <div key={`stack-${index}`} className="stack-editor-row">
-              <input
-                value={stack}
-                onChange={(e) => updateStackAt(index, e.target.value)}
-                placeholder="Stack name"
+      </div>
+      {activeTab === 'authentication' && user?.role === 'super' ? (
+        <section className="card settings-card" role="tabpanel">
+          <div className="card-title">Super Authentication</div>
+          <p className="text-muted" style={{ marginBottom: 12 }}>
+            Change the Super username or password. Confirm your current password to save.
+          </p>
+          {authAlert && (
+            <div className={`alert ${authError ? 'alert-error' : 'alert-success'}`}>{authAlert}</div>
+          )}
+          <div className="form-group">
+            <label htmlFor="super-auth-username">Username</label>
+            <input
+              id="super-auth-username"
+              value={authUsername}
+              maxLength={100}
+              onChange={(event) => setAuthUsername(event.target.value)}
+            />
+          </div>
+          <div className="form-group">
+            <label htmlFor="super-auth-current-password">Current password *</label>
+            <PasswordField
+              id="super-auth-current-password"
+              value={currentPassword}
+              onChange={setCurrentPassword}
+            />
+          </div>
+          <div className="form-group">
+            <label htmlFor="super-auth-new-password">New password (optional, minimum 8 characters)</label>
+            <PasswordField
+              id="super-auth-new-password"
+              value={newPassword}
+              onChange={setNewPassword}
+            />
+          </div>
+          {newPassword && (
+            <div className="form-group">
+              <label htmlFor="super-auth-confirm-password">Confirm new password</label>
+              <PasswordField
+                id="super-auth-confirm-password"
+                value={confirmPassword}
+                onChange={setConfirmPassword}
               />
-              <button
-                className="btn btn-ghost btn-sm"
-                type="button"
-                onClick={() => removeStackAt(index)}
-                disabled={candidateStacks.length <= 1}
+            </div>
+          )}
+          <button
+            className="btn btn-primary"
+            type="button"
+            disabled={!currentPassword || !authUsername.trim()}
+            onClick={() => { void saveAuthentication(); }}
+          >
+            Save Authentication
+          </button>
+        </section>
+      ) : activeTab === 'application' ? (
+        <>
+          <div className="card settings-card" role="tabpanel">
+            <div className="card-title">Application Settings</div>
+            {settingsAlert && (
+              <div className={`alert ${settingsError ? 'alert-error' : 'alert-success'}`}>{settingsAlert}</div>
+            )}
+            <div className="form-group">
+              <label>Server Name</label>
+              <input value={serverName} onChange={(e) => setServerName(e.target.value)} />
+            </div>
+            <div className="form-group">
+              <label>Default Source Label</label>
+              <input value={defaultSource} onChange={(e) => setDefaultSource(e.target.value)} />
+            </div>
+            <div className="form-group">
+              <label>Token Expiration</label>
+              <input value={tokenExpiry} onChange={(e) => setTokenExpiry(e.target.value)} />
+            </div>
+            <div className="form-group">
+              <label>Admin Dashboard Mode</label>
+              <select
+                value={adminUiMode}
+                onChange={(e) => setAdminUiModeLocal(e.target.value as AdminUiMode)}
               >
-                Remove
+                {ADMIN_UI_MODE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+              <p className="form-hint">
+                {ADMIN_UI_MODE_OPTIONS.find((option) => option.value === adminUiMode)?.description}
+              </p>
+            </div>
+            <button className="btn btn-primary" type="button" onClick={() => { void saveSettings(); }}>
+              Save Settings
+            </button>
+          </div>
+
+          <div className="card settings-card" style={{ marginTop: 16 }}>
+            <div className="card-title">Candidate Stacks</div>
+            <p className="text-muted" style={{ marginBottom: 12 }}>
+              Manage stack options shown when adding or editing candidates.
+            </p>
+            {stacksAlert && (
+              <div className={`alert ${stacksError ? 'alert-error' : 'alert-success'}`}>{stacksAlert}</div>
+            )}
+            <div className="stack-editor">
+              {candidateStacks.map((stack, index) => (
+                <div key={`stack-${index}`} className="stack-editor-row">
+                  <input
+                    value={stack}
+                    onChange={(e) => updateStackAt(index, e.target.value)}
+                    placeholder="Stack name"
+                  />
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    type="button"
+                    onClick={() => removeStackAt(index)}
+                    disabled={candidateStacks.length <= 1}
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div className="stack-editor-add">
+              <input
+                value={newStack}
+                onChange={(e) => setNewStack(e.target.value)}
+                placeholder="New stack option"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    addStackOption();
+                  }
+                }}
+              />
+              <button className="btn btn-ghost" type="button" onClick={addStackOption}>
+                + Add
               </button>
             </div>
-          ))}
-        </div>
-        <div className="stack-editor-add">
-          <input
-            value={newStack}
-            onChange={(e) => setNewStack(e.target.value)}
-            placeholder="New stack option"
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                addStackOption();
-              }
-            }}
-          />
-          <button className="btn btn-ghost" type="button" onClick={addStackOption}>
-            + Add
-          </button>
-        </div>
-        <button className="btn btn-primary mt-stack" type="button" onClick={() => { void saveCandidateStacks(); }}>
-          Save Stacks
-        </button>
-      </div>
-
-      <div className="card settings-card" style={{ marginTop: 16 }}>
-        <div className="card-title">Database Backup</div>
-        <p className="text-muted" style={{ marginBottom: 12 }}>
-          Create a timestamped backup of the PostgreSQL database.
-        </p>
-        <button className="btn btn-ghost" type="button" onClick={() => { void createBackup(); }}>
-          📦 Create Backup
-        </button>
-        {backupAlert && (
-          <div className={`alert ${backupError ? 'alert-error' : 'alert-success'} mt-stack`}>
-            {backupAlert}
+            <button className="btn btn-primary mt-stack" type="button" onClick={() => { void saveCandidateStacks(); }}>
+              Save Stacks
+            </button>
           </div>
-        )}
-      </div>
+
+          <div className="card settings-card" style={{ marginTop: 16 }}>
+            <div className="card-title">Database Backup</div>
+            <p className="text-muted" style={{ marginBottom: 12 }}>
+              Create a timestamped backup of the PostgreSQL database.
+            </p>
+            <button className="btn btn-ghost" type="button" onClick={() => { void createBackup(); }}>
+              📦 Create Backup
+            </button>
+            {backupAlert && (
+              <div className={`alert ${backupError ? 'alert-error' : 'alert-success'} mt-stack`}>
+                {backupAlert}
+              </div>
+            )}
+          </div>
+        </>
+      ) : null}
     </div>
   );
 }

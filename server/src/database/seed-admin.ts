@@ -42,8 +42,8 @@ async function ensureUser(
     const needsRoleUpdate = existing.role !== role;
     const needsAccountUpdate = existing.account_id !== accountId;
     const passwordMatches = await bcrypt.compare(password, existing.password_hash);
-    const needsPasswordUpdate = !passwordMatches;
-    const needsEncryptedBackfill = !existing.password_encrypted;
+    const needsPasswordUpdate = needsHashMigration && !passwordMatches;
+    const needsEncryptedBackfill = !existing.password_encrypted && passwordMatches;
 
     if (needsHashMigration || needsRoleUpdate || needsAccountUpdate || needsPasswordUpdate || needsEncryptedBackfill) {
       const nextHash = needsHashMigration || needsPasswordUpdate
@@ -97,20 +97,22 @@ async function ensureDefaultSettings(): Promise<void> {
 }
 
 export async function seedAdminOnly(): Promise<void> {
-  if (config.adminUsername === 'super') {
-    const configuredSuper = await queryOne<{ id: number }>(
-      'SELECT id FROM admins WHERE username = $1',
-      [config.adminUsername]
-    );
-    if (!configuredSuper) {
+  const existingSuper = await queryOne<{ id: number; username: string }>(
+    `SELECT id, username FROM admins WHERE role = 'super' ORDER BY id ASC LIMIT 1`
+  );
+  if (existingSuper) {
+    if (config.adminUsername === 'super' && existingSuper.username === 'admin') {
       await execute(
         `UPDATE admins SET username = $1, updated_at = NOW()
          WHERE username = $2 AND role = 'super'`,
-        [config.adminUsername, 'admin']
+        ['super', 'admin']
       );
+      existingSuper.username = 'super';
     }
+    await ensureUser(existingSuper.username, config.adminPassword, 'super', null);
+  } else {
+    await ensureUser(config.adminUsername, config.adminPassword, 'super', null);
   }
-  await ensureUser(config.adminUsername, config.adminPassword, 'super', null);
   await ensureDefaultSettings();
 }
 

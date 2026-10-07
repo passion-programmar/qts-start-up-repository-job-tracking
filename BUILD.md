@@ -184,7 +184,7 @@ copy server\.env.example server\.env
 | `JWT_SECRET` | **Yes (prod)** | — | Long random secret for auth tokens |
 | `JWT_EXPIRY` | No | `24h` | Token lifetime |
 | `ADMIN_USERNAME` | No | `super` | Seeded Super account |
-| `ADMIN_PASSWORD` | **Yes** | — | Admin password (seeded on first start) |
+| `ADMIN_PASSWORD` | No | `super` | Initial Super password (used only when creating the account) |
 | `CALLER_USERNAME` | No | `caller` | Seeded caller account |
 | `CALLER_PASSWORD` | No | `caller` | Caller password |
 
@@ -416,7 +416,7 @@ LinkedIn, Indeed, Glassdoor, Greenhouse, Lever, Workable, SmartRecruiters, Ashby
 
 | Role | Username | Password source |
 |------|----------|-----------------|
-| Super | `admin` | `ADMIN_PASSWORD` in `.env` |
+| Super | `super` | `ADMIN_PASSWORD` in `.env` (defaults to `super`) |
 | Admin | created by Super | set by Super |
 | Manager | created by Admin | set by Admin |
 
@@ -504,7 +504,7 @@ See `UPGRADE.md` for migrating `server/data/jobs.db` to PostgreSQL.
 ### Security
 
 1. **Change `JWT_SECRET`** before any network exposure — use 32+ random characters.
-2. **Change default passwords** (`ADMIN_PASSWORD`, `CALLER_PASSWORD`) immediately.
+2. **Change default passwords** immediately. Super can update the username and password in **Settings → Authentication**; subsequent starts preserve those changes.
 3. **Do not expose** the API directly to the public internet without HTTPS and a reverse proxy.
 4. **Use `HOST=127.0.0.1`** for local-only development.
 5. **Set `DATABASE_SSL=true`** for cloud-managed PostgreSQL.

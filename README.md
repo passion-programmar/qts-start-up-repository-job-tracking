@@ -55,13 +55,13 @@ Default accounts (configured in `server/.env`):
 
 | Role    | Username | Default password |
 |---------|----------|------------------|
-| Super   | super    | see `server/.env` |
+| Super   | super    | super (change it in Settings → Authentication) |
 | Admin   | created by Super | set by Super |
 | Manager | created by Admin | set by Admin |
 | Account | created by Manager | set by Manager |
 | Caller  | created by Admin/Super | set by creator |
 
-The configured `ADMIN_USERNAME` / `ADMIN_PASSWORD` account is seeded as **Super**. Super creates Admin accounts; Admin creates Managers; Managers create Account teams. Only Managers can sign into the browser extension, where they choose an assigned Account team after signing in.
+The configured `ADMIN_USERNAME` / `ADMIN_PASSWORD` account is seeded as **Super** (`super` / `super` by default on a fresh database). Change the default password in **Settings → Authentication** after the first login. Seed credentials initialize the account only; later changes made in the app are preserved across restarts. Super creates Admin accounts; Admin creates Managers; Managers create Account teams. Only Managers can sign into the browser extension, where they choose an assigned Account team after signing in.
 
 ## Manual start (separate terminals)
 
