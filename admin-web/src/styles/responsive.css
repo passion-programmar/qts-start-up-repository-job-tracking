@@ -1,0 +1,405 @@
+/* Mobile-first responsive layout */
+
+/* ── Modals ───────────────────────────────────────────── */
+.modal-overlay {
+  padding: 12px;
+  align-items: flex-start;
+  overflow-y: auto;
+  z-index: 400;
+}
+
+.modal {
+  padding: 20px 16px;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+@media (min-width: 640px) {
+  .modal-overlay {
+    padding: 24px;
+    align-items: center;
+  }
+
+  .modal {
+    width: 520px;
+    max-width: 95vw;
+    padding: 28px;
+  }
+}
+
+/* ── Tables ───────────────────────────────────────────── */
+.table-scroll {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.table-scroll > table {
+  min-width: 36rem;
+}
+
+.table-scroll--wide > table {
+  min-width: 52rem;
+}
+
+/* ── Cards & content ──────────────────────────────────── */
+.card {
+  padding: 16px;
+}
+
+.content {
+  padding: 16px;
+}
+
+.topbar {
+  padding: 12px 16px;
+  gap: 10px;
+}
+
+.topbar h1 {
+  font-size: 18px;
+  min-width: 0;
+}
+
+.topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  flex: 1;
+}
+
+.topbar-status {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.read-only-banner,
+.mode-banner {
+  padding: 10px 16px;
+  font-size: 12px;
+}
+
+.stat-value {
+  font-size: 26px;
+}
+
+.stat-card {
+  padding: 16px;
+}
+
+/* ── Forms & search ───────────────────────────────────── */
+.search-row {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.search-row input,
+.search-row select {
+  max-width: none;
+  width: 100%;
+}
+
+.search-row .btn {
+  width: 100%;
+}
+
+.modal-footer {
+  flex-direction: column-reverse;
+}
+
+.modal-footer .btn {
+  width: 100%;
+}
+
+/* ── Grids (mobile defaults in theme.css) ─────────────── */
+.bar-label {
+  width: 88px;
+  font-size: 12px;
+}
+
+.bar-count {
+  width: 28px;
+  font-size: 12px;
+}
+
+/* ── Auth ─────────────────────────────────────────────── */
+.auth-screen {
+  padding: 16px;
+  min-height: 100vh;
+  min-height: 100dvh;
+  align-items: center;
+  justify-content: center;
+  padding-top: max(16px, env(safe-area-inset-top));
+  padding-bottom: max(16px, env(safe-area-inset-bottom));
+}
+
+.auth-card {
+  padding: 24px 20px;
+  margin: 0;
+}
+
+.app-logo-md {
+  max-width: 220px;
+  margin-bottom: 20px;
+}
+
+/* ── Calendar ─────────────────────────────────────────── */
+.calendar-panel-header {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.calendar-cell {
+  min-height: 52px;
+  padding: 4px;
+}
+
+.calendar-day {
+  font-size: 11px;
+}
+
+.calendar-event {
+  font-size: 9px;
+}
+
+.calendar-weekday {
+  font-size: 10px;
+}
+
+/* ── Table actions ────────────────────────────────────── */
+td.text-right {
+  white-space: nowrap;
+}
+
+/* ── Sidebar drawer (mobile default) ──────────────────── */
+.menu-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: #fff;
+  color: var(--text);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.menu-btn:hover {
+  background: var(--surface-muted);
+}
+
+.sidebar-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 299;
+  border: none;
+  padding: 0;
+  margin: 0;
+  background: rgba(15, 23, 42, 0.45);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+
+.sidebar-backdrop.is-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.sidebar {
+  position: fixed;
+  inset: 0 auto 0 0;
+  z-index: 300;
+  width: min(280px, 88vw);
+  transform: translateX(-100%);
+  transition: transform 0.22s ease;
+  box-shadow: none;
+}
+
+.sidebar.is-open {
+  transform: translateX(0);
+  box-shadow: 8px 0 32px rgba(15, 23, 42, 0.2);
+}
+
+.sidebar-brand {
+  padding-top: 44px;
+}
+
+.sidebar-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.1);
+  color: #e2e8f0;
+  font-size: 20px;
+  cursor: pointer;
+}
+
+.sidebar-close:hover {
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+}
+
+/* ── Tablet and up ────────────────────────────────────── */
+@media (min-width: 480px) {
+  .modal-footer {
+    flex-direction: row;
+    justify-content: flex-end;
+  }
+
+  .modal-footer .btn {
+    width: auto;
+  }
+
+  .search-row {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .search-row input,
+  .search-row select {
+    width: auto;
+    flex: 1 1 200px;
+    max-width: 320px;
+  }
+
+  .search-row .btn {
+    width: auto;
+    flex-shrink: 0;
+  }
+}
+
+@media (min-width: 640px) {
+  .card {
+    padding: 20px;
+  }
+
+  .content {
+    padding: 20px;
+  }
+
+  .topbar {
+    padding: 14px 20px;
+  }
+
+  .topbar h1 {
+    font-size: 20px;
+  }
+
+  .read-only-banner,
+  .mode-banner {
+    padding: 10px 24px;
+    font-size: 13px;
+  }
+
+  .stat-value {
+    font-size: 30px;
+  }
+
+  .stat-card {
+    padding: 20px;
+  }
+
+  .auth-screen {
+    padding: 24px;
+    align-items: center;
+  }
+
+  .auth-card {
+    padding: 32px 28px;
+  }
+
+  .app-logo-md {
+    max-width: 280px;
+    margin-bottom: 24px;
+  }
+
+  .bar-label {
+    width: 110px;
+    font-size: 13px;
+  }
+
+  .bar-count {
+    width: 36px;
+    font-size: inherit;
+  }
+
+  .calendar-cell {
+    min-height: 64px;
+    padding: 5px;
+  }
+
+  .calendar-day {
+    font-size: 12px;
+  }
+
+  .calendar-event {
+    font-size: 10px;
+  }
+
+  .calendar-weekday {
+    font-size: 11px;
+  }
+}
+
+@media (min-width: 768px) {
+  .content {
+    padding: 24px;
+  }
+
+  .topbar {
+    padding: 16px 24px;
+  }
+
+  .menu-btn,
+  .sidebar-close,
+  .sidebar-backdrop {
+    display: none;
+  }
+
+  .sidebar {
+    position: static;
+    inset: auto;
+    z-index: auto;
+    width: 220px;
+    transform: none;
+    transition: none;
+    box-shadow: none;
+  }
+
+  .sidebar-brand {
+    padding-top: 20px;
+  }
+
+  .sidebar.is-open {
+    transform: none;
+    box-shadow: none;
+  }
+}
+
+@media (min-width: 1024px) {
+  .calendar-cell {
+    min-height: 72px;
+    padding: 6px;
+  }
+}

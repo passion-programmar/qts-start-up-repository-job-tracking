@@ -1,0 +1,53 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: qts-startup-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: qts_startup
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d qts_startup"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: qts-startup-app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/qts_startup
+      EMBEDDED_PG: "false"
+      PORT: 1028
+      HOST: 0.0.0.0
+      JWT_SECRET: change-this-secret-in-production
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: dhaksajgkfwjfdlrwkedlrj
+      MANAGER_USERNAME: manager
+      MANAGER_PASSWORD: user
+      BIDDER_USERNAME: bidder
+      BIDDER_PASSWORD: user
+      CALLER_USERNAME: caller
+      CALLER_PASSWORD: user
+      ADMIN_WEB_URL: http://localhost:1027/login
+      AUTO_OPEN_BROWSER: "false"
+      NODE_ENV: production
+    ports:
+      - "1028:1028"
+    volumes:
+      - app_backups:/app/backups
+
+volumes:
+  pgdata:
+  app_backups:

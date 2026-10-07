@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qts-job-tracking.local/schemas/gpt-task-context.json",
+  "title": "QTS GPT Task Context",
+  "description": "Response shape from GET /api/application-tasks/{taskId}/context (getTaskContext Action).",
+  "type": "object",
+  "required": ["success", "taskId", "applicationId", "jobContext", "candidate", "fileFields"],
+  "properties": {
+    "success": { "type": "boolean" },
+    "taskId": { "type": "string", "pattern": "^task_\\d+$" },
+    "applicationId": { "type": "integer" },
+    "gptTaskStatus": { "type": "string" },
+    "jobContext": {
+      "type": "object",
+      "required": ["jobDescription"],
+      "properties": {
+        "jobTitle": { "type": "string" },
+        "company": { "type": "string" },
+        "jobDescription": {
+          "type": "string",
+          "description": "Full job description text — primary input for tailoring resume PDF JSON"
+        },
+        "jobUrl": { "type": "string", "format": "uri" },
+        "platform": { "type": "string" }
+      }
+    },
+    "candidate": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "linkedinUrl": { "type": "string" },
+        "stack": { "type": "string" }
+      }
+    },
+    "pendingAiFields": {
+      "type": "array",
+      "items": { "$ref": "file-upload-field.schema.json" }
+    },
+    "fileFields": {
+      "type": "array",
+      "description": "File upload inputs on the form — GPT must generate matching document JSON",
+      "items": { "$ref": "file-upload-field.schema.json" }
+    },
+    "documentGeneration": {
+      "type": "object",
+      "properties": {
+        "resume": { "$ref": "#/$defs/documentGenerationSpec" },
+        "coverLetter": { "$ref": "#/$defs/documentGenerationSpec" }
+      }
+    },
+    "documentRequirements": {
+      "type": "object",
+      "properties": {
+        "resumeRequired": { "type": "boolean" },
+        "coverLetterRecommended": { "type": "boolean" }
+      }
+    },
+    "packageSchema": {
+      "type": "object",
+      "properties": {
+        "schemaId": { "type": "string", "const": "gpt-application-package.schema.json" },
+        "$id": { "type": "string" }
+      }
+    }
+  },
+  "$defs": {
+    "documentGenerationSpec": {
+      "type": "object",
+      "required": ["required", "schemaId", "packageKey", "instructions"],
+      "properties": {
+        "required": { "type": "boolean" },
+        "schemaId": { "type": "string" },
+        "packageKey": { "type": "string", "enum": ["resume", "coverLetter"] },
+        "instructions": { "type": "string" }
+      }
+    }
+  }
+}

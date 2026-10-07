@@ -1,0 +1,17 @@
+node_modules/
+server/node_modules/
+admin-web/node_modules/
+server/.env
+server/data/
+server/backups/
+admin-web/.next/
+admin-web/.env.production.local
+admin-web/.env.local
+release/
+logs/*
+!logs/.gitkeep
+.DS_Store
+server/.env.cloud
+scripts/bin/
+tunnel-url.txt
+.cloud-tunnel.lock
