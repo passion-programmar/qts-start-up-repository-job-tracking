@@ -41,12 +41,12 @@ if not exist release\.env.example (
   (
     echo EMBEDDED_PG=false
     echo DATABASE_URL=postgresql://postgres:postgres@localhost:5432/qts_startup
-    echo ADMIN_USERNAME=admin
+    echo ADMIN_USERNAME=super
     echo ADMIN_PASSWORD=change-me
     echo MANAGER_USERNAME=manager
     echo MANAGER_PASSWORD=user
-    echo BIDDER_USERNAME=bidder
-    echo BIDDER_PASSWORD=user
+    echo ACCOUNT_USERNAME=account
+    echo ACCOUNT_PASSWORD=user
     echo CALLER_USERNAME=caller
     echo CALLER_PASSWORD=user
     echo JWT_SECRET=replace-with-a-long-random-secret

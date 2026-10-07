@@ -2,10 +2,10 @@ import { Router, Response } from 'express';
 import fs from 'node:fs';
 import {
   requireAuth,
-  requireAdminOrBidder,
+  requireAdminOrAccount,
   AuthRequest,
 } from '../../middleware/auth';
-import { candidateBidderFilter } from '../../middleware/scope';
+import { candidateAccountFilter } from '../../middleware/scope';
 import { resolveDocumentFile } from '../../services/application-documents';
 import { execute, queryOne } from '../../database/connection';
 import { config } from '../../config/env';
@@ -19,19 +19,19 @@ import { logger } from '../../utilities/logger';
 
 const router = Router({ mergeParams: true });
 router.use(requireAuth);
-router.use(requireAdminOrBidder);
+router.use(requireAdminOrAccount);
 
 async function getSessionForRequest(req: AuthRequest, sessionId: number) {
   if (!config.applicationSessionPersistDb) {
     const session = getMemoryApplicationSession(sessionId);
     if (!session) return null;
-    if (req.role !== 'admin' && req.bidderId != null && req.bidderId !== session.bidder_id) {
+    if (req.role !== 'admin' && req.accountId != null && req.accountId !== session.account_id) {
       return null;
     }
     return session as unknown as Record<string, unknown>;
   }
 
-  const scope = candidateBidderFilter(req, 'c', 2);
+  const scope = candidateAccountFilter(req, 'c', 2);
   let query = `
     SELECT s.*
     FROM application_sessions s

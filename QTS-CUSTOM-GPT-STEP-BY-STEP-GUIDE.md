@@ -1,10 +1,10 @@
 # QTS Custom GPT — Step-by-Step Guide
 
-> **Current system (June 2026):** See [docs/CURRENT-SYSTEM.md](docs/CURRENT-SYSTEM.md) � extension v1.13.25+, job sites, one-step auto-apply.
+> **Current system (June 2026):** See [docs/CURRENT-SYSTEM.md](docs/CURRENT-SYSTEM.md) � extension v1.13.25+, job sites, one-step auto-apply.
 
 **Based on:** HTML comparison analysis, `QTS-CUSTOM-GPT-ERROR-REPORT.md`, extension v1.8.5  
 **Custom GPT URL:** https://chatgpt.com/g/g-6a3dc5525fac819198dccf1c216e3fc0-qts-job-tracking  
-**Audience:** Bidders and operators running one full application end-to-end
+**Audience:** Accounts and operators running one full application end-to-end
 
 ---
 
@@ -149,7 +149,7 @@ https://chatgpt.com/g/g-6a3dc5525fac819198dccf1c216e3fc0-qts-job-tracking
 
 1. Open the job listing / application page (e.g. justjoin.it).
 2. Open **QTS Capture** (extension popup or capture window).
-3. Log in as bidder if needed.
+3. Log in as account if needed.
 4. Select the **candidate** (expand card → verify email, phone, LinkedIn).
 
 ---

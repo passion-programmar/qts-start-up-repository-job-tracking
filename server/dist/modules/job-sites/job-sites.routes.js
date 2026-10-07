@@ -16,7 +16,7 @@ const JobSiteSchema = zod_1.z.object({
     isActive: zod_1.z.boolean().optional().default(true),
 });
 const AdmitSchema = zod_1.z.object({
-    bidderId: zod_1.z.number().int().positive(),
+    accountId: zod_1.z.number().int().positive(),
     defaultCandidateId: zod_1.z.number().int().positive(),
 });
 function mapJobSite(row) {
@@ -33,34 +33,34 @@ function mapJobSite(row) {
         job_count: row.job_count != null ? Number(row.job_count) : undefined,
     };
 }
-async function validateBidderCandidate(bidderId, candidateId) {
+async function validateAccountCandidate(accountId, candidateId) {
     const row = await (0, connection_1.queryOne)(`SELECT id FROM candidates
-     WHERE id = $1 AND bidder_id = $2 AND is_active = TRUE`, [candidateId, bidderId]);
+     WHERE id = $1 AND account_id = $2 AND is_active = TRUE`, [candidateId, accountId]);
     return Boolean(row);
 }
 router.get('/my-admissions', async (req, res) => {
-    if (!(0, scope_1.isBidder)(req) || !req.bidderId) {
-        res.status(403).json({ success: false, message: 'Bidder access required.' });
+    if (!(0, scope_1.isAccount)(req) || !req.accountId) {
+        res.status(403).json({ success: false, message: 'Account access required.' });
         return;
     }
     const rows = await (0, connection_1.queryAll)(`SELECT js.id, js.name, js.platform_key, js.url_host, js.notes, js.is_active,
             bjs.default_candidate_id, c.name AS default_candidate_name,
             bjs.admitted_at, bjs.is_active AS admission_active
-     FROM bidder_job_sites bjs
+     FROM account_job_sites bjs
      JOIN job_sites js ON js.id = bjs.job_site_id
      LEFT JOIN candidates c ON c.id = bjs.default_candidate_id
-     WHERE bjs.bidder_id = $1 AND bjs.is_active = TRUE AND js.is_active = TRUE
-     ORDER BY js.name ASC`, [req.bidderId]);
+     WHERE bjs.account_id = $1 AND bjs.is_active = TRUE AND js.is_active = TRUE
+     ORDER BY js.name ASC`, [req.accountId]);
     res.json({ success: true, admissions: rows });
 });
 router.get('/', async (req, res) => {
-    if ((0, scope_1.isBidder)(req) && req.bidderId) {
+    if ((0, scope_1.isAccount)(req) && req.accountId) {
         const rows = await (0, connection_1.queryAll)(`SELECT js.*, bjs.default_candidate_id, c.name AS default_candidate_name
-       FROM bidder_job_sites bjs
+       FROM account_job_sites bjs
        JOIN job_sites js ON js.id = bjs.job_site_id
        LEFT JOIN candidates c ON c.id = bjs.default_candidate_id
-       WHERE bjs.bidder_id = $1 AND bjs.is_active = TRUE
-       ORDER BY js.name ASC`, [req.bidderId]);
+       WHERE bjs.account_id = $1 AND bjs.is_active = TRUE
+       ORDER BY js.name ASC`, [req.accountId]);
         res.json({ success: true, jobSites: rows.map(mapJobSite) });
         return;
     }
@@ -69,7 +69,7 @@ router.get('/', async (req, res) => {
         return;
     }
     const rows = await (0, connection_1.queryAll)(`SELECT js.*,
-            (SELECT COUNT(*)::int FROM bidder_job_sites bjs WHERE bjs.job_site_id = js.id AND bjs.is_active) AS admission_count,
+            (SELECT COUNT(*)::int FROM account_job_sites bjs WHERE bjs.job_site_id = js.id AND bjs.is_active) AS admission_count,
             (SELECT COUNT(*)::int FROM jobs j
              WHERE LOWER(COALESCE(j.source, '')) = LOWER(js.platform_key)
                 OR (js.url_host IS NOT NULL AND js.url_host <> '' AND j.url ILIKE '%' || js.url_host || '%')
@@ -153,12 +153,12 @@ router.delete('/:id', auth_1.requireAdminWrite, async (req, res) => {
 });
 router.get('/:id/admissions', auth_1.requireAdmin, async (req, res) => {
     const id = Number(req.params.id);
-    const rows = await (0, connection_1.queryAll)(`SELECT bjs.id, bjs.bidder_id, b.name AS bidder_name,
+    const rows = await (0, connection_1.queryAll)(`SELECT bjs.id, bjs.account_id, b.name AS account_name,
             bjs.default_candidate_id, c.name AS default_candidate_name,
             bjs.admitted_at, bjs.is_active,
             a.username AS admitted_by_username
-     FROM bidder_job_sites bjs
-     JOIN bidders b ON b.id = bjs.bidder_id
+     FROM account_job_sites bjs
+     JOIN accounts b ON b.id = bjs.account_id
      LEFT JOIN candidates c ON c.id = bjs.default_candidate_id
      LEFT JOIN admins a ON a.id = bjs.admitted_by
      WHERE bjs.job_site_id = $1
@@ -177,34 +177,34 @@ router.post('/:id/admit', auth_1.requireAdminWrite, async (req, res) => {
         res.status(404).json({ success: false, message: 'Job site not found.' });
         return;
     }
-    const { bidderId, defaultCandidateId } = parsed.data;
-    const bidder = await (0, connection_1.queryOne)('SELECT id FROM bidders WHERE id = $1 AND is_active = TRUE', [bidderId]);
-    if (!bidder) {
-        res.status(404).json({ success: false, message: 'Bidder not found.' });
+    const { accountId, defaultCandidateId } = parsed.data;
+    const account = await (0, connection_1.queryOne)('SELECT id FROM accounts WHERE id = $1 AND is_active = TRUE', [accountId]);
+    if (!account) {
+        res.status(404).json({ success: false, message: 'Account not found.' });
         return;
     }
-    if (!(await validateBidderCandidate(bidderId, defaultCandidateId))) {
+    if (!(await validateAccountCandidate(accountId, defaultCandidateId))) {
         res.status(400).json({
             success: false,
-            message: 'Default candidate must belong to the bidder and be active.',
+            message: 'Default candidate must belong to the account and be active.',
         });
         return;
     }
-    const row = await (0, connection_1.queryOne)(`INSERT INTO bidder_job_sites (bidder_id, job_site_id, default_candidate_id, admitted_by)
+    const row = await (0, connection_1.queryOne)(`INSERT INTO account_job_sites (account_id, job_site_id, default_candidate_id, admitted_by)
      VALUES ($1, $2, $3, $4)
-     ON CONFLICT (bidder_id, job_site_id) DO UPDATE SET
+     ON CONFLICT (account_id, job_site_id) DO UPDATE SET
        default_candidate_id = EXCLUDED.default_candidate_id,
        admitted_by = EXCLUDED.admitted_by,
        is_active = TRUE,
        updated_at = NOW()
-     RETURNING *`, [bidderId, jobSiteId, defaultCandidateId, req.userId || null]);
+     RETURNING *`, [accountId, jobSiteId, defaultCandidateId, req.userId || null]);
     res.json({ success: true, admission: row });
 });
-router.delete('/:id/admit/:bidderId', auth_1.requireAdminWrite, async (req, res) => {
+router.delete('/:id/admit/:accountId', auth_1.requireAdminWrite, async (req, res) => {
     const jobSiteId = Number(req.params.id);
-    const bidderId = Number(req.params.bidderId);
-    const { rowCount } = await (0, connection_1.execute)(`UPDATE bidder_job_sites SET is_active = FALSE, updated_at = NOW()
-     WHERE job_site_id = $1 AND bidder_id = $2`, [jobSiteId, bidderId]);
+    const accountId = Number(req.params.accountId);
+    const { rowCount } = await (0, connection_1.execute)(`UPDATE account_job_sites SET is_active = FALSE, updated_at = NOW()
+     WHERE job_site_id = $1 AND account_id = $2`, [jobSiteId, accountId]);
     if (!rowCount) {
         res.status(404).json({ success: false, message: 'Admission not found.' });
         return;

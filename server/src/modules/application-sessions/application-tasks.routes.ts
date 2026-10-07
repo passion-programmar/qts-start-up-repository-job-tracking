@@ -3,10 +3,10 @@ import { z } from 'zod';
 import { queryAll, queryOne, execute, withTransaction } from '../../database/connection';
 import {
   requireAuthOrGptActionKey,
-  requireAdminOrBidder,
+  requireAdminOrAccount,
   AuthRequest,
 } from '../../middleware/auth';
-import { candidateBidderFilter } from '../../middleware/scope';
+import { candidateAccountFilter } from '../../middleware/scope';
 import { logger } from '../../utilities/logger';
 import { config } from '../../config/env';
 import {
@@ -41,7 +41,7 @@ router.use((req: AuthRequest, res: Response, next) => {
     next();
     return;
   }
-  requireAdminOrBidder(req, res, next);
+  requireAdminOrAccount(req, res, next);
 });
 
 const AnswerItemSchema = z.object({
@@ -53,7 +53,7 @@ async function getSessionForRequest(req: AuthRequest, sessionId: number) {
   if (!config.applicationSessionPersistDb) {
     const session = getMemoryApplicationSession(sessionId);
     if (!session) return null;
-    if (!req.gptServiceAuth && req.role !== 'admin' && req.bidderId != null && req.bidderId !== session.bidder_id) {
+    if (!req.gptServiceAuth && req.role !== 'admin' && req.accountId != null && req.accountId !== session.account_id) {
       return null;
     }
     return session as unknown as Record<string, unknown>;
@@ -74,7 +74,7 @@ async function getSessionForRequest(req: AuthRequest, sessionId: number) {
     );
   }
 
-  const scope = candidateBidderFilter(req, 'c', 2);
+  const scope = candidateAccountFilter(req, 'c', 2);
   let query = `
     SELECT s.*,
       c.name AS candidate_name,

@@ -15,7 +15,9 @@ import {
   RoleGroupCard,
 } from '@/components/org-tree';
 import { api } from '@/lib/api';
-import type { Bidder, Candidate, UserAccount } from '@/lib/types';
+import { useAuth } from '@/components/AuthProvider';
+import { SuperAdminAccountsView } from '@/components/SuperAdminAccountsView';
+import type { Account, Candidate, UserAccount } from '@/lib/types';
 
 type PeopleModal = 'managerForm' | 'callerForm' | 'deleteManager' | 'deleteCaller' | null;
 
@@ -23,20 +25,21 @@ type AccountForm = {
   username: string;
   password: string;
   isActive: boolean;
-  bidderId: string;
+  accountId: string;
 };
 
 const emptyForm = (): AccountForm => ({
   username: '',
   password: '',
   isActive: true,
-  bidderId: '',
+  accountId: '',
 });
 
 export function ManagersView() {
+  const { user } = useAuth();
   const [managers, setManagers] = useState<UserAccount[]>([]);
   const [callers, setCallers] = useState<UserAccount[]>([]);
-  const [bidders, setBidders] = useState<Bidder[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -48,8 +51,8 @@ export function ManagersView() {
   const [error, setError] = useState<string | null>(null);
 
   const managerTree = useMemo(
-    () => buildManagerTree(managers, bidders, candidates),
-    [managers, bidders, candidates]
+    () => buildManagerTree(managers, accounts, candidates),
+    [managers, accounts, candidates]
   );
 
   const callerList = useMemo(
@@ -57,23 +60,23 @@ export function ManagersView() {
     [callers]
   );
 
-  const activeBidders = useMemo(
-    () => [...bidders].filter((b) => isTreeEntityActive(b.is_active)).sort((a, b) => a.name.localeCompare(b.name)),
-    [bidders]
+  const activeAccounts = useMemo(
+    () => [...accounts].filter((b) => isTreeEntityActive(b.is_active)).sort((a, b) => a.name.localeCompare(b.name)),
+    [accounts]
   );
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [usersRes, biddersRes, candidatesRes] = await Promise.all([
+    const [usersRes, accountsRes, candidatesRes] = await Promise.all([
       api<{ success: boolean; users?: UserAccount[] }>('GET', '/api/users'),
-      api<{ success: boolean; bidders?: Bidder[] }>('GET', '/api/bidders'),
+      api<{ success: boolean; accounts?: Account[] }>('GET', '/api/accounts'),
       api<{ success: boolean; candidates?: Candidate[] }>('GET', '/api/candidates?minimal=true'),
     ]);
 
     const allUsers = usersRes.users || [];
     setManagers(allUsers.filter(isManagerAccount));
     setCallers(allUsers.filter(isCallerAccount));
-    setBidders(biddersRes.bidders || []);
+    setAccounts(accountsRes.accounts || []);
     setCandidates(candidatesRes.candidates || []);
     setExpanded((prev) => {
       if (Object.keys(prev).length > 0) return prev;
@@ -98,9 +101,9 @@ export function ManagersView() {
     for (const node of managerTree) {
       if (!isTreeEntityActive(node.manager.is_active)) continue;
       next[`m-${node.manager.id}`] = true;
-      for (const bidderNode of node.bidders) {
-        if (isTreeEntityActive(bidderNode.bidder.is_active)) {
-          next[`b-${bidderNode.bidder.id}`] = true;
+      for (const accountNode of node.accounts) {
+        if (isTreeEntityActive(accountNode.account.is_active)) {
+          next[`b-${accountNode.account.id}`] = true;
         }
       }
     }
@@ -120,7 +123,7 @@ export function ManagersView() {
       username: manager.username,
       password: '',
       isActive: isTreeEntityActive(manager.is_active),
-      bidderId: '',
+      accountId: '',
     });
     setSavedPassword('');
     setError(null);
@@ -144,7 +147,7 @@ export function ManagersView() {
       username: r.user?.username || manager.username,
       password,
       isActive: isTreeEntityActive(r.user?.is_active ?? manager.is_active),
-      bidderId: '',
+      accountId: '',
     });
     setSavedPassword(password);
   }
@@ -155,7 +158,7 @@ export function ManagersView() {
       username: caller.username,
       password: '',
       isActive: isTreeEntityActive(caller.is_active),
-      bidderId: caller.bidder_id ? String(caller.bidder_id) : '',
+      accountId: caller.account_id ? String(caller.account_id) : '',
     });
     setSavedPassword('');
     setError(null);
@@ -169,7 +172,7 @@ export function ManagersView() {
         username: string;
         password?: string | null;
         is_active?: boolean;
-        bidder_id?: number | null;
+        account_id?: number | null;
       };
     }>('GET', `/api/users/${caller.id}`);
 
@@ -184,7 +187,7 @@ export function ManagersView() {
       username: r.user?.username || caller.username,
       password,
       isActive: isTreeEntityActive(r.user?.is_active ?? caller.is_active),
-      bidderId: r.user?.bidder_id ? String(r.user.bidder_id) : '',
+      accountId: r.user?.account_id ? String(r.user.account_id) : '',
     });
     setSavedPassword(password);
   }
@@ -202,7 +205,7 @@ export function ManagersView() {
     setSelected(null);
     setForm({
       ...emptyForm(),
-      bidderId: activeBidders[0] ? String(activeBidders[0].id) : '',
+      accountId: activeAccounts[0] ? String(activeAccounts[0].id) : '',
     });
     setSavedPassword('');
     setError(null);
@@ -223,7 +226,7 @@ export function ManagersView() {
     const body = {
       username: form.username.trim(),
       role: 'manager' as const,
-      bidderId: null,
+      accountId: null,
       isActive: form.isActive,
       ...(!selected
         ? { password: form.password }
@@ -255,7 +258,7 @@ export function ManagersView() {
     const body = {
       username: form.username.trim(),
       role: 'caller' as const,
-      bidderId: form.bidderId ? parseInt(form.bidderId, 10) : null,
+      accountId: form.accountId ? parseInt(form.accountId, 10) : null,
       isActive: form.isActive,
       ...(!selected
         ? { password: form.password }
@@ -290,18 +293,19 @@ export function ManagersView() {
 
   return (
     <>
+      <SuperAdminAccountsView />
       <p className="text-muted" style={{ marginBottom: 12 }}>
-        Two groups: <strong>Manager</strong> → Bidder → Candidate, and <strong>Caller</strong> accounts. Add people one by one as your team grows.
+        Account hierarchy: <strong>Manager</strong> → <strong>Account</strong> → Candidate, plus <strong>Caller</strong> accounts.
       </p>
 
       <div className="search-row">
-        <button
+        {user?.role === 'super' || user?.role === 'admin' ? <button
           className="btn btn-primary"
           type="button"
           onClick={openAddManager}
         >
           + Add Manager
-        </button>
+        </button> : null}
         <button
           className="btn btn-primary"
           type="button"
@@ -469,21 +473,21 @@ export function ManagersView() {
               )}
             </div>
             <div className="form-group">
-              <label>Linked bidder</label>
+              <label>Linked account</label>
               <select
-                value={form.bidderId}
-                onChange={(e) => setForm({ ...form, bidderId: e.target.value })}
+                value={form.accountId}
+                onChange={(e) => setForm({ ...form, accountId: e.target.value })}
               >
-                <option value="">No bidder (global caller)</option>
-                {activeBidders.map((bidder) => (
-                  <option key={bidder.id} value={bidder.id}>
-                    {bidder.name}
-                    {bidder.manager_name ? ` (${bidder.manager_name})` : ''}
+                <option value="">No account (global caller)</option>
+                {activeAccounts.map((account) => (
+                  <option key={account.id} value={account.id}>
+                    {account.name}
+                    {account.manager_name ? ` (${account.manager_name})` : ''}
                   </option>
                 ))}
               </select>
               <p className="text-muted" style={{ marginTop: 6, fontSize: 12 }}>
-                Optional. Link a caller to a bidder team for interview assignment context.
+                Optional. Link a caller to an Account team for interview assignment context.
               </p>
             </div>
             <label className="checkbox-row">
@@ -512,7 +516,7 @@ export function ManagersView() {
       >
         <p className="confirm-text">Delete manager <strong>{selected?.username}</strong>?</p>
         <p className="confirm-text" style={{ marginTop: 8 }}>
-          Bidders under this manager will no longer be linked to them.
+          Accounts under this manager will no longer be linked to them.
         </p>
       </Modal>
 

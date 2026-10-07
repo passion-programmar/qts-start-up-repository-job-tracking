@@ -54,7 +54,7 @@ export default function LoginPage() {
 
     setToken(r.token);
     sessionStorage.removeItem(REDIRECT_GUARD_KEY);
-    router.replace(roleHome(r.role || 'bidder'));
+    router.replace(roleHome(r.role || 'account'));
   }
 
   if (checking) {

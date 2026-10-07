@@ -1,6 +1,6 @@
 # QTS_Startup — Requirements Document
 
-> **Current system (June 2026):** See [docs/CURRENT-SYSTEM.md](docs/CURRENT-SYSTEM.md) � extension v1.13.25+, job sites, one-step auto-apply.
+> **Current system (June 2026):** See [docs/CURRENT-SYSTEM.md](docs/CURRENT-SYSTEM.md) � extension v1.13.25+, job sites, one-step auto-apply.
 
 **Version:** 1.2.0  
 **Last updated:** 2026-06-24  
@@ -35,7 +35,7 @@
 
 **QTS_Startup** is a local-first job capture and tracking system for teams that bid on jobs for multiple candidates. It connects:
 
-- **Bidders** — capture jobs from the web and mark which candidates applied
+- **Accounts** — capture jobs from the web and mark which candidates applied
 - **Admins** — manage organizations, users, data, and settings
 - **Callers** — record and track interview processes
 
@@ -45,7 +45,7 @@ Teams need to:
 
 1. Save job postings from many ATS/career sites quickly
 2. Track which candidate applied to which job
-3. Scope data per bidder organization
+3. Scope data per account organization
 4. Coordinate interview scheduling across callers
 5. Run locally without cloud dependency (optional PostgreSQL for production)
 
@@ -74,8 +74,8 @@ Teams need to:
 
 | Role | Primary users | Access |
 |------|---------------|--------|
-| **Admin** | Team lead, operations | Full CRUD, bidders, users, settings, all data |
-| **Bidder** | Job researchers / applicants | Add candidates & jobs (extension), view own scoped data |
+| **Admin** | Team lead, operations | Full CRUD, accounts, users, settings, all data |
+| **Account** | Job researchers / applicants | Add candidates & jobs (extension), view own scoped data |
 | **Caller** | Interview coordinators | Add/view own interview records |
 
 ### 2.2 Account provisioning rules
@@ -84,17 +84,17 @@ Teams need to:
 |---------|-------------|--------|
 | ACC-01 | Admin account seeded from `ADMIN_USERNAME` / `ADMIN_PASSWORD` in `.env` | Implemented |
 | ACC-02 | Caller account seeded from `CALLER_USERNAME` / `CALLER_PASSWORD` in `.env` | Implemented |
-| ACC-03 | Bidder accounts **not** auto-seeded; admin must create under **Bidders** | Implemented |
-| ACC-04 | Bidder account must link to an active bidder organization to log in | Implemented |
-| ACC-05 | Extension login accepts **bidder role only** (`extension: true` on login API) | Implemented |
+| ACC-03 | Account logins **not** auto-seeded; admin must create under **Accounts** | Implemented |
+| ACC-04 | Account login must link to an active Account team to log in | Implemented |
+| ACC-05 | Extension login accepts **Manager role only** (`extension: true` on login API) | Implemented |
 | ACC-06 | Default extension username pre-filled as `user` | Implemented |
 
 ### 2.3 Panel routes
 
 | Role | Base URL | Pages |
 |------|----------|-------|
-| Admin | `/admin` | Dashboard, Candidates, Jobs, Bidders, Accounts, Interviews, Settings |
-| Bidder | `/bidder` | Dashboard, Candidates, Jobs |
+| Admin | `/admin` | Dashboard, Candidates, Jobs, Accounts, Accounts, Interviews, Settings |
+| Account | `/account` | Dashboard, Candidates, Jobs |
 | Caller | `/caller` | Interviews |
 | All | `/login` | Unified login → redirect by role |
 
@@ -105,7 +105,7 @@ Teams need to:
 ### 3.1 Component diagram
 
 ```
-Browser Extension (bidder)
+Browser Extension (account)
         │
         ▼
 Express API :1028 ◄──── Next.js UI :1027 (proxy /api/*)
@@ -122,7 +122,7 @@ PostgreSQL / PGlite
 | ARCH-02 | Extension calls API directly at `http://localhost:1028` | Implemented |
 | ARCH-03 | API and UI ports must align (`1028` / `1027`) | Implemented |
 | ARCH-04 | JWT bearer auth on protected routes | Implemented |
-| ARCH-05 | Bidder data scoped by `bidder_id` on candidates, jobs, interviews | Implemented |
+| ARCH-05 | Account data scoped by `account_id` on candidates, jobs, interviews | Implemented |
 | ARCH-06 | Caller interview data scoped by `caller_user_id` | Implemented |
 
 ### 3.3 Project structure
@@ -186,7 +186,7 @@ QTS_Startup/
 | `ADMIN_WEB_URL` | No | `http://localhost:1027/login` | Browser open URL |
 | `JWT_SECRET` | **Yes** | — | Auth token secret |
 | `JWT_EXPIRY` | No | `24h` | Token lifetime |
-| `ADMIN_USERNAME` | No | `admin` | Seeded admin |
+| `ADMIN_USERNAME` | No | `super` | Seeded Super |
 | `ADMIN_PASSWORD` | **Yes** | — | Admin password |
 | `CALLER_USERNAME` | No | `caller` | Seeded caller |
 | `CALLER_PASSWORD` | No | `caller` | Caller password |
@@ -242,12 +242,12 @@ Status legend: **Done** = shipped in v1.2.0
 | ID | Requirement | Role | Status |
 |----|-------------|------|--------|
 | AUTH-01 | Login with username/password; receive JWT | All | Done |
-| AUTH-02 | `GET /api/auth/me` returns user, role, bidderId | All | Done |
+| AUTH-02 | `GET /api/auth/me` returns user, role, accountId | All | Done |
 | AUTH-03 | Logout endpoint (client clears token) | All | Done |
-| AUTH-04 | Role-based redirect after login (`/admin`, `/bidder`, `/caller`) | All | Done |
-| AUTH-05 | Extension login restricted to bidder + valid org | Bidder | Done |
-| AUTH-06 | `GET /api/auth/extension-status` reports if bidder accounts exist | Extension | Done |
-| AUTH-07 | Admin-only routes for bidders, users management | Admin | Done |
+| AUTH-04 | Role-based redirect after login (`/admin`, `/account`, `/caller`) | All | Done |
+| AUTH-05 | Extension login restricted to Manager accounts | Manager | Done |
+| AUTH-06 | `GET /api/auth/extension-status` reports if Manager accounts exist | Extension | Done |
+| AUTH-07 | Admin-only routes for accounts, users management | Admin | Done |
 | AUTH-08 | Write operations (edit/delete) restricted to admin | Admin | Done |
 
 ### 5.2 Admin — dashboard
@@ -280,14 +280,14 @@ Status legend: **Done** = shipped in v1.2.0
 | ADM-JOB-05 | Delete job | Done |
 | ADM-JOB-06 | Open original job URL | Done |
 
-### 5.5 Admin — bidders & accounts
+### 5.5 Admin — Account teams & logins
 
 | ID | Requirement | Status |
 |----|-------------|--------|
-| ADM-BID-01 | CRUD bidder organizations | Done |
-| ADM-BID-02 | View accounts and candidates per bidder org | Done |
-| ADM-BID-03 | Create bidder/caller account under org | Done |
-| ADM-USR-01 | CRUD all user accounts (admin, bidder, caller) | Done |
+| ADM-ACC-01 | CRUD Account teams | Done |
+| ADM-ACC-02 | View Account logins and candidates per team | Done |
+| ADM-ACC-03 | Create Account/Caller login under a team | Done |
+| ADM-USR-01 | CRUD all user accounts (admin, account, caller) | Done |
 
 ### 5.6 Admin — interviews
 
@@ -306,7 +306,7 @@ Status legend: **Done** = shipped in v1.2.0
 | ADM-SET-01 | Edit server name, default source, token expiry (stored in DB) | Done |
 | ADM-SET-02 | Database backup to `.sql` file | Done |
 
-### 5.8 Bidder — web panel
+### 5.8 Account — web panel
 
 | ID | Requirement | Status |
 |----|-------------|--------|
@@ -329,7 +329,7 @@ Status legend: **Done** = shipped in v1.2.0
 
 | ID | Requirement | Status |
 |----|-------------|--------|
-| EXT-01 | Bidder sign-in (default username `user`) | Done |
+| EXT-01 | Account sign-in (default username `user`) | Done |
 | EXT-02 | Connection status indicator | Done |
 | EXT-03 | Auto-extract job from current tab | Done |
 | EXT-04 | Supported sites: LinkedIn, Indeed, Glassdoor, Greenhouse, Lever, Workable, SmartRecruiters, Ashby, generic | Done |
@@ -347,7 +347,7 @@ Status legend: **Done** = shipped in v1.2.0
 | `/api/auth` | login, logout, me, extension-status, setup-status | Done |
 | `/api/candidates` | CRUD, history, status | Done |
 | `/api/jobs` | CRUD, by-url, stats, upsert, candidate statuses | Done |
-| `/api/bidders` | CRUD, accounts | Done |
+| `/api/accounts` | CRUD, accounts | Done |
 | `/api/users` | CRUD | Done |
 | `/api/interviews` | CRUD, timezones meta | Done |
 | `/api/settings` | get, put, backup | Done |
@@ -362,11 +362,11 @@ Status legend: **Done** = shipped in v1.2.0
 | ID | Requirement | Severity | Current behavior | Expected behavior |
 |----|-------------|----------|------------------|-------------------|
 | BUG-01 | Extension `storeToken` must persist auth token | **Critical** | `storeToken` function body broken in `popup.js` | Token saved to `chrome.storage.local` after login |
-| BUG-02 | Bidder must update saved jobs via extension | **Critical** | Extension uses `PUT /jobs/:id` (admin-only) | Use `POST /jobs/upsert` for bidder create/update |
-| BUG-03 | Admin assigns bidder when creating candidate | **High** | No bidder dropdown in admin candidate form | Admin selects bidder org; `bidder_id` set on create |
-| BUG-04 | Interview form caller/bidder assignment | **High** | API supports fields; UI has no dropdowns | Admin selects caller and bidder on interview form |
+| BUG-02 | Account must update saved jobs via extension | **Critical** | Extension uses `PUT /jobs/:id` (admin-only) | Use `POST /jobs/upsert` for account create/update |
+| BUG-03 | Admin assigns account when creating candidate | **High** | No account dropdown in admin candidate form | Admin selects account org; `account_id` set on create |
+| BUG-04 | Interview form caller/account assignment | **High** | API supports fields; UI has no dropdowns | Admin selects caller and account on interview form |
 | BUG-05 | Settings values applied at runtime | **Medium** | `server_name`, `token_expiration` saved but ignored | UI branding and JWT expiry read from settings DB |
-| BUG-06 | Bidder candidate edit via web | **Medium** | Bidder PUT may fail silently | Clear UI: add-only for bidder, or allow scoped edit |
+| BUG-06 | Account candidate edit via web | **Medium** | Account PUT may fail silently | Clear UI: add-only for account, or allow scoped edit |
 | BUG-07 | Caller edit own interviews | **Medium** | PUT admin-only | Caller can update own interview records |
 | BUG-08 | Admin job create in web UI | **Low** | Jobs only via extension | Optional manual job entry for admin |
 | BUG-09 | Backup restore | **Low** | Backup only; no restore UI | Import `.sql` or logical restore |
@@ -387,8 +387,8 @@ Use **Priority** and **Effort** to decide. Mark your choices in [Section 14](#14
 | FEAT-01 | Job application pipeline statuses beyond none/applied (e.g. screened, interview, offer, hired, rejected) | P1 | Large | High | BUG-02 |
 | FEAT-02 | Link interviews to candidate record (dropdown) instead of free text only | P1 | Medium | High | — |
 | FEAT-03 | Auto-fill interview job/company from linked job | P1 | Medium | High | FEAT-02 |
-| FEAT-04 | Bidder manual job entry in web UI (`/bidder/jobs`) | P1 | Medium | High | BUG-02 |
-| FEAT-05 | Extension logout + show logged-in bidder name | P1 | Small | Medium | BUG-01 |
+| FEAT-04 | Account manual job entry in web UI (`/account/jobs`) | P1 | Medium | High | BUG-02 |
+| FEAT-05 | Extension logout + show logged-in account name | P1 | Small | Medium | BUG-01 |
 | FEAT-06 | Job notes and status change activity log | P1 | Medium | High | FEAT-01 |
 
 ### 7.2 Priority 2 — Admin & operations
@@ -397,7 +397,7 @@ Use **Priority** and **Effort** to decide. Mark your choices in [Section 14](#14
 |----|-------------|----------|--------|-------|
 | FEAT-07 | Admin create job in web UI | P2 | Medium | Medium |
 | FEAT-08 | Bulk import candidates (CSV) | P2 | Medium | High |
-| FEAT-09 | Bidder performance report (apps/day, conversion) | P2 | Large | High |
+| FEAT-09 | Account performance report (apps/day, conversion) | P2 | Large | High |
 | FEAT-10 | Backup restore UI | P2 | Medium | Medium |
 | FEAT-11 | Audit log (who changed what) | P2 | Large | High |
 | FEAT-12 | Password change / admin reset password | P2 | Medium | Medium |
@@ -451,7 +451,7 @@ Use **Priority** and **Effort** to decide. Mark your choices in [Section 14](#14
 |----|----------|-------------|--------|
 | NFR-01 | Performance | API health responds < 500 ms locally | Met |
 | NFR-02 | Performance | UI first load < 10 s on dev (webpack) | Met |
-| NFR-03 | Scalability | Support 10+ bidders, 1000+ jobs (Postgres) | Assumed |
+| NFR-03 | Scalability | Support 10+ accounts, 1000+ jobs (Postgres) | Assumed |
 | NFR-04 | Scalability | Pagination required before 10k+ records | Not met |
 | NFR-05 | Reliability | Embedded PGlite for zero-config local dev | Met |
 | NFR-06 | Reliability | External Postgres for production | Met |
@@ -471,10 +471,10 @@ Use **Priority** and **Effort** to decide. Mark your choices in [Section 14](#14
 
 | Table | Purpose | Key fields |
 |-------|---------|------------|
-| `admins` | All user accounts | username, password_hash, role, bidder_id |
-| `bidders` | Bidder organizations | name, notes, is_active |
-| `candidates` | People applying | name, email, bidder_id, color, is_active |
-| `jobs` | Job postings | title, company, url, normalized_url, description, bidder_id |
+| `admins` | All user accounts | username, password_hash, role, account_id |
+| `accounts` | Account organizations | name, notes, is_active |
+| `candidates` | People applying | name, email, account_id, color, is_active |
+| `jobs` | Job postings | title, company, url, normalized_url, description, account_id |
 | `candidate_jobs` | Application status | candidate_id, job_id, status, applied_at |
 | `interview_processes` | Interview tracking | candidate_name, caller_user_id, dates, stage, etc. |
 | `settings` | Key-value config | key, value |
@@ -485,9 +485,9 @@ Use **Priority** and **Effort** to decide. Mark your choices in [Section 14](#14
 |---------|-------------|--------|
 | DATA-01 | Job URL unique (normalized) | Implemented |
 | DATA-02 | Candidate-job pair unique | Implemented |
-| DATA-03 | Bidder accounts require `bidder_id` on login | Implemented |
+| DATA-03 | Account logins require `account_id` on login | Implemented |
 | DATA-04 | Candidate job status: `none` \| `applied` only | Implemented (limited) |
-| DATA-05 | Delete bidder nullifies bidder_id on related rows (no cascade delete) | Implemented |
+| DATA-05 | Delete account nullifies account_id on related rows (no cascade delete) | Implemented |
 | DATA-06 | Interview `candidate_id` optional; name required | Implemented |
 
 ### 9.3 Proposed data changes
@@ -508,7 +508,7 @@ Use **Priority** and **Effort** to decide. Mark your choices in [Section 14](#14
 | SEC-01 | Passwords hashed with bcrypt | Implemented |
 | SEC-02 | JWT signed with configurable secret | Implemented |
 | SEC-03 | Role-based API authorization | Implemented |
-| SEC-04 | Bidder/caller data scoping on queries | Implemented |
+| SEC-04 | Account/caller data scoping on queries | Implemented |
 | SEC-05 | CORS restricted to localhost + chrome-extension | Implemented |
 | SEC-06 | Change default JWT_SECRET before production | **Operator responsibility** |
 | SEC-07 | HTTPS via reverse proxy in production | **Operator responsibility** |
@@ -525,10 +525,10 @@ Use **Priority** and **Effort** to decide. Mark your choices in [Section 14](#14
 | ID | Requirement | Status |
 |----|-------------|--------|
 | EXT-R01 | Connect to `http://localhost:1028` by default | Done |
-| EXT-R02 | Bidder-only authentication | Done |
+| EXT-R02 | Account-only authentication | Done |
 | EXT-R03 | Extract and save job from supported sites | Done |
-| EXT-R04 | Show only active candidates for bidder scope | Done |
-| EXT-R05 | Update existing job (bidder-safe path) | **Gap (BUG-02)** |
+| EXT-R04 | Show only active candidates for account scope | Done |
+| EXT-R05 | Update existing job (account-safe path) | **Gap (BUG-02)** |
 | EXT-R06 | Persist login token across sessions | **Gap (BUG-01)** |
 | EXT-R07 | Logout control | Not implemented |
 | EXT-R08 | Configurable server URL in UI | Not implemented (storage key exists) |
@@ -537,7 +537,7 @@ Use **Priority** and **Effort** to decide. Mark your choices in [Section 14](#14
 
 1. Load unpacked from `extension/` folder
 2. API must run on port 1028
-3. Admin creates bidder account before first login
+3. Admin creates an Account login before first sign-in
 4. Reload extension after code updates
 
 ---
@@ -552,10 +552,10 @@ Use **Priority** and **Effort** to decide. Mark your choices in [Section 14](#14
 | 2 | `GET http://localhost:1027/login` | Login page loads |
 | 3 | `GET http://localhost:1027/api/health` | Proxied health OK |
 | 4 | Admin login | Redirect to `/admin` |
-| 5 | Bidder login (web) | Redirect to `/bidder` |
+| 5 | Account login (web) | Redirect to `/account` |
 | 6 | Caller login | Redirect to `/caller` |
-| 7 | Extension bidder login | Job section visible |
-| 8 | Save job via extension | Job appears in bidder/admin jobs |
+| 7 | Extension account login | Job section visible |
+| 8 | Save job via extension | Job appears in account/admin jobs |
 | 9 | `npm run check` (server) | Exit 0 |
 | 10 | `npm run build` (admin-web) | Exit 0 |
 
@@ -563,10 +563,10 @@ Use **Priority** and **Effort** to decide. Mark your choices in [Section 14](#14
 
 | Scenario | Steps | Pass criteria |
 |----------|-------|---------------|
-| Admin onboarding | Create bidder org → add account → add candidate | Bidder can log in to extension |
-| Bidder capture | Extension login → open job page → save | Job saved with candidate statuses |
+| Admin onboarding | Create account org → add account → add candidate | Account can log in to extension |
+| Account capture | Extension login → open job page → save | Job saved with candidate statuses |
 | Caller interview | Caller login → add interview | Record visible in admin and caller list |
-| Scoping | Bidder A cannot see Bidder B candidates | API returns scoped data only |
+| Scoping | Account A cannot see Account B candidates | API returns scoped data only |
 
 ---
 
@@ -620,9 +620,9 @@ Copy this section and fill in your choices.
 | ID | Fix | Include? (Y/N) | Notes |
 |----|-----|----------------|-------|
 | BUG-01 | Extension storeToken | | |
-| BUG-02 | Bidder job upsert | | |
-| BUG-03 | Admin bidder picker on candidates | | |
-| BUG-04 | Interview caller/bidder dropdowns | | |
+| BUG-02 | Account job upsert | | |
+| BUG-03 | Admin account picker on candidates | | |
+| BUG-04 | Interview caller/account dropdowns | | |
 | BUG-05 | Apply settings from DB | | |
 | BUG-07 | Caller edit own interviews | | |
 
@@ -632,7 +632,7 @@ Copy this section and fill in your choices.
 |----|---------|----------|-------|-------|
 | FEAT-01 | Pipeline statuses | | | |
 | FEAT-02 | Interview ↔ candidate link | | | |
-| FEAT-04 | Bidder web job entry | | | |
+| FEAT-04 | Account web job entry | | | |
 | FEAT-08 | CSV import | | | |
 | FEAT-11 | Audit log | | | |
 | FEAT-14 | Caller dashboard | | | |

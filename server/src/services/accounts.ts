@@ -9,7 +9,7 @@ export interface CreateAccountInput {
   username: string;
   password: string;
   role: UserRole;
-  bidderId?: number | null;
+  accountId?: number | null;
   isActive?: boolean;
 }
 
@@ -18,9 +18,9 @@ export async function createAccount(input: CreateAccountInput): Promise<{ id: nu
   const encrypted = encryptCredential(input.password);
   const isActive = input.isActive ?? true;
   return queryOne<{ id: number }>(
-    `INSERT INTO admins (username, password_hash, password_encrypted, role, bidder_id, is_active)
+    `INSERT INTO admins (username, password_hash, password_encrypted, role, account_id, is_active)
      VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
-    [input.username, hash, encrypted, input.role, input.bidderId ?? null, isActive]
+    [input.username, hash, encrypted, input.role, input.accountId ?? null, isActive]
   );
 }
 

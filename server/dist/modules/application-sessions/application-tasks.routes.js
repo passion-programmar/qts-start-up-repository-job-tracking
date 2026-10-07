@@ -18,7 +18,7 @@ router.use((req, res, next) => {
         next();
         return;
     }
-    (0, auth_1.requireAdminOrBidder)(req, res, next);
+    (0, auth_1.requireAdminOrAccount)(req, res, next);
 });
 const AnswerItemSchema = zod_1.z.object({
     stableFieldId: zod_1.z.string().min(1),
@@ -29,7 +29,7 @@ async function getSessionForRequest(req, sessionId) {
         const session = (0, application_session_store_1.getMemoryApplicationSession)(sessionId);
         if (!session)
             return null;
-        if (!req.gptServiceAuth && req.role !== 'admin' && req.bidderId != null && req.bidderId !== session.bidder_id) {
+        if (!req.gptServiceAuth && req.role !== 'admin' && req.accountId != null && req.accountId !== session.account_id) {
             return null;
         }
         return session;
@@ -45,7 +45,7 @@ async function getSessionForRequest(req, sessionId) {
       JOIN candidates c ON c.id = s.candidate_id
       WHERE s.id = $1`, [sessionId]);
     }
-    const scope = (0, scope_1.candidateBidderFilter)(req, 'c', 2);
+    const scope = (0, scope_1.candidateAccountFilter)(req, 'c', 2);
     let query = `
     SELECT s.*,
       c.name AS candidate_name,

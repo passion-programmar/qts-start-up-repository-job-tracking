@@ -14,7 +14,7 @@ let workspaceFetchPromise = null;
 const tabContextPrefetchAt = new Map();
 
 async function prefetchReadAuthToken() {
-  const auth = (typeof self !== 'undefined' ? self : globalThis).__qtsBidderAuth;
+  const auth = (typeof self !== 'undefined' ? self : globalThis).__qtsAccountAuth;
   if (auth?.getWorkerAuthToken) {
     return auth.getWorkerAuthToken();
   }
@@ -88,8 +88,8 @@ async function prefetchWriteSessionUser(user) {
     id: user.id,
     username: user.username,
     role: user.role,
-    bidderId: user.bidderId != null ? Number(user.bidderId) : null,
-    bidderName: user.bidderName ?? null,
+    accountId: user.accountId != null ? Number(user.accountId) : null,
+    accountName: user.accountName ?? null,
   };
   return new Promise((resolve) => {
     chrome.storage.local.set({ [PREFETCH_SESSION_USER_KEY]: snapshot }, resolve);
@@ -101,8 +101,8 @@ async function prefetchWriteCustomGptConfig(customGpt, user) {
   const payload = {
     url: customGpt.url,
     id: customGpt.id || null,
-    source: customGpt.source || 'bidder',
-    bidderId: user?.bidderId ?? null,
+    source: customGpt.source || 'account',
+    accountId: user?.accountId ?? null,
     savedAt: Date.now(),
   };
   const root = typeof globalThis !== 'undefined' ? globalThis : self;

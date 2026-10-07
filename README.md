@@ -2,21 +2,21 @@
 
 > **Current system (June 2026):** [docs/CURRENT-SYSTEM.md](docs/CURRENT-SYSTEM.md) — extension v1.13.25, one-step auto-apply, job sites, Custom GPT handoff.
 
-A Chrome/Edge extension with a local Node.js server for capturing job postings and tracking candidates, bidders, and interviews with **QTS_Startup**.
+A Chrome/Edge extension with a local Node.js server for capturing job postings and tracking Account teams, candidates, and interviews with **QTS_Startup**.
 
 > **Requirements & planning:** see [REQUIREMENTS.md](REQUIREMENTS.md) for full product, technical, and feature requirements.  
 > **Build & deploy:** see [BUILD.md](BUILD.md) for environment setup and operations.  
-> **Extension (bidders):** see [QTS-JOB-TRACKING-EXTENSION-GUIDE.md](QTS-JOB-TRACKING-EXTENSION-GUIDE.md) for install, login, and job capture workflow.  
+> **Extension (Managers):** see [QTS-JOB-TRACKING-EXTENSION-GUIDE.md](QTS-JOB-TRACKING-EXTENSION-GUIDE.md) for install, login, and job capture workflow.
 > **Custom GPT automation:** see [QTS-JOB-TRACKING-CUSTOM-GPT-GUIDE.md](QTS-JOB-TRACKING-CUSTOM-GPT-GUIDE.md) for resume/cover letter JSON, Actions, and PDF pipeline.  
 > **Performance:** see [QTS-JOB-TRACKING-PERFORMANCE-GUIDE.md](QTS-JOB-TRACKING-PERFORMANCE-GUIDE.md) for speed optimization (Vercel, extension, API).
 
 ## Features
 
-- **Role-based web UI** — admin, manager, bidder, and caller panels
-- **Job sites registry** — admin adds job board sources; admits bidders with default candidate
+- **Role-based web UI** — Super, Admin, Manager, Account, and Caller roles
+- **Job sites registry** — admin adds job board sources; admits accounts with default candidate
 - **Chrome extension** — one-step auto-apply, Custom GPT resume/PDF pipeline (v1.13+)
 - **PostgreSQL** — embedded PGlite for local dev, or external PostgreSQL for production
-- **Bidder organizations** — scoped candidates and jobs per bidder account
+- **Account teams** — scoped candidates and jobs managed by their assigned Manager
 - **Interview tracking** — scheduled interviews with caller assignments
 
 ## Requirements
@@ -55,12 +55,13 @@ Default accounts (configured in `server/.env`):
 
 | Role    | Username | Default password |
 |---------|----------|------------------|
-| Admin   | admin    | see `.env`       |
-| Manager | manager  | user             |
-| Bidder  | bidder   | user             |
-| Caller  | caller   | user             |
+| Super   | super    | see `server/.env` |
+| Admin   | created by Super | set by Super |
+| Manager | created by Admin | set by Admin |
+| Account | created by Manager | set by Manager |
+| Caller  | created by Admin/Super | set by creator |
 
-The seeded bidder account is linked to the **Default Bidder** organization. Admins can create additional bidder orgs and accounts under **Admin → Bidders**.
+The configured `ADMIN_USERNAME` / `ADMIN_PASSWORD` account is seeded as **Super**. Super creates Admin accounts; Admin creates Managers; Managers create Account teams. Only Managers can sign into the browser extension, where they choose an assigned Account team after signing in.
 
 ## Manual start (separate terminals)
 
@@ -81,17 +82,18 @@ Full step-by-step guide: **[QTS-JOB-TRACKING-EXTENSION-GUIDE.md](QTS-JOB-TRACKIN
 1. Open `chrome://extensions` or `edge://extensions`.
 2. Enable **Developer mode**.
 3. Click **Load unpacked** and select the `extension` folder.
-4. Log in with the bidder account from your manager (username and password from QTS).
-5. Add candidates in QTS_Startup (admin or bidder panel).
+4. Log in with your Manager username and password, then choose an assigned Account team.
+5. Add candidates under the Account team in QTS_Startup.
 6. Open a job listing in your browser and click the **QTS_Startup** extension icon.
 
 ## Panels
 
 | Role    | URL prefix              | Access |
 |---------|-------------------------|--------|
-| Admin   | `/admin`                | Full CRUD, job sites, bidders, users, settings |
-| Manager | `/manager`              | Team bidders, candidates, jobs, interviews (read-focused) |
-| Bidder  | `/bidder`               | Jobs from admitted sites, candidates (extension for capture/apply) |
+| Super   | `/admin`                | Full system access; manages Admin accounts |
+| Admin   | `/admin`                | Manages Managers and lower-role workflows |
+| Manager | `/manager`              | Assigned Account teams, candidates, jobs, interviews |
+| Account | `/account` (legacy route) | Team jobs and candidates |
 | Caller  | `/caller`               | Add interview records, view own interviews |
 
 ## Database
@@ -126,7 +128,7 @@ PORT=1028
 HOST=127.0.0.1
 ADMIN_WEB_URL=http://localhost:1027/login
 JWT_SECRET=replace-with-a-long-random-secret-change-this-in-production
-ADMIN_USERNAME=admin
+ADMIN_USERNAME=super
 ADMIN_PASSWORD=your-password
 ```
 

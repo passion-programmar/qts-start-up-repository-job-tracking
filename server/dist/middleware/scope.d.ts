@@ -1,14 +1,14 @@
 import { AuthRequest } from './auth';
 export declare function isAdmin(req: AuthRequest): boolean;
-export declare function isBidder(req: AuthRequest): boolean;
+export declare function isAccount(req: AuthRequest): boolean;
 export declare function isCaller(req: AuthRequest): boolean;
 export declare function isManager(req: AuthRequest): boolean;
-export declare function candidateBidderFilter(req: AuthRequest, alias?: string, paramIndex?: number): {
+export declare function candidateAccountFilter(req: AuthRequest, alias?: string, paramIndex?: number): {
     clause: string;
     params: unknown[];
     nextIndex: number;
 };
-export declare function jobBidderFilter(req: AuthRequest, alias?: string, paramIndex?: number): {
+export declare function jobAccountFilter(req: AuthRequest, alias?: string, paramIndex?: number): {
     clause: string;
     params: unknown[];
     nextIndex: number;

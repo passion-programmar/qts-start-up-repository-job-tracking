@@ -7,8 +7,8 @@ export declare const config: {
     adminPassword: string;
     managerUsername: string;
     managerPassword: string;
-    bidderUsername: string;
-    bidderPassword: string;
+    accountUsername: string;
+    accountPassword: string;
     callerUsername: string;
     callerPassword: string;
     useEmbeddedPg: boolean;

@@ -16,7 +16,7 @@ async function ensureUser(
   username: string,
   password: string,
   role: UserRole,
-  bidderId: number | null = null
+  accountId: number | null = null
 ): Promise<number> {
   if (!password) {
     logger.warn(`No password configured for ${username}, skipping account seed`);
@@ -27,10 +27,10 @@ async function ensureUser(
     id: number;
     password_hash: string;
     role: string;
-    bidder_id: number | null;
+    account_id: number | null;
     password_encrypted: string | null;
   }>(
-    'SELECT id, password_hash, role, bidder_id, password_encrypted FROM admins WHERE username = $1',
+    'SELECT id, password_hash, role, account_id, password_encrypted FROM admins WHERE username = $1',
     [username]
   );
 
@@ -40,12 +40,12 @@ async function ensureUser(
   if (existing) {
     const needsHashMigration = !existing.password_hash.startsWith('$2');
     const needsRoleUpdate = existing.role !== role;
-    const needsBidderUpdate = existing.bidder_id !== bidderId;
+    const needsAccountUpdate = existing.account_id !== accountId;
     const passwordMatches = await bcrypt.compare(password, existing.password_hash);
     const needsPasswordUpdate = !passwordMatches;
     const needsEncryptedBackfill = !existing.password_encrypted;
 
-    if (needsHashMigration || needsRoleUpdate || needsBidderUpdate || needsPasswordUpdate || needsEncryptedBackfill) {
+    if (needsHashMigration || needsRoleUpdate || needsAccountUpdate || needsPasswordUpdate || needsEncryptedBackfill) {
       const nextHash = needsHashMigration || needsPasswordUpdate
         ? passwordHash
         : existing.password_hash;
@@ -54,8 +54,8 @@ async function ensureUser(
         : existing.password_encrypted;
 
       await execute(
-        `UPDATE admins SET password_hash = $1, password_encrypted = $2, role = $3, bidder_id = $4, updated_at = NOW() WHERE id = $5`,
-        [nextHash, nextEncrypted, role, bidderId, existing.id]
+        `UPDATE admins SET password_hash = $1, password_encrypted = $2, role = $3, account_id = $4, updated_at = NOW() WHERE id = $5`,
+        [nextHash, nextEncrypted, role, accountId, existing.id]
       );
       logger.info('User account updated', { username, role });
     }
@@ -63,8 +63,8 @@ async function ensureUser(
   }
 
   const row = await queryOne<{ id: number }>(
-    'INSERT INTO admins (username, password_hash, password_encrypted, role, bidder_id) VALUES ($1, $2, $3, $4, $5) RETURNING id',
-    [username, passwordHash, passwordEncrypted, role, bidderId]
+    'INSERT INTO admins (username, password_hash, password_encrypted, role, account_id) VALUES ($1, $2, $3, $4, $5) RETURNING id',
+    [username, passwordHash, passwordEncrypted, role, accountId]
   );
   logger.info('User account created', { username, role });
   return row!.id;
@@ -97,7 +97,20 @@ async function ensureDefaultSettings(): Promise<void> {
 }
 
 export async function seedAdminOnly(): Promise<void> {
-  await ensureUser(config.adminUsername, config.adminPassword, 'admin', null);
+  if (config.adminUsername === 'super') {
+    const configuredSuper = await queryOne<{ id: number }>(
+      'SELECT id FROM admins WHERE username = $1',
+      [config.adminUsername]
+    );
+    if (!configuredSuper) {
+      await execute(
+        `UPDATE admins SET username = $1, updated_at = NOW()
+         WHERE username = $2 AND role = 'super'`,
+        [config.adminUsername, 'admin']
+      );
+    }
+  }
+  await ensureUser(config.adminUsername, config.adminPassword, 'super', null);
   await ensureDefaultSettings();
 }
 

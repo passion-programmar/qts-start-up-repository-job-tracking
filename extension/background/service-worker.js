@@ -4,7 +4,7 @@ importScripts(
   '../shared/job-detect.js',
   '../shared/api-prefetch.js',
   '../shared/custom-gpt.js',
-  '../shared/bidder-auth-storage.js',
+  '../shared/account-auth-storage.js',
   '../shared/apply-session-store.js',
   '../shared/api-worker.js',
   '../shared/gpt-worker-handoff.js',

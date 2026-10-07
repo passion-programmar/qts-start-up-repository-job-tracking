@@ -1,6 +1,6 @@
 # QTS_Startup — Build Requirements & Recommendations
 
-> **Current system (June 2026):** See [docs/CURRENT-SYSTEM.md](docs/CURRENT-SYSTEM.md) � extension v1.13.25+, job sites, one-step auto-apply.
+> **Current system (June 2026):** See [docs/CURRENT-SYSTEM.md](docs/CURRENT-SYSTEM.md) � extension v1.13.25+, job sites, one-step auto-apply.
 
 This document describes everything needed to build, run, and deploy **QTS_Startup v1.2.0**. Use it as the primary reference for developers and operators.
 
@@ -48,7 +48,7 @@ QTS_Startup is a three-part system:
 
 | Component | Technology | Default port | Purpose |
 |-----------|------------|--------------|---------|
-| Web UI | Next.js 16 + React 19 | **1027** | Admin, bidder, and caller panels |
+| Web UI | Next.js 16 + React 19 | **1027** | Admin, account, and caller panels |
 | API | Node.js + Express + TypeScript | **1028** | REST API, auth, database |
 | Extension | Chrome Manifest V3 | — | Capture jobs from job sites |
 | Database | PGlite or PostgreSQL 14+ | 5432 (external) | Persistent storage |
@@ -126,7 +126,7 @@ Expected: `v20.x` or `v22.x` for Node.
 ```text
 QTS_Startup/
 ├── admin-web/              Next.js web UI (port 1027)
-│   ├── src/app/            Routes: /login, /admin, /bidder, /caller
+│   ├── src/app/            Routes: /login, /admin, /account, /caller
 │   ├── src/components/     Shared panel views
 │   ├── .env.local          UI → API proxy target (optional)
 │   └── package.json
@@ -183,12 +183,12 @@ copy server\.env.example server\.env
 | `NODE_ENV` | No | `development` | `production` for deploy |
 | `JWT_SECRET` | **Yes (prod)** | — | Long random secret for auth tokens |
 | `JWT_EXPIRY` | No | `24h` | Token lifetime |
-| `ADMIN_USERNAME` | No | `admin` | Seeded admin account |
+| `ADMIN_USERNAME` | No | `super` | Seeded Super account |
 | `ADMIN_PASSWORD` | **Yes** | — | Admin password (seeded on first start) |
 | `CALLER_USERNAME` | No | `caller` | Seeded caller account |
 | `CALLER_PASSWORD` | No | `caller` | Caller password |
 
-**Note:** Bidder accounts are **not** auto-seeded. An admin must create them in the web UI under **Admin → Bidders**.
+**Note:** Manager and Account logins are created in the web UI according to the Super → Admin → Manager hierarchy.
 
 ### Web UI (`admin-web/.env.local`)
 
@@ -395,14 +395,14 @@ docker build -t qts-startup-server ./server
 3. Enable **Developer mode**.
 4. Click **Load unpacked** → select the `extension/` folder.
 5. Open the extension popup on a job page.
-6. Sign in with a **bidder** account (default username pre-filled: `user`).
+6. Sign in with a **Manager** account, then choose an assigned Account team.
 
 ### Extension requirements
 
 - API reachable at `http://localhost:1028`
-- A bidder account created by admin (**Admin → Bidders → Add account**)
-- Account must be linked to an active bidder organization
-- Extension login sends `extension: true`; only **bidder** role is accepted
+- A Manager account and an active Account team assigned to that Manager
+- At least one active candidate under the selected Account team
+- Extension login sends `extension: true`; only **manager** role is accepted
 
 ### Supported job sites
 
@@ -416,24 +416,22 @@ LinkedIn, Indeed, Glassdoor, Greenhouse, Lever, Workable, SmartRecruiters, Ashby
 
 | Role | Username | Password source |
 |------|----------|-----------------|
-| Admin | `admin` | `ADMIN_PASSWORD` in `.env` |
-| Caller | `caller` | `CALLER_PASSWORD` in `.env` |
+| Super | `admin` | `ADMIN_PASSWORD` in `.env` |
+| Admin | created by Super | set by Super |
+| Manager | created by Admin | set by Admin |
 
-### Created by admin (not seeded)
-
-| Role | How to create | Used by |
-|------|---------------|---------|
-| Bidder | **Admin → Bidders** → create org → add account | Web `/bidder` panel + Chrome extension |
+Account teams are created by Managers; Caller accounts are created by Admin or Super.
 
 ### Recommended first-time workflow
 
 1. Start servers (`npm start`).
-2. Log in as **admin** at http://localhost:1027/login.
-3. Create a **Bidder** organization under **Bidders**.
-4. Add a bidder account (e.g. username `user`, password of your choice).
-5. Add **candidates** under **Candidates** (assign to bidder if admin).
-6. Load the extension and sign in as the bidder.
-7. Visit a job posting and save via the extension.
+2. Log in as **Super** at http://localhost:1027/login.
+3. Create an **Admin** account under **People**.
+4. Log in as Admin and create a **Manager** account.
+5. Log in as Manager and create an **Account** team with its login password.
+6. Add active candidates under the Account team.
+7. Load the extension and sign in as Manager, then choose the Account team.
+8. Visit a job posting and save via the extension.
 
 ---
 
@@ -483,13 +481,13 @@ npm run stop
 
 Or find and stop the process using ports 1027 / 1028.
 
-### Extension: “No bidder accounts exist”
+### Extension: no Manager accounts exist
 
-An admin must create a bidder org and account before extension login works.
+Create the Super → Admin → Manager chain and assign an Account team before extension login.
 
-### Extension: admin/caller cannot log in
+### Extension: Account/Admin/Caller cannot log in
 
-By design. Extension accepts **bidder** accounts only. Use the web UI for admin/caller.
+By design. Extension accepts **Manager** accounts only; Managers choose an Account team after login.
 
 ### PowerShell blocks `npm`
 
@@ -538,10 +536,9 @@ See `UPGRADE.md` for migrating `server/data/jobs.db` to PostgreSQL.
 
 ### Extension / workflow
 
-1. **Create bidder accounts** before rolling out the extension to users.
-2. **Use username `user`** as the standard bidder account name if you rely on the extension default.
-3. **Scope candidates per bidder** so each extension user only sees their own list.
-4. **Train admins** to create bidders under **Bidders**, not generic **Users**, for correct org linkage.
+1. Create Manager accounts and assign Account teams before rolling out the extension.
+2. Add active candidates to each Account team.
+3. Scope candidates per Account so Managers select the right team in the extension.
 
 ### Upgrades
 

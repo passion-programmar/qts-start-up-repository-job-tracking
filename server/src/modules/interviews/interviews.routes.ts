@@ -22,7 +22,7 @@ const InterviewSchema = z.object({
   candidateId: z.number().int().positive().optional().nullable(),
   candidateName: z.string().min(1).max(200),
   callerUserId: z.number().int().positive().optional().nullable(),
-  bidderId: z.number().int().positive().optional().nullable(),
+  accountId: z.number().int().positive().optional().nullable(),
   scheduledDate: z.string().optional().nullable(),
   attendDate: z.string().optional().nullable(),
   interviewTime: z.string().optional().nullable(),
@@ -43,10 +43,10 @@ router.get('/meta/timezones', (_req: AuthRequest, res: Response) => {
 router.get('/', async (req: AuthRequest, res: Response) => {
   const filter = interviewCallerFilter(req, 'ip', 1);
   let query = `
-    SELECT ip.*, a.username AS caller_username, b.name AS bidder_name
+    SELECT ip.*, a.username AS caller_username, b.name AS account_name
     FROM interview_processes ip
     LEFT JOIN admins a ON a.id = ip.caller_user_id
-    LEFT JOIN bidders b ON b.id = ip.bidder_id
+    LEFT JOIN accounts b ON b.id = ip.account_id
   `;
   const params: unknown[] = [...filter.params];
   if (filter.clause) query += ` WHERE ${filter.clause}`;
@@ -59,10 +59,10 @@ router.get('/', async (req: AuthRequest, res: Response) => {
 router.get('/:id', async (req: AuthRequest, res: Response) => {
   const filter = interviewCallerFilter(req, 'ip', 2);
   let query = `
-    SELECT ip.*, a.username AS caller_username, b.name AS bidder_name
+    SELECT ip.*, a.username AS caller_username, b.name AS account_name
     FROM interview_processes ip
     LEFT JOIN admins a ON a.id = ip.caller_user_id
-    LEFT JOIN bidders b ON b.id = ip.bidder_id
+    LEFT JOIN accounts b ON b.id = ip.account_id
     WHERE ip.id = $1
   `;
   const params: unknown[] = [req.params.id, ...filter.params];
@@ -84,7 +84,7 @@ router.post('/', requireAdminOrCaller, async (req: AuthRequest, res: Response) =
 
   const row = await queryOne<{ id: number }>(
     `INSERT INTO interview_processes (
-      candidate_id, candidate_name, caller_user_id, bidder_id,
+      candidate_id, candidate_name, caller_user_id, account_id,
       scheduled_date, attend_date, interview_time, timezone,
       position, company, job_url, resume, meeting_url, salary, stage,
       created_by_user_id
@@ -94,7 +94,7 @@ router.post('/', requireAdminOrCaller, async (req: AuthRequest, res: Response) =
       data.candidateId ?? null,
       data.candidateName,
       callerUserId,
-      data.bidderId ?? null,
+      data.accountId ?? null,
       data.scheduledDate || null,
       data.attendDate || null,
       data.interviewTime || null,
@@ -124,7 +124,7 @@ router.put('/:id', requireAdminWrite, async (req: AuthRequest, res: Response) =>
   const data = InterviewSchema.parse(req.body);
   await execute(
     `UPDATE interview_processes SET
-      candidate_id = $1, candidate_name = $2, caller_user_id = $3, bidder_id = $4,
+      candidate_id = $1, candidate_name = $2, caller_user_id = $3, account_id = $4,
       scheduled_date = $5, attend_date = $6, interview_time = $7, timezone = $8,
       position = $9, company = $10, job_url = $11, resume = $12, meeting_url = $13,
       salary = $14, stage = $15, updated_at = NOW()
@@ -133,7 +133,7 @@ router.put('/:id', requireAdminWrite, async (req: AuthRequest, res: Response) =>
       data.candidateId ?? null,
       data.candidateName,
       data.callerUserId ?? null,
-      data.bidderId ?? null,
+      data.accountId ?? null,
       data.scheduledDate || null,
       data.attendDate || null,
       data.interviewTime || null,

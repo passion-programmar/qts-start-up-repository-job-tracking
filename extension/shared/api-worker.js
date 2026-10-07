@@ -4,7 +4,7 @@ const WORKER_DEFAULT_SERVER = 'https://qts-job-tracking.vercel.app';
 const qtsRoot = typeof globalThis !== 'undefined' ? globalThis : self;
 
 async function workerReadAuth() {
-  const auth = qtsRoot.__qtsBidderAuth;  const token = auth?.getWorkerAuthToken
+  const auth = qtsRoot.__qtsAccountAuth;  const token = auth?.getWorkerAuthToken
     ? await auth.getWorkerAuthToken()
     : (await chrome.storage.local.get(['authToken', 'authExpiresAt'])).authToken || '';
   const stored = await chrome.storage.local.get(['serverUrl']);
@@ -37,7 +37,7 @@ async function workerApiRequest(method, path, body) {
     if (!response.ok && data.success !== false) data.success = false;
     data._httpStatus = response.status;
     if (response.status === 401) {
-      const auth = qtsRoot.__qtsBidderAuth;
+      const auth = qtsRoot.__qtsAccountAuth;
       await auth?.handleAuthExpired?.();
       chrome.runtime.sendMessage({ type: 'AUTH_SESSION_EXPIRED' }).catch(() => {});
       data.message = data.message || 'Session expired. Please log in again.';

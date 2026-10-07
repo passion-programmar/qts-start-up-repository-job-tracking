@@ -1,11 +1,11 @@
 # QTS Application Workflow — Extension + Custom GPT + Server
 
-> **Current system (June 2026):** See [docs/CURRENT-SYSTEM.md](docs/CURRENT-SYSTEM.md) � extension v1.13.25+, job sites, one-step auto-apply.
+> **Current system (June 2026):** See [docs/CURRENT-SYSTEM.md](docs/CURRENT-SYSTEM.md) � extension v1.13.25+, job sites, one-step auto-apply.
 
 **File:** `QTS-APPLICATION-WORKFLOW.md`  
 **Version:** Extension **v1.7.7** · corrected architecture and operating rules  
 **Scope:** Current justjoin.it Easy Apply workflow plus the target page-by-page workflow  
-**Audience:** Developers and bidders setting up, using, or debugging the application pipeline
+**Audience:** Developers and accounts setting up, using, or debugging the application pipeline
 
 Related guides:
 
@@ -18,7 +18,7 @@ Related guides:
 
 ## 1. System purpose
 
-The system helps a bidder prepare and fill a job application while keeping final submission under the bidder’s control.
+The system helps an Account user prepare and fill a job application while keeping final submission under the user’s control.
 
 The three main components are:
 
@@ -63,7 +63,7 @@ The extension may reuse one pinned Custom GPT tab.
         active          pinned/inactive
 ```
 
-The bidder normally remains on the job page. The pinned GPT tab is still visible in Chrome’s tab bar; it is not an invisible or offscreen GPT service.
+The account normally remains on the job page. The pinned GPT tab is still visible in Chrome’s tab bar; it is not an invisible or offscreen GPT service.
 
 ### 2.3 Automatic message insertion is experimental UI automation
 
@@ -91,7 +91,7 @@ The extension must provide a manual fallback when automatic message insertion do
 
 ### 2.4 Do not automatically approve ChatGPT Action dialogs
 
-ChatGPT may ask the bidder to approve an Action. The extension should detect the waiting state and notify the bidder, but it must not depend on automatically clicking **Allow**.
+ChatGPT may ask the account to approve an Action. The extension should detect the waiting state and notify the account, but it must not depend on automatically clicking **Allow**.
 
 ### 2.5 Never automatically submit the job application
 
@@ -178,15 +178,15 @@ Create a new `taskId` only when starting a new application, changing the selecte
 
 ```mermaid
 sequenceDiagram
-  participant Bidder
+  participant Account
   participant Site as Job site
   participant Ext as Extension
   participant API as QTS Server
   participant GPTTab as Pinned GPT tab
   participant GPT as Custom GPT
 
-  Bidder->>Site: Open job and application form
-  Bidder->>Ext: Select candidate and Start Application
+  Account->>Site: Open job and application form
+  Account->>Ext: Select candidate and Start Application
   Ext->>API: POST /api/application-sessions
   API-->>Ext: applicationId + random taskId
 
@@ -201,7 +201,7 @@ sequenceDiagram
     GPT->>API: GET /api/application-tasks/{taskId}/context
     API-->>GPT: Candidate + job + pending fields + document requirements
     GPT->>API: POST /api/application-tasks/{taskId}/package
-    Note over Bidder,GPT: ChatGPT may require explicit Action approval
+    Note over Account,GPT: ChatGPT may require explicit Action approval
     API->>API: Validate JSON and render required PDFs
     Ext->>API: Poll /api/application-tasks/{taskId}/status
     API-->>Ext: ready + generated answers/documents
@@ -214,8 +214,8 @@ sequenceDiagram
     Ext->>Site: Validate and navigate to next step
     Ext->>Site: Scan next step using same taskId
   else Review or Submit exists
-    Ext->>Bidder: Stop and show Ready for review
-    Bidder->>Site: Review consents, answers, documents, and submit manually
+    Ext->>Account: Stop and show Ready for review
+    Account->>Site: Review consents, answers, documents, and submit manually
   end
 ```
 
@@ -225,7 +225,7 @@ sequenceDiagram
 
 ### 6.1 Prerequisites
 
-- Extension loaded and bidder authenticated
+- Extension loaded and account authenticated
 - Candidate profiles available from the QTS API
 - Job description captured or detectable
 - Application form or modal currently rendered
@@ -237,7 +237,7 @@ A local server such as `http://localhost:1028` may be used by the extension, but
 
 ### 6.2 Start Application
 
-When the bidder selects a candidate and clicks **Start Application**, the extension should:
+When the account selects a candidate and clicks **Start Application**, the extension should:
 
 1. Load the complete selected candidate profile.
 2. Create one application session.
@@ -342,7 +342,7 @@ Do not guess or automatically consent to:
 | First and last name | Fill from selected candidate |
 | Email | Fill from selected candidate |
 | CV / Add document | Generate or select document, then extension uploads it |
-| Attach a message | Fill only when the bidder enabled it or a dedicated answer exists |
+| Attach a message | Fill only when the account enabled it or a dedicated answer exists |
 | Terms / account checkbox | Manual |
 | GDPR consent | Manual |
 | Marketing opt-in | **Manual and unchecked by default** |
@@ -388,7 +388,7 @@ PROCESS_TASK: task_7f84c21e-2f34-4fd2-96e1-1f4216f3ad92
 ```
 
 5. Attempt to send the message.
-6. If the automatic handoff fails, notify the bidder and provide a one-click/manual fallback.
+6. If the automatic handoff fails, notify the account and provide a one-click/manual fallback.
 
 Do not place changing task IDs in Conversation Starters. Conversation Starters are static examples and are optional.
 
@@ -397,9 +397,9 @@ Do not place changing task IDs in Conversation Starters. Conversation Starters a
 If ChatGPT displays **Allow**, the extension should:
 
 - Mark the task as `waiting_for_action_approval`
-- Notify the bidder
+- Notify the account
 - Keep polling the server
-- Continue when the bidder approves the Action
+- Continue when the account approves the Action
 
 Do not claim that approval can always be completed automatically.
 
@@ -519,7 +519,7 @@ It is **not**:
 
 - An OpenAI API key
 - A ChatGPT access token
-- A bidder login token
+- A account login token
 - A short-lived browser session token
 
 ### 10.2 Extension authentication
@@ -661,7 +661,7 @@ Check validation errors
 Next / Continue?
   Yes → click and wait for a real step change
   No  → Review / Submit?
-           Yes → stop for bidder review
+           Yes → stop for account review
            No  → mark blocked
 ```
 
@@ -706,8 +706,8 @@ When a final submit control appears:
 Stop automation
 → save current state
 → show Ready for review
-→ bidder reviews documents, answers, consent, and legal declarations
-→ bidder submits manually
+→ account reviews documents, answers, consent, and legal declarations
+→ account submits manually
 ```
 
 ---
@@ -749,7 +749,7 @@ Do not store critical workflow state only inside the popup because the popup clo
 
 ---
 
-## 16. Bidder workflow
+## 16. Account workflow
 
 1. Start the local/backend services.
 2. Confirm the public Action endpoint is healthy.
@@ -777,7 +777,7 @@ Do not store critical workflow state only inside the popup because the popup clo
 | Form discovery failed | Apply form not rendered or scripts not injected | Open the application modal, reload extension/job tab, retry |
 | GPT tab exists but task was not sent | ChatGPT composer selectors changed, tab not loaded, or login expired | Open pinned tab, verify login, send `PROCESS_TASK` manually, update handoff logic |
 | Previous job context appears | Same GPT conversation was reused | Start a fresh Custom GPT conversation and use the current task ID |
-| Action waits indefinitely | ChatGPT is showing an approval dialog | Bidder opens pinned tab and clicks **Allow** |
+| Action waits indefinitely | ChatGPT is showing an approval dialog | Account opens pinned tab and clicks **Allow** |
 | `401` on GPT Actions | Wrong or rotated `GPT_ACTION_SECRET`, wrong header format, or endpoint mismatch | Update Action authentication and server environment secret; do not re-login using a browser token |
 | GPT cannot reach server | Action URL is localhost, proxy/tunnel is unavailable, or HTTPS/TLS fails | Use a working public HTTPS endpoint |
 | `resume JSON is required` | Required resume slot exists but GPT omitted the resume object | Check context/fileFields and GPT instructions |
@@ -785,8 +785,8 @@ Do not store critical workflow state only inside the popup because the popup clo
 | PDF ready but upload failed | Job modal closed, file control changed, or site blocked programmatic assignment | Reopen form, rescan field, retry manual package application |
 | Popup closed and progress disappeared | Workflow state was stored only in popup | Move orchestration to service worker/server and show state again when popup opens |
 | GPT tab became inactive and stopped | Chrome froze/discarded tab or ChatGPT session expired | Reload pinned tab and resume task |
-| Marketing box remains unchecked | Correct consent behavior | Bidder chooses manually |
-| Final submit was not clicked | Correct safety behavior | Bidder reviews and submits manually |
+| Marketing box remains unchecked | Correct consent behavior | Account chooses manually |
+| Final submit was not clicked | Correct safety behavior | Account reviews and submits manually |
 
 ---
 
@@ -856,7 +856,7 @@ EXTENSION
     │ fills answers, uploads files, navigates intermediate steps
     │
     ▼
-BIDDER
+ACCOUNT
     └── reviews consent/legal fields and submits manually
 ```
 
@@ -866,7 +866,7 @@ The dependable separation of responsibility is:
 Extension = browser and form automation
 Server = state, security, validation, and documents
 Custom GPT = reasoning and writing
-Bidder = approvals, consent, review, and final submission
+Account = approvals, consent, review, and final submission
 ```
 
 ---

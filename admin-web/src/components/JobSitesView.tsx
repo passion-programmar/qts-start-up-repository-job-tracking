@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Modal } from '@/components/Modal';
 import { api } from '@/lib/api';
-import type { Bidder, Candidate, JobSite, JobSiteAdmission } from '@/lib/types';
+import type { Account, Candidate, JobSite, JobSiteAdmission } from '@/lib/types';
 import { formatDate } from '@/lib/utils';
 
 const EMPTY_FORM = {
@@ -15,24 +15,24 @@ const EMPTY_FORM = {
 
 export function JobSitesView() {
   const [sites, setSites] = useState<JobSite[]>([]);
-  const [bidders, setBidders] = useState<Bidder[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState<'add' | 'admit' | 'admissions' | null>(null);
   const [selected, setSelected] = useState<JobSite | null>(null);
   const [admissions, setAdmissions] = useState<JobSiteAdmission[]>([]);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [form, setForm] = useState(EMPTY_FORM);
-  const [admitForm, setAdmitForm] = useState({ bidderId: '', defaultCandidateId: '' });
+  const [admitForm, setAdmitForm] = useState({ accountId: '', defaultCandidateId: '' });
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [sitesRes, biddersRes] = await Promise.all([
+    const [sitesRes, accountsRes] = await Promise.all([
       api<{ success: boolean; jobSites?: JobSite[] }>('GET', '/api/job-sites'),
-      api<{ success: boolean; bidders?: Bidder[] }>('GET', '/api/bidders'),
+      api<{ success: boolean; accounts?: Account[] }>('GET', '/api/accounts'),
     ]);
     setSites(sitesRes.jobSites || []);
-    setBidders(biddersRes.bidders || []);
+    setAccounts(accountsRes.accounts || []);
     setLoading(false);
   }, []);
 
@@ -52,21 +52,21 @@ export function JobSitesView() {
 
   async function openAdmit(site: JobSite) {
     setSelected(site);
-    setAdmitForm({ bidderId: '', defaultCandidateId: '' });
+    setAdmitForm({ accountId: '', defaultCandidateId: '' });
     setCandidates([]);
     setError(null);
     setModal('admit');
   }
 
-  async function onBidderChange(bidderId: string) {
-    setAdmitForm({ bidderId, defaultCandidateId: '' });
-    if (!bidderId) {
+  async function onAccountChange(accountId: string) {
+    setAdmitForm({ accountId, defaultCandidateId: '' });
+    if (!accountId) {
       setCandidates([]);
       return;
     }
     const r = await api<{ success: boolean; candidates?: Candidate[] }>(
       'GET',
-      `/api/candidates?bidderId=${encodeURIComponent(bidderId)}`
+      `/api/candidates?accountId=${encodeURIComponent(accountId)}`
     );
     setCandidates((r.candidates || []).filter((c) => c.is_active));
   }
@@ -93,33 +93,33 @@ export function JobSitesView() {
     }
   }
 
-  async function admitBidder() {
+  async function admitAccount() {
     if (!selected) return;
-    const bidderId = Number(admitForm.bidderId);
+    const accountId = Number(admitForm.accountId);
     const defaultCandidateId = Number(admitForm.defaultCandidateId);
-    if (!bidderId || !defaultCandidateId) {
-      setError('Select bidder and default candidate.');
+    if (!accountId || !defaultCandidateId) {
+      setError('Select account and default candidate.');
       return;
     }
     const r = await api<{ success: boolean; message?: string }>(
       'POST',
       `/api/job-sites/${selected.id}/admit`,
-      { bidderId, defaultCandidateId }
+      { accountId, defaultCandidateId }
     );
     if (r.success) {
       setModal(null);
       setError(null);
       void load();
     } else {
-      setError(r.message || 'Could not admit bidder.');
+      setError(r.message || 'Could not admit account.');
     }
   }
 
-  async function revokeAdmission(bidderId: number) {
+  async function revokeAdmission(accountId: number) {
     if (!selected) return;
     const r = await api<{ success: boolean; message?: string }>(
       'DELETE',
-      `/api/job-sites/${selected.id}/admit/${bidderId}`
+      `/api/job-sites/${selected.id}/admit/${accountId}`
     );
     if (r.success) {
       void loadAdmissions(selected);
@@ -133,8 +133,8 @@ export function JobSitesView() {
     <>
       <p className="text-muted" style={{ marginBottom: 12 }}>
         Manually register job board sources. Match jobs by <strong>platform key</strong> (extension{' '}
-        <code>source</code> field, e.g. <code>justjoin</code>) and optional URL host. Admit bidders
-        with a default candidate — admitted sites appear in the bidder Jobs panel.
+        <code>source</code> field, e.g. <code>justjoin</code>) and optional URL host. Admit accounts
+        with a default candidate — admitted sites appear in the account Jobs panel.
       </p>
 
       <div style={{ marginBottom: 12 }}>
@@ -163,7 +163,7 @@ export function JobSitesView() {
                   <th>Platform key</th>
                   <th>URL host</th>
                   <th>Jobs</th>
-                  <th>Bidders</th>
+                  <th>Accounts</th>
                   <th>Status</th>
                   <th />
                 </tr>
@@ -186,7 +186,7 @@ export function JobSitesView() {
                         Admissions
                       </button>
                       <button className="btn btn-primary btn-sm" type="button" onClick={() => { void openAdmit(s); }}>
-                        Admit bidder
+                        Admit account
                       </button>
                     </td>
                   </tr>
@@ -243,23 +243,23 @@ export function JobSitesView() {
 
       <Modal
         open={modal === 'admit'}
-        title={`Admit bidder — ${selected?.name || ''}`}
+        title={`Admit account — ${selected?.name || ''}`}
         onClose={() => setModal(null)}
         footer={
           <>
             <button className="btn btn-ghost" type="button" onClick={() => setModal(null)}>Cancel</button>
-            <button className="btn btn-primary" type="button" onClick={() => { void admitBidder(); }}>Admit</button>
+            <button className="btn btn-primary" type="button" onClick={() => { void admitAccount(); }}>Admit</button>
           </>
         }
       >
         <div className="form-group">
-          <label>Bidder *</label>
+          <label>Account *</label>
           <select
-            value={admitForm.bidderId}
-            onChange={(e) => { void onBidderChange(e.target.value); }}
+            value={admitForm.accountId}
+            onChange={(e) => { void onAccountChange(e.target.value); }}
           >
-            <option value="">Select bidder…</option>
-            {bidders.filter((b) => b.is_active).map((b) => (
+            <option value="">Select account…</option>
+            {accounts.filter((b) => b.is_active).map((b) => (
               <option key={b.id} value={b.id}>{b.name}</option>
             ))}
           </select>
@@ -269,7 +269,7 @@ export function JobSitesView() {
           <select
             value={admitForm.defaultCandidateId}
             onChange={(e) => setAdmitForm({ ...admitForm, defaultCandidateId: e.target.value })}
-            disabled={!admitForm.bidderId}
+            disabled={!admitForm.accountId}
           >
             <option value="">Select candidate…</option>
             {candidates.map((c) => (
@@ -289,7 +289,7 @@ export function JobSitesView() {
         <table>
           <thead>
             <tr>
-              <th>Bidder</th>
+              <th>Account</th>
               <th>Default candidate</th>
               <th>Admitted</th>
               <th />
@@ -298,12 +298,12 @@ export function JobSitesView() {
           <tbody>
             {admissions.map((a) => (
               <tr key={a.id}>
-                <td>{a.bidder_name}</td>
+                <td>{a.account_name}</td>
                 <td>{a.default_candidate_name || '—'}</td>
                 <td className="text-muted">{formatDate(a.admitted_at)}</td>
                 <td className="text-right">
                   {a.is_active && (
-                    <button className="btn btn-danger btn-sm" type="button" onClick={() => { void revokeAdmission(a.bidder_id); }}>
+                    <button className="btn btn-danger btn-sm" type="button" onClick={() => { void revokeAdmission(a.account_id); }}>
                       Revoke
                     </button>
                   )}
@@ -311,7 +311,7 @@ export function JobSitesView() {
               </tr>
             ))}
             {!admissions.length && (
-              <tr><td colSpan={4} className="text-muted">No bidders admitted yet.</td></tr>
+              <tr><td colSpan={4} className="text-muted">No accounts admitted yet.</td></tr>
             )}
           </tbody>
         </table>

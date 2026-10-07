@@ -3,7 +3,7 @@ export declare const DEFAULT_CUSTOM_GPT_ID = "g-6a3dc5525fac819198dccf1c216e3fc0
 export interface ResolvedCustomGpt {
     url: string;
     id: string;
-    source: 'bidder' | 'default';
+    source: 'account' | 'default';
 }
 export declare function parseCustomGptId(url: string): string | null;
 export declare function normalizeCustomGptUrl(url: string): string;
@@ -15,5 +15,5 @@ export declare function validateCustomGptUrl(raw: string): {
     ok: false;
     message: string;
 };
-export declare function resolveCustomGptConfig(bidderUrl?: string | null): ResolvedCustomGpt;
+export declare function resolveCustomGptConfig(accountUrl?: string | null): ResolvedCustomGpt;
 //# sourceMappingURL=custom-gpt-url.d.ts.map

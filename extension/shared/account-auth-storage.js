@@ -1,8 +1,8 @@
-// Bidder login persists in chrome.storage.local for up to 24 hours (JWT exp).
+// Account login persists in chrome.storage.local for up to 24 hours (JWT exp).
 // Popup memory is a cache; reopening the popup hydrates from local storage.
 
-(function initBidderAuthStorage(global) {
-  if (global.__qtsBidderAuth) return;
+(function initAccountAuthStorage(global) {
+  if (global.__qtsAccountAuth) return;
 
   const AUTH_TOKEN_KEY = 'authToken';
   const SESSION_USER_KEY = 'qtsSessionUser';
@@ -136,7 +136,7 @@
   }
 
   async function disarmWorkerAuth() {
-    // Auto-apply off does not log the bidder out.
+    // Auto-apply off does not log the account out.
     return true;
   }
 
@@ -222,7 +222,7 @@
     return true;
   }
 
-  global.__qtsBidderAuth = {
+  global.__qtsAccountAuth = {
     AUTH_TOKEN_KEY,
     SESSION_USER_KEY,
     AUTH_EXPIRES_KEY,

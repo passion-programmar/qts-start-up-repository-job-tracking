@@ -12,34 +12,34 @@ const logger_1 = require("../utilities/logger");
 const credential_crypto_1 = require("../utilities/credential-crypto");
 const candidate_stacks_1 = require("../config/candidate-stacks");
 const BCRYPT_ROUNDS = 12;
-async function ensureUser(username, password, role, bidderId = null) {
+async function ensureUser(username, password, role, accountId = null) {
     if (!password) {
         logger_1.logger.warn(`No password configured for ${username}, skipping account seed`);
         return 0;
     }
-    const existing = await (0, connection_1.queryOne)('SELECT id, password_hash, role, bidder_id, password_encrypted FROM admins WHERE username = $1', [username]);
+    const existing = await (0, connection_1.queryOne)('SELECT id, password_hash, role, account_id, password_encrypted FROM admins WHERE username = $1', [username]);
     const passwordHash = await bcryptjs_1.default.hash(password, BCRYPT_ROUNDS);
     const passwordEncrypted = (0, credential_crypto_1.encryptCredential)(password);
     if (existing) {
         const needsHashMigration = !existing.password_hash.startsWith('$2');
         const needsRoleUpdate = existing.role !== role;
-        const needsBidderUpdate = existing.bidder_id !== bidderId;
+        const needsAccountUpdate = existing.account_id !== accountId;
         const passwordMatches = await bcryptjs_1.default.compare(password, existing.password_hash);
         const needsPasswordUpdate = !passwordMatches;
         const needsEncryptedBackfill = !existing.password_encrypted;
-        if (needsHashMigration || needsRoleUpdate || needsBidderUpdate || needsPasswordUpdate || needsEncryptedBackfill) {
+        if (needsHashMigration || needsRoleUpdate || needsAccountUpdate || needsPasswordUpdate || needsEncryptedBackfill) {
             const nextHash = needsHashMigration || needsPasswordUpdate
                 ? passwordHash
                 : existing.password_hash;
             const nextEncrypted = needsPasswordUpdate || needsEncryptedBackfill
                 ? passwordEncrypted
                 : existing.password_encrypted;
-            await (0, connection_1.execute)(`UPDATE admins SET password_hash = $1, password_encrypted = $2, role = $3, bidder_id = $4, updated_at = NOW() WHERE id = $5`, [nextHash, nextEncrypted, role, bidderId, existing.id]);
+            await (0, connection_1.execute)(`UPDATE admins SET password_hash = $1, password_encrypted = $2, role = $3, account_id = $4, updated_at = NOW() WHERE id = $5`, [nextHash, nextEncrypted, role, accountId, existing.id]);
             logger_1.logger.info('User account updated', { username, role });
         }
         return existing.id;
     }
-    const row = await (0, connection_1.queryOne)('INSERT INTO admins (username, password_hash, password_encrypted, role, bidder_id) VALUES ($1, $2, $3, $4, $5) RETURNING id', [username, passwordHash, passwordEncrypted, role, bidderId]);
+    const row = await (0, connection_1.queryOne)('INSERT INTO admins (username, password_hash, password_encrypted, role, account_id) VALUES ($1, $2, $3, $4, $5) RETURNING id', [username, passwordHash, passwordEncrypted, role, accountId]);
     logger_1.logger.info('User account created', { username, role });
     return row.id;
 }
@@ -56,7 +56,14 @@ async function ensureDefaultSettings() {
     }
 }
 async function seedAdminOnly() {
-    await ensureUser(env_1.config.adminUsername, env_1.config.adminPassword, 'admin', null);
+    if (env_1.config.adminUsername === 'super') {
+        const configuredSuper = await (0, connection_1.queryOne)('SELECT id FROM admins WHERE username = $1', [env_1.config.adminUsername]);
+        if (!configuredSuper) {
+            await (0, connection_1.execute)(`UPDATE admins SET username = $1, updated_at = NOW()
+         WHERE username = $2 AND role = 'super'`, [env_1.config.adminUsername, 'admin']);
+        }
+    }
+    await ensureUser(env_1.config.adminUsername, env_1.config.adminPassword, 'super', null);
     await ensureDefaultSettings();
 }
 async function seedAdmin() {

@@ -1,10 +1,10 @@
 # QTS Job Tracking — Extension Usage Guide
 
-> **Current system (June 2026):** See [docs/CURRENT-SYSTEM.md](docs/CURRENT-SYSTEM.md) � extension v1.13.25+, job sites, one-step auto-apply.
+> **Current system (June 2026):** See [docs/CURRENT-SYSTEM.md](docs/CURRENT-SYSTEM.md) � extension v1.13.25+, job sites, one-step auto-apply.
 
 **File:** `QTS-JOB-TRACKING-EXTENSION-GUIDE.md`  
-**For:** Bidders who capture job postings from job sites  
-**Requires:** Chrome (or Chromium-based browser), bidder account, server running
+**For:** Managers who capture job postings on behalf of an Account team
+**Requires:** Chrome (or Chromium-based browser), Manager account, assigned Account team, server running
 
 Related guides:
 - `QTS-JOB-TRACKING-PROJECT-SETUP-GUIDE.md` — install server & deploy
@@ -30,7 +30,7 @@ Related guides:
 
 ## 1. What the extension does
 
-The **QTS_Startup** Chrome extension lets **bidders** capture job postings while browsing:
+The **QTS_Startup** Chrome extension lets **Managers** capture job postings for a team while browsing:
 
 - Reads job **title**, **company**, **URL**, and **description** from the page
 - Lets you mark which **candidates** you applied for
@@ -46,7 +46,7 @@ Capture window opens
 Database (via Vercel → your PC API)
 ```
 
-**Only bidder accounts** can use the extension. Admin, manager, and caller accounts must use the web UI.
+**Only Manager accounts** can sign into the extension. After signing in, choose an assigned Account team and candidate. Admin, Account, and Caller accounts cannot sign into the extension.
 
 ---
 
@@ -57,9 +57,8 @@ Checklist:
 | Requirement | Who sets it up |
 |-------------|----------------|
 | `start-server.bat` running on host PC | Admin / IT |
-| Bidder organization created | Manager |
-| Bidder username + password | Manager |
-| At least one **active candidate** under your bidder org | Manager |
+| Account team assigned to your Manager account | Admin / Super |
+| At least one **active candidate** under the Account team | Manager |
 | Extension loaded in Chrome | You (one-time) |
 
 Ask your manager for:
@@ -99,12 +98,12 @@ You should see the QTS icon in the toolbar.
 ## 4. First login
 
 1. Make sure you are on a normal web page (or click the extension icon)
-2. The capture window opens → **Bidder Sign In** screen
+2. The capture window opens → **Account Sign In** screen
 3. Fill in:
 
 | Field | Value |
 |-------|-------|
-| **Username** | From your manager (bidder login) |
+| **Username** | From your manager (account login) |
 | **Password** | From your manager |
 
 4. Click **Log In**
@@ -191,7 +190,7 @@ Manager and admin can see the job in the web dashboard under **Jobs**.
 Your manager must add candidates first:
 
 ```text
-Manager → Bidders → your organization → + Add Candidate
+Manager → Accounts → your organization → + Add Candidate
 ```
 
 You cannot save meaningful candidate assignments until candidates exist.
@@ -268,37 +267,37 @@ END OF DAY
 
 ### Login failed / Invalid credentials
 
-- Use **bidder** username/password from manager (not admin)
+- Use your **Manager** username and password
 - Passwords are case-sensitive
 - Ask manager to reset your password
 
 ---
 
-### Extension requires a bidder account
+### Extension requires a Manager account
 
-You tried to log in with **admin**, **manager**, or **caller**.
+You tried to log in with an Account, Admin, Super, or Caller account.
 
-**Fix:** Use a **bidder** account only. Other roles use the web UI at `/login`.
-
----
-
-### Not linked to a bidder organization
-
-**Message:** Account not linked to a bidder organization
-
-**Fix:** Manager must create your bidder org and link your login.
+**Fix:** Use your **Manager** username and password, then choose an assigned Account team.
 
 ---
 
-### No bidder accounts exist yet
+### No Account teams assigned
 
-**Fix:** Manager → **Bidders** → create organization + bidder login + candidates.
+**Message:** No active Account teams are assigned to your Manager account
+
+**Fix:** Ask an Admin or Super to assign an Account team to your Manager account.
+
+---
+
+### No Manager accounts exist yet
+
+**Fix:** Super creates an Admin; then Admin → **People** → creates a Manager.
 
 ---
 
 ### No active candidates
 
-**Fix:** Manager adds candidates under your bidder organization before you can assign them.
+**Fix:** Manager adds candidates under the selected Account team before you can assign them.
 
 ---
 
@@ -322,7 +321,7 @@ Yellow notice: **This job is already saved in the database**
 
 ### Save failed / duplicate URL
 
-Another bidder may have saved the same URL, or validation failed. Read the red error message at the top of the form.
+Another account may have saved the same URL, or validation failed. Read the red error message at the top of the form.
 
 ---
 
@@ -330,10 +329,10 @@ Another bidder may have saved the same URL, or validation failed. Read the red e
 
 ```text
 ┌────────────────────────────────────────────────────────────┐
-│  QTS EXTENSION — BIDDER QUICK REFERENCE                      │
+│  QTS EXTENSION — ACCOUNT QUICK REFERENCE                      │
 ├────────────────────────────────────────────────────────────┤
 │  API URL:    https://qts-job-tracking.vercel.app           │
-│  Login:      Bidder username + password (from manager)     │
+│  Login:      Account username + password (from manager)     │
 ├────────────────────────────────────────────────────────────┤
 │  1. Open job page in Chrome                                │
 │  2. Click QTS extension icon                               │
@@ -348,4 +347,4 @@ Another bidder may have saved the same URL, or validation failed. Read the red e
 
 ---
 
-*QTS Job Tracking Extension v1.3.6 — Bidder capture workflow*
+*QTS Job Tracking Extension v1.3.6 — Account capture workflow*

@@ -6,18 +6,18 @@ import { CandidateColorPicker } from '@/components/CandidateColorPicker';
 import { Modal } from '@/components/Modal';
 import { useAuth } from '@/components/AuthProvider';
 import { api } from '@/lib/api';
-import type { Bidder, Candidate } from '@/lib/types';
+import type { Account, Candidate } from '@/lib/types';
 import { formatDate } from '@/lib/utils';
 import { nextCandidateColor, normalizeCandidateColor } from '../../shared/candidate-colors';
 import { parseCandidateStacks } from '../../shared/candidate-stacks';
 
 export function CandidatesView() {
   const { canWrite, canAddCandidates, user } = useAuth();
-  const showBidderPicker = user?.role === 'admin' || user?.role === 'manager';
+  const showAccountPicker = user?.role === 'admin' || user?.role === 'manager';
   const [search, setSearch] = useState('');
   const [query, setQuery] = useState('');
   const [candidates, setCandidates] = useState<Candidate[]>([]);
-  const [bidders, setBidders] = useState<Bidder[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
   const [stackOptions, setStackOptions] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -39,7 +39,7 @@ export function CandidatesView() {
     notes: '',
     color: nextCandidateColor(0),
     stack: '',
-    bidderId: '',
+    accountId: '',
     isActive: true,
   });
 
@@ -65,13 +65,13 @@ export function CandidatesView() {
     return stacks;
   }, []);
 
-  const loadBidders = useCallback(async () => {
-    if (!showBidderPicker) return [];
-    const r = await api<{ success: boolean; bidders?: Bidder[] }>('GET', '/api/bidders');
-    const list = r.bidders || [];
-    setBidders(list);
+  const loadAccounts = useCallback(async () => {
+    if (!showAccountPicker) return [];
+    const r = await api<{ success: boolean; accounts?: Account[] }>('GET', '/api/accounts');
+    const list = r.accounts || [];
+    setAccounts(list);
     return list;
-  }, [showBidderPicker]);
+  }, [showAccountPicker]);
 
   useEffect(() => {
     void load(query);
@@ -79,13 +79,13 @@ export function CandidatesView() {
 
   useEffect(() => {
     void loadStackOptions();
-    void loadBidders();
-  }, [loadStackOptions, loadBidders]);
+    void loadAccounts();
+  }, [loadStackOptions, loadAccounts]);
 
   function openAdd() {
     setSelected(null);
-    void Promise.all([loadStackOptions(), loadBidders()]).then(([stacks, bidderList]) => {
-      const list = bidderList || bidders;
+    void Promise.all([loadStackOptions(), loadAccounts()]).then(([stacks, accountList]) => {
+      const list = accountList || accounts;
       setForm({
         name: '',
         email: '',
@@ -94,7 +94,7 @@ export function CandidatesView() {
         notes: '',
         color: nextCandidateColor(candidates.length),
         stack: stacks[0] || '',
-        bidderId: list[0] ? String(list[0].id) : '',
+        accountId: list[0] ? String(list[0].id) : '',
         isActive: true,
       });
     });
@@ -112,7 +112,7 @@ export function CandidatesView() {
       notes: c.notes || '',
       color: normalizeCandidateColor(c.color, c.id),
       stack: c.stack || '',
-      bidderId: c.bidder_id ? String(c.bidder_id) : '',
+      accountId: c.account_id ? String(c.account_id) : '',
       isActive: c.is_active,
     });
     setFormError(null);
@@ -140,8 +140,8 @@ export function CandidatesView() {
       setFormError('Name is required.');
       return;
     }
-    if (showBidderPicker && !form.bidderId) {
-      setFormError('Bidder is required.');
+    if (showAccountPicker && !form.accountId) {
+      setFormError('Account is required.');
       return;
     }
     const body = {
@@ -153,7 +153,7 @@ export function CandidatesView() {
       color: form.color,
       stack: form.stack,
       isActive: form.isActive,
-      ...(showBidderPicker ? { bidderId: parseInt(form.bidderId, 10) } : {}),
+      ...(showAccountPicker ? { accountId: parseInt(form.accountId, 10) } : {}),
     };
     const r = selected
       ? await api<{ success: boolean; message?: string; errors?: Array<{ field: string; message: string }> }>('PUT', `/api/candidates/${selected.id}`, body)
@@ -211,7 +211,7 @@ export function CandidatesView() {
             <thead>
               <tr>
                 <th>Name</th>
-                {showBidderPicker && <th>Bidder</th>}
+                {showAccountPicker && <th>Account</th>}
                 <th>Stack</th>
                 <th>Email</th>
                 <th>Phone</th>
@@ -224,7 +224,7 @@ export function CandidatesView() {
               {candidates.map((c, i) => (
                 <tr key={c.id}>
                   <td><CandidateName candidate={c} index={i} /></td>
-                  {showBidderPicker && <td className="text-muted">{c.bidder_name || '—'}</td>}
+                  {showAccountPicker && <td className="text-muted">{c.account_name || '—'}</td>}
                   <td className="text-muted">{c.stack || '—'}</td>
                   <td className="text-muted">{c.email || '—'}</td>
                   <td className="text-muted">{c.phone || '—'}</td>
@@ -265,7 +265,7 @@ export function CandidatesView() {
               ))}
               {!candidates.length && (
                 <tr>
-                  <td colSpan={showBidderPicker ? 8 : 7} className="text-muted">No candidates found.</td>
+                  <td colSpan={showAccountPicker ? 8 : 7} className="text-muted">No candidates found.</td>
                 </tr>
               )}
             </tbody>
@@ -287,21 +287,21 @@ export function CandidatesView() {
           </>
         }
       >
-        {showBidderPicker && (
+        {showAccountPicker && (
           <div className="form-group">
-            <label>Bidder *</label>
+            <label>Account *</label>
             <select
-              value={form.bidderId}
-              onChange={(e) => setForm({ ...form, bidderId: e.target.value })}
+              value={form.accountId}
+              onChange={(e) => setForm({ ...form, accountId: e.target.value })}
             >
-              <option value="">— Select bidder —</option>
-              {bidders.map((b) => (
+              <option value="">— Select account —</option>
+              {accounts.map((b) => (
                 <option key={b.id} value={b.id}>{b.name}</option>
               ))}
             </select>
-            {!bidders.length && (
+            {!accounts.length && (
               <p className="text-muted" style={{ marginTop: 6, fontSize: 12 }}>
-                No bidders available. Add a bidder organization first.
+                No Accounts available. Add an Account team first.
               </p>
             )}
           </div>

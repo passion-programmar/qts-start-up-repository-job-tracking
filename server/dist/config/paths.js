@@ -6,7 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.isPackaged = isPackaged;
 exports.getAppRoot = getAppRoot;
 exports.getLogoPath = getLogoPath;
-exports.getBidderLogoPath = getBidderLogoPath;
+exports.getAccountLogoPath = getAccountLogoPath;
 const node_path_1 = __importDefault(require("node:path"));
 const node_fs_1 = __importDefault(require("node:fs"));
 function isPackaged() {
@@ -34,7 +34,7 @@ function getAssetPath(filename) {
 function getLogoPath() {
     return getAssetPath('logo.png');
 }
-function getBidderLogoPath() {
-    return getAssetPath('bidder-logo.png');
+function getAccountLogoPath() {
+    return getAssetPath('account-logo.png');
 }
 //# sourceMappingURL=paths.js.map

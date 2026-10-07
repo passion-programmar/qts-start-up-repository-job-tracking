@@ -1,6 +1,6 @@
 # justjoin.it Apply Templates
 
-> **Current system (June 2026):** See [docs/CURRENT-SYSTEM.md](docs/CURRENT-SYSTEM.md) � extension v1.13.25+, job sites, one-step auto-apply.
+> **Current system (June 2026):** See [docs/CURRENT-SYSTEM.md](docs/CURRENT-SYSTEM.md) � extension v1.13.25+, job sites, one-step auto-apply.
 
 The extension uses **apply templates** on justjoin.it — one strategy per apply flow type. Templates are registered in code and selected automatically by URL + page state.
 
@@ -27,7 +27,7 @@ job-offer page
 
 **Example:** [Team Connect — Senior Cloud Platform Engineer](https://justjoin.it/job-offer/team-connect-senior-cloud-platform-engineer-warszawa-devops)
 
-- No justjoin.it login — bidder opens job page, clicks Apply
+- No justjoin.it login — account opens job page, clicks Apply
 - Modal fields: name, email, CV upload, message toggle, terms, GDPR, marketing
 - Preview scans form **as-is** (checkboxes unchecked, toggle off)
 - Dynamic message field expands only on fill (`expandDynamicOnFill: true`)

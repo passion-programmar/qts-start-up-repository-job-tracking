@@ -20,7 +20,7 @@ const CandidateSchema = zod_1.z.object({
     color: zod_1.z.string().optional().or(zod_1.z.literal('')).refine((value) => !value || (0, candidate_colors_1.isCandidateColor)(value), { message: 'Color must be one of the allowed palette values' }),
     stack: zod_1.z.union([zod_1.z.literal(''), zod_1.z.string().max(100)]).optional(),
     isActive: zod_1.z.boolean().optional().default(true),
-    bidderId: zod_1.z.number().int().positive().optional().nullable(),
+    accountId: zod_1.z.number().int().positive().optional().nullable(),
 });
 async function pickDefaultColor() {
     const row = await (0, connection_1.queryOne)('SELECT COUNT(*)::int AS count FROM candidates');
@@ -59,28 +59,28 @@ async function canAccessCandidate(req, id) {
         return true;
     if ((0, scope_1.isManager)(req) && req.userId) {
         const row = await (0, connection_1.queryOne)(`SELECT c.id FROM candidates c
-       JOIN bidders b ON b.id = c.bidder_id
+       JOIN accounts b ON b.id = c.account_id
        WHERE c.id = $1 AND b.manager_id = $2`, [id, req.userId]);
         return Boolean(row);
     }
-    if (!(0, scope_1.isBidder)(req) || !req.bidderId)
+    if (!(0, scope_1.isAccount)(req) || !req.accountId)
         return false;
-    const row = await (0, connection_1.queryOne)('SELECT id FROM candidates WHERE id = $1 AND bidder_id = $2', [id, req.bidderId]);
+    const row = await (0, connection_1.queryOne)('SELECT id FROM candidates WHERE id = $1 AND account_id = $2', [id, req.accountId]);
     return Boolean(row);
 }
 router.get('/', async (req, res) => {
     const search = req.query.search || '';
     const activeOnly = req.query.active === 'true';
     const minimal = req.query.minimal === 'true';
-    const bidderIdFilter = Number(req.query.bidderId || 0);
+    const accountIdFilter = Number(req.query.accountId || 0);
     const selectColumns = minimal
-        ? 'c.id, c.name, c.bidder_id, c.is_active, c.stack, c.color'
+        ? 'c.id, c.name, c.account_id, c.is_active, c.stack, c.color'
         : 'c.*';
-    let query = `SELECT ${selectColumns}, b.name AS bidder_name FROM candidates c LEFT JOIN bidders b ON b.id = c.bidder_id`;
+    let query = `SELECT ${selectColumns}, b.name AS account_name FROM candidates c LEFT JOIN accounts b ON b.id = c.account_id`;
     const params = [];
     const conditions = [];
     let paramIndex = 1;
-    const scope = (0, scope_1.candidateBidderFilter)(req, 'c', paramIndex);
+    const scope = (0, scope_1.candidateAccountFilter)(req, 'c', paramIndex);
     if (scope.clause) {
         conditions.push(scope.clause);
         params.push(...scope.params);
@@ -94,9 +94,9 @@ router.get('/', async (req, res) => {
     if (activeOnly) {
         conditions.push('c.is_active = TRUE');
     }
-    if (Number.isFinite(bidderIdFilter) && bidderIdFilter > 0 && (0, scope_1.isAdmin)(req)) {
-        conditions.push(`c.bidder_id = $${paramIndex++}`);
-        params.push(bidderIdFilter);
+    if (Number.isFinite(accountIdFilter) && accountIdFilter > 0 && (0, scope_1.isAdmin)(req)) {
+        conditions.push(`c.account_id = $${paramIndex++}`);
+        params.push(accountIdFilter);
     }
     if (conditions.length)
         query += ' WHERE ' + conditions.join(' AND ');
@@ -110,17 +110,17 @@ router.get('/:id', async (req, res) => {
         res.status(404).json({ success: false, message: 'Candidate not found.' });
         return;
     }
-    const candidate = await (0, connection_1.queryOne)(`SELECT c.*, b.name AS bidder_name FROM candidates c
-     LEFT JOIN bidders b ON b.id = c.bidder_id WHERE c.id = $1`, [id]);
+    const candidate = await (0, connection_1.queryOne)(`SELECT c.*, b.name AS account_name FROM candidates c
+     LEFT JOIN accounts b ON b.id = c.account_id WHERE c.id = $1`, [id]);
     res.json({ success: true, candidate });
 });
-async function canManageBidder(req, bidderId) {
-    if (!bidderId)
+async function canManageAccount(req, accountId) {
+    if (!accountId)
         return (0, scope_1.isAdmin)(req);
     if ((0, scope_1.isAdmin)(req))
         return true;
     if ((0, scope_1.isManager)(req) && req.userId) {
-        const row = await (0, connection_1.queryOne)('SELECT id FROM bidders WHERE id = $1 AND manager_id = $2', [bidderId, req.userId]);
+        const row = await (0, connection_1.queryOne)('SELECT id FROM accounts WHERE id = $1 AND manager_id = $2', [accountId, req.userId]);
         return Boolean(row);
     }
     return false;
@@ -133,29 +133,29 @@ router.post('/', auth_1.requireAdminOrManagerWrite, async (req, res) => {
     if (stack === undefined)
         return;
     const color = data.color || await pickDefaultColor();
-    let bidderId;
+    let accountId;
     if ((0, scope_1.isAdmin)(req)) {
-        bidderId = data.bidderId ?? null;
-        if (!bidderId) {
-            res.status(400).json({ success: false, message: 'Select a bidder organization for this candidate.' });
+        accountId = data.accountId ?? null;
+        if (!accountId) {
+            res.status(400).json({ success: false, message: 'Select an Account team for this candidate.' });
             return;
         }
     }
     else if ((0, scope_1.isManager)(req)) {
-        bidderId = data.bidderId ?? null;
-        if (!bidderId || !(await canManageBidder(req, bidderId))) {
-            res.status(400).json({ success: false, message: 'Select a bidder from your team.' });
+        accountId = data.accountId ?? null;
+        if (!accountId || !(await canManageAccount(req, accountId))) {
+            res.status(400).json({ success: false, message: 'Select an Account team.' });
             return;
         }
     }
     else {
-        bidderId = req.bidderId ?? null;
-        if (!bidderId) {
-            res.status(400).json({ success: false, message: 'Bidder account is not linked to an organization.' });
+        accountId = req.accountId ?? null;
+        if (!accountId) {
+            res.status(400).json({ success: false, message: 'This Account login is not linked to an Account team.' });
             return;
         }
     }
-    const inserted = await (0, connection_1.queryOne)(`INSERT INTO candidates (name, email, phone, linkedin_url, notes, color, stack, is_active, bidder_id)
+    const inserted = await (0, connection_1.queryOne)(`INSERT INTO candidates (name, email, phone, linkedin_url, notes, color, stack, is_active, account_id)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
      RETURNING id`, [
         data.name,
@@ -166,10 +166,10 @@ router.post('/', auth_1.requireAdminOrManagerWrite, async (req, res) => {
         color,
         stack,
         data.isActive ?? true,
-        bidderId,
+        accountId,
     ]);
     const candidate = await (0, connection_1.queryOne)('SELECT * FROM candidates WHERE id = $1', [inserted.id]);
-    logger_1.logger.info('Candidate created', { name: data.name, bidderId });
+    logger_1.logger.info('Candidate created', { name: data.name, accountId });
     res.status(201).json({ success: true, candidate });
 });
 router.put('/:id', auth_1.requireAdminOrManagerWrite, async (req, res) => {
@@ -190,24 +190,24 @@ router.put('/:id', auth_1.requireAdminOrManagerWrite, async (req, res) => {
     if (stack === undefined)
         return;
     const color = data.color || existing.color || await pickDefaultColor();
-    let bidderId = existing.bidder_id ?? null;
+    let accountId = existing.account_id ?? null;
     if ((0, scope_1.isAdmin)(req)) {
-        bidderId = data.bidderId ?? bidderId;
-        if (!bidderId) {
-            res.status(400).json({ success: false, message: 'Select a bidder organization for this candidate.' });
+        accountId = data.accountId ?? accountId;
+        if (!accountId) {
+            res.status(400).json({ success: false, message: 'Select an Account team for this candidate.' });
             return;
         }
     }
     else if ((0, scope_1.isManager)(req)) {
-        bidderId = data.bidderId ?? bidderId;
-        if (!bidderId || !(await canManageBidder(req, bidderId))) {
-            res.status(400).json({ success: false, message: 'Select a bidder from your team.' });
+        accountId = data.accountId ?? accountId;
+        if (!accountId || !(await canManageAccount(req, accountId))) {
+            res.status(400).json({ success: false, message: 'Select an Account team.' });
             return;
         }
     }
     await (0, connection_1.execute)(`UPDATE candidates
      SET name = $1, email = $2, phone = $3, linkedin_url = $4, notes = $5, color = $6, stack = $7,
-         is_active = $8, bidder_id = $9, updated_at = NOW()
+         is_active = $8, account_id = $9, updated_at = NOW()
      WHERE id = $10`, [
         data.name,
         data.email || null,
@@ -217,7 +217,7 @@ router.put('/:id', auth_1.requireAdminOrManagerWrite, async (req, res) => {
         color,
         stack,
         data.isActive ?? true,
-        bidderId,
+        accountId,
         req.params.id,
     ]);
     const candidate = await (0, connection_1.queryOne)('SELECT * FROM candidates WHERE id = $1', [req.params.id]);

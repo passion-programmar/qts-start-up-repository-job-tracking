@@ -18,10 +18,10 @@ type NavItem = {
 };
 
 const NAV_ITEMS: NavItem[] = [
-  { href: '', label: '📊 Dashboard', page: 'dashboard', modes: ['admin', 'manager', 'bidder'] },
-  { href: '/candidates', label: '👥 Candidates', page: 'candidates', modes: ['bidder'] },
-  { href: '/jobs', label: '💼 Jobs', page: 'jobs', modes: ['admin', 'manager', 'bidder'] },
-  { href: '/bidders', label: '🏢 Bidders', page: 'bidders', modes: ['manager'] },
+  { href: '', label: '📊 Dashboard', page: 'dashboard', modes: ['admin', 'manager', 'account'] },
+  { href: '/candidates', label: '👥 Candidates', page: 'candidates', modes: ['account'] },
+  { href: '/jobs', label: '💼 Jobs', page: 'jobs', modes: ['admin', 'manager', 'account'] },
+  { href: '/accounts', label: '🏢 Accounts', page: 'accounts', modes: ['manager'] },
   { href: '/people', label: '👥 People', page: 'people', modes: ['admin'] },
   { href: '/interviews', label: '📅 Interviews', page: 'interviews', modes: ['admin', 'manager', 'caller'] },
   { href: '/settings', label: '⚙️ Settings', page: 'settings', modes: ['admin'] },
@@ -31,7 +31,7 @@ const PAGE_TITLES: Record<string, string> = {
   dashboard: 'Dashboard',
   candidates: 'Candidates',
   jobs: 'Jobs',
-  bidders: 'Custom GPT',
+  accounts: 'Custom GPT',
   database: 'Database Records',
   people: 'People',
   interviews: 'Interview Process',
@@ -60,12 +60,19 @@ export function PanelShell({
   const [navOpen, setNavOpen] = useState(false);
 
   const navItems = useMemo(() => {
-    if (mode === 'admin') return getAdminNavItems(adminUiMode);
+    if (mode === 'admin') {
+      const items = getAdminNavItems(adminUiMode);
+      return user?.role === 'super'
+        ? items
+        : items.filter((item) => item.page !== 'accounts' && item.page !== 'database' && item.page !== 'settings');
+    }
     return NAV_ITEMS.filter((item) => item.modes.includes(mode));
-  }, [mode, adminUiMode]);
+  }, [mode, adminUiMode, user?.role]);
 
   const page = resolvePage(pathname, basePath);
-  const title = PAGE_TITLES[page] || 'Dashboard';
+  const title = page === 'accounts' && mode === 'manager'
+    ? 'Accounts'
+    : PAGE_TITLES[page] || 'Dashboard';
 
   const closeNav = useCallback(() => setNavOpen(false), []);
 
@@ -175,9 +182,9 @@ export function PanelShell({
             Manager mode — team management and analytics. Full platform settings require admin.
           </div>
         )}
-        {!canWrite && mode === 'bidder' && (
+        {!canWrite && mode === 'account' && (
           <div className="read-only-banner">
-            Bidder mode — you can add jobs. Candidates are managed by your manager.
+            Account mode — you can add jobs. Candidates are managed by your manager.
           </div>
         )}
         {!canWrite && mode === 'caller' && (

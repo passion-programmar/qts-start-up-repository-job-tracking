@@ -14,8 +14,8 @@ async function createAccount(input) {
     const hash = await bcryptjs_1.default.hash(input.password, BCRYPT_ROUNDS);
     const encrypted = (0, credential_crypto_1.encryptCredential)(input.password);
     const isActive = input.isActive ?? true;
-    return (0, connection_1.queryOne)(`INSERT INTO admins (username, password_hash, password_encrypted, role, bidder_id, is_active)
-     VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`, [input.username, hash, encrypted, input.role, input.bidderId ?? null, isActive]);
+    return (0, connection_1.queryOne)(`INSERT INTO admins (username, password_hash, password_encrypted, role, account_id, is_active)
+     VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`, [input.username, hash, encrypted, input.role, input.accountId ?? null, isActive]);
 }
 async function updateAccountPassword(accountId, password) {
     const hash = await bcryptjs_1.default.hash(password, BCRYPT_ROUNDS);

@@ -2,11 +2,11 @@ import { queryOne } from '../database/connection';
 import { AuthRequest } from './auth';
 
 export function isAdmin(req: AuthRequest): boolean {
-  return req.role === 'admin';
+  return req.role === 'admin' || req.role === 'super';
 }
 
-export function isBidder(req: AuthRequest): boolean {
-  return req.role === 'bidder';
+export function isAccount(req: AuthRequest): boolean {
+  return req.role === 'account' || (req.role === 'manager' && req.extensionAccountScope === true && Boolean(req.accountId));
 }
 
 export function isCaller(req: AuthRequest): boolean {
@@ -14,10 +14,10 @@ export function isCaller(req: AuthRequest): boolean {
 }
 
 export function isManager(req: AuthRequest): boolean {
-  return req.role === 'manager';
+  return req.role === 'manager' && req.extensionAccountScope !== true;
 }
 
-export function candidateBidderFilter(
+export function candidateAccountFilter(
   req: AuthRequest,
   alias = 'c',
   paramIndex = 1
@@ -25,24 +25,31 @@ export function candidateBidderFilter(
   if (isAdmin(req)) {
     return { clause: '', params: [], nextIndex: paramIndex };
   }
+  if (isManager(req) && req.userId && req.accountId) {
+    return {
+      clause: `${alias}.account_id = $${paramIndex}`,
+      params: [req.accountId],
+      nextIndex: paramIndex + 1,
+    };
+  }
   if (isManager(req) && req.userId) {
     return {
-      clause: `${alias}.bidder_id IN (SELECT id FROM bidders WHERE manager_id = $${paramIndex})`,
+      clause: `${alias}.account_id IN (SELECT id FROM accounts WHERE manager_id = $${paramIndex})`,
       params: [req.userId],
       nextIndex: paramIndex + 1,
     };
   }
-  if (isBidder(req) && req.bidderId) {
+  if (isAccount(req) && req.accountId) {
     return {
-      clause: `${alias}.bidder_id = $${paramIndex}`,
-      params: [req.bidderId],
+      clause: `${alias}.account_id = $${paramIndex}`,
+      params: [req.accountId],
       nextIndex: paramIndex + 1,
     };
   }
   return { clause: 'FALSE', params: [], nextIndex: paramIndex };
 }
 
-export function jobBidderFilter(
+export function jobAccountFilter(
   req: AuthRequest,
   alias = 'j',
   paramIndex = 1
@@ -50,31 +57,38 @@ export function jobBidderFilter(
   if (isAdmin(req)) {
     return { clause: '', params: [], nextIndex: paramIndex };
   }
+  if (isManager(req) && req.userId && req.accountId) {
+    return {
+      clause: `${alias}.account_id = $${paramIndex}`,
+      params: [req.accountId],
+      nextIndex: paramIndex + 1,
+    };
+  }
   if (isManager(req) && req.userId) {
     const managerParam = `$${paramIndex}`;
     const clause = `(
-      ${alias}.bidder_id IN (SELECT id FROM bidders WHERE manager_id = ${managerParam})
+      ${alias}.account_id IN (SELECT id FROM accounts WHERE manager_id = ${managerParam})
       OR ${alias}.id IN (
         SELECT DISTINCT cj.job_id FROM candidate_jobs cj
         JOIN candidates c ON c.id = cj.candidate_id
-        WHERE c.bidder_id IN (SELECT id FROM bidders WHERE manager_id = ${managerParam})
+        WHERE c.account_id IN (SELECT id FROM accounts WHERE manager_id = ${managerParam})
       )
     )`;
     return { clause, params: [req.userId], nextIndex: paramIndex + 1 };
   }
-  if (isBidder(req) && req.bidderId) {
-    const bidderParam = `$${paramIndex}`;
+  if (isAccount(req) && req.accountId) {
+    const accountParam = `$${paramIndex}`;
     const clause = `(
-      ${alias}.bidder_id = ${bidderParam}
+      ${alias}.account_id = ${accountParam}
       OR ${alias}.id IN (
         SELECT DISTINCT cj.job_id FROM candidate_jobs cj
         JOIN candidates c ON c.id = cj.candidate_id
-        WHERE c.bidder_id = ${bidderParam}
+        WHERE c.account_id = ${accountParam}
       )
       OR EXISTS (
-        SELECT 1 FROM bidder_job_sites bjs
+        SELECT 1 FROM account_job_sites bjs
         JOIN job_sites js ON js.id = bjs.job_site_id AND js.is_active = TRUE
-        WHERE bjs.bidder_id = ${bidderParam} AND bjs.is_active = TRUE
+        WHERE bjs.account_id = ${accountParam} AND bjs.is_active = TRUE
         AND (
           LOWER(COALESCE(${alias}.source, '')) = LOWER(js.platform_key)
           OR (
@@ -84,13 +98,13 @@ export function jobBidderFilter(
         )
       )
     )`;
-    return { clause, params: [req.bidderId], nextIndex: paramIndex + 1 };
+    return { clause, params: [req.accountId], nextIndex: paramIndex + 1 };
   }
   return { clause: 'FALSE', params: [], nextIndex: paramIndex };
 }
 
 export async function jobAccessible(req: AuthRequest, jobId: number): Promise<boolean> {
-  const scope = jobBidderFilter(req, 'j', 2);
+  const scope = jobAccountFilter(req, 'j', 2);
   let query = 'SELECT j.id FROM jobs j WHERE j.id = $1';
   const params: unknown[] = [jobId];
   if (scope.clause) {
@@ -116,17 +130,24 @@ export function interviewCallerFilter(
       nextIndex: paramIndex + 1,
     };
   }
+  if (isManager(req) && req.userId && req.accountId) {
+    return {
+      clause: `${alias}.account_id = $${paramIndex}`,
+      params: [req.accountId],
+      nextIndex: paramIndex + 1,
+    };
+  }
   if (isManager(req) && req.userId) {
     return {
-      clause: `${alias}.bidder_id IN (SELECT id FROM bidders WHERE manager_id = $${paramIndex})`,
+      clause: `${alias}.account_id IN (SELECT id FROM accounts WHERE manager_id = $${paramIndex})`,
       params: [req.userId],
       nextIndex: paramIndex + 1,
     };
   }
-  if (isBidder(req) && req.bidderId) {
+  if (isAccount(req) && req.accountId) {
     return {
-      clause: `${alias}.bidder_id = $${paramIndex}`,
-      params: [req.bidderId],
+      clause: `${alias}.account_id = $${paramIndex}`,
+      params: [req.accountId],
       nextIndex: paramIndex + 1,
     };
   }

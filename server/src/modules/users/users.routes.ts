@@ -7,22 +7,41 @@ import { decryptCredential } from '../../utilities/credential-crypto';
 import { logger } from '../../utilities/logger';
 
 const router = Router();
-router.use(requireAuth, requireAdmin);
+router.use(requireAuth);
 
 const UserSchema = z.object({
   username: z.string().min(1).max(100),
   password: z.string().min(1).max(200).optional(),
-  role: z.enum(['admin', 'manager', 'bidder', 'caller']),
-  bidderId: z.number().int().positive().optional().nullable(),
+  role: z.enum(['super', 'admin', 'manager', 'account', 'caller']),
+  accountId: z.number().int().positive().optional().nullable(),
   isActive: z.boolean().optional(),
 });
 
+function canManageRole(actorRole: string | undefined, targetRole: string): boolean {
+  if (actorRole === 'super') return targetRole !== 'super';
+  if (actorRole === 'admin') return targetRole === 'manager' || targetRole === 'caller';
+  return false;
+}
+
+function requireUserManagement(req: AuthRequest, res: Response, targetRole?: string): boolean {
+  if (req.role !== 'super' && req.role !== 'admin') {
+    res.status(403).json({ success: false, message: 'Admin access required.' });
+    return false;
+  }
+  if (targetRole && !canManageRole(req.role, targetRole)) {
+    res.status(403).json({ success: false, message: 'You cannot manage this account role.' });
+    return false;
+  }
+  return true;
+}
+
 router.get('/', async (req: AuthRequest, res: Response) => {
+  if (!requireUserManagement(req, res)) return;
   const roleFilter = req.query.role as string | undefined;
   let query = `
-    SELECT a.id, a.username, a.role, a.bidder_id, a.is_active, a.created_at, b.name AS bidder_name
+    SELECT a.id, a.username, a.role, a.account_id, a.is_active, a.created_at, b.name AS account_name
     FROM admins a
-    LEFT JOIN bidders b ON b.id = a.bidder_id`;
+    LEFT JOIN accounts b ON b.id = a.account_id`;
   const params: unknown[] = [];
   if (roleFilter) {
     query += ' WHERE a.role = $1';
@@ -38,15 +57,15 @@ router.get('/:id', async (req: AuthRequest, res: Response) => {
     id: number;
     username: string;
     role: string;
-    bidder_id: number | null;
+    account_id: number | null;
     created_at: string;
-    bidder_name: string | null;
+    account_name: string | null;
     is_active: boolean;
     password_encrypted: string | null;
   }>(
-    `SELECT a.id, a.username, a.role, a.bidder_id, a.is_active, a.created_at, b.name AS bidder_name, a.password_encrypted
+    `SELECT a.id, a.username, a.role, a.account_id, a.is_active, a.created_at, b.name AS account_name, a.password_encrypted
      FROM admins a
-     LEFT JOIN bidders b ON b.id = a.bidder_id
+     LEFT JOIN accounts b ON b.id = a.account_id
      WHERE a.id = $1`,
     [req.params.id]
   );
@@ -54,31 +73,33 @@ router.get('/:id', async (req: AuthRequest, res: Response) => {
     res.status(404).json({ success: false, message: 'User not found.' });
     return;
   }
+  if (!requireUserManagement(req, res, user.role)) return;
   res.json({
     success: true,
     user: {
       id: user.id,
       username: user.username,
       role: user.role,
-      bidder_id: user.bidder_id,
-      bidder_name: user.bidder_name,
+      account_id: user.account_id,
+      account_name: user.account_name,
       created_at: user.created_at,
       is_active: user.is_active,
-      password: decryptCredential(user.password_encrypted),
+      password: user.role === 'account' ? null : decryptCredential(user.password_encrypted),
     },
   });
 });
 
 router.post('/', async (req: AuthRequest, res: Response) => {
   const data = UserSchema.parse(req.body);
+  if (!requireUserManagement(req, res, data.role)) return;
   if (!data.password) {
     res.status(400).json({ success: false, message: 'Password is required for new accounts.' });
     return;
   }
-  if (data.role === 'bidder' && !data.bidderId) {
+  if (data.role === 'account' && !data.accountId) {
     res.status(400).json({
       success: false,
-      message: 'Bidder accounts must be linked to a bidder organization.',
+      message: 'Account logins must be linked to an Account team.',
     });
     return;
   }
@@ -91,13 +112,13 @@ router.post('/', async (req: AuthRequest, res: Response) => {
     username: data.username,
     password: data.password,
     role: data.role,
-    bidderId: data.bidderId ?? null,
+    accountId: data.accountId ?? null,
     isActive: data.isActive ?? true,
   });
 
   const user = await queryOne(
-    `SELECT a.id, a.username, a.role, a.bidder_id, a.is_active, a.created_at, b.name AS bidder_name
-     FROM admins a LEFT JOIN bidders b ON b.id = a.bidder_id WHERE a.id = $1`,
+    `SELECT a.id, a.username, a.role, a.account_id, a.is_active, a.created_at, b.name AS account_name
+     FROM admins a LEFT JOIN accounts b ON b.id = a.account_id WHERE a.id = $1`,
     [row!.id]
   );
   logger.info('User account created', { username: data.username, role: data.role });
@@ -105,21 +126,31 @@ router.post('/', async (req: AuthRequest, res: Response) => {
 });
 
 router.put('/:id', async (req: AuthRequest, res: Response) => {
-  const existing = await queryOne<{ id: number }>('SELECT id FROM admins WHERE id = $1', [req.params.id]);
+  const existing = await queryOne<{ id: number; role: string }>('SELECT id, role FROM admins WHERE id = $1', [req.params.id]);
   if (!existing) {
     res.status(404).json({ success: false, message: 'User not found.' });
     return;
   }
   const data = UserSchema.parse(req.body);
-  if (data.role === 'bidder' && !data.bidderId) {
+  if (existing.role === 'account' && data.password) {
+    res.status(403).json({ success: false, message: 'Account passwords cannot be viewed or reset here.' });
+    return;
+  }
+  if (!requireUserManagement(req, res, existing.role) ||
+      (data.role !== existing.role && !requireUserManagement(req, res, data.role))) return;
+  if (req.role !== 'super' && data.role === 'admin') {
+    res.status(403).json({ success: false, message: 'Only Super can assign the Admin role.' });
+    return;
+  }
+  if (data.role === 'account' && !data.accountId) {
     res.status(400).json({
       success: false,
-      message: 'Bidder accounts must be linked to a bidder organization.',
+      message: 'Account logins must be linked to an Account team.',
     });
     return;
   }
-  const fields: string[] = ['role = $1', 'bidder_id = $2', 'updated_at = NOW()'];
-  const params: unknown[] = [data.role, data.bidderId ?? null];
+  const fields: string[] = ['role = $1', 'account_id = $2', 'updated_at = NOW()'];
+  const params: unknown[] = [data.role, data.accountId ?? null];
   if (data.isActive !== undefined) {
     fields.push(`is_active = $${params.length + 1}`);
     params.push(data.isActive);
@@ -130,8 +161,8 @@ router.put('/:id', async (req: AuthRequest, res: Response) => {
   params.push(req.params.id);
   await execute(`UPDATE admins SET ${fields.join(', ')} WHERE id = $${params.length}`, params);
   const user = await queryOne(
-    `SELECT a.id, a.username, a.role, a.bidder_id, a.is_active, a.created_at, b.name AS bidder_name
-     FROM admins a LEFT JOIN bidders b ON b.id = a.bidder_id WHERE a.id = $1`,
+    `SELECT a.id, a.username, a.role, a.account_id, a.is_active, a.created_at, b.name AS account_name
+     FROM admins a LEFT JOIN accounts b ON b.id = a.account_id WHERE a.id = $1`,
     [req.params.id]
   );
   res.json({ success: true, user });
@@ -142,14 +173,15 @@ router.delete('/:id', async (req: AuthRequest, res: Response) => {
     res.status(400).json({ success: false, message: 'You cannot delete your own account.' });
     return;
   }
-  const existing = await queryOne<{ username: string }>(
-    'SELECT username FROM admins WHERE id = $1',
+  const existing = await queryOne<{ username: string; role: string }>(
+    'SELECT username, role FROM admins WHERE id = $1',
     [req.params.id]
   );
   if (!existing) {
     res.status(404).json({ success: false, message: 'User not found.' });
     return;
   }
+  if (!requireUserManagement(req, res, existing.role)) return;
   await execute('DELETE FROM admins WHERE id = $1', [req.params.id]);
   logger.info('User deleted', { id: req.params.id, username: existing.username });
   res.json({ success: true, message: 'User deleted.' });

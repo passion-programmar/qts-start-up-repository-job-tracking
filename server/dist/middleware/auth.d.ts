@@ -5,8 +5,9 @@ export interface AuthRequest extends Request {
     userId?: number;
     username?: string;
     role?: UserRole;
-    bidderId?: number | null;
-    bidderName?: string | null;
+    accountId?: number | null;
+    accountName?: string | null;
+    extensionAccountScope?: boolean;
     /** @deprecated Use userId */
     adminId?: number;
     /** @deprecated Use username */
@@ -15,13 +16,14 @@ export interface AuthRequest extends Request {
     gptServiceAuth?: boolean;
 }
 export declare function requireAuth(req: AuthRequest, res: Response, next: NextFunction): void;
-/** Accepts bidder/admin JWT or the static GPT_ACTION_API_KEY for Custom GPT Actions. */
+/** Accepts account/admin JWT or the static GPT_ACTION_API_KEY for Custom GPT Actions. */
 export declare function requireAuthOrGptActionKey(req: AuthRequest, res: Response, next: NextFunction): void;
 export declare function requireAdmin(req: AuthRequest, res: Response, next: NextFunction): void;
-export declare function requireAdminOrBidder(req: AuthRequest, res: Response, next: NextFunction): void;
+export declare function requireSuper(req: AuthRequest, res: Response, next: NextFunction): void;
+export declare function requireAdminOrAccount(req: AuthRequest, res: Response, next: NextFunction): void;
 export declare function requireAdminOrCaller(req: AuthRequest, res: Response, next: NextFunction): void;
 export declare function requireAdminOrManager(req: AuthRequest, res: Response, next: NextFunction): void;
 export declare function requireAdminWrite(req: AuthRequest, res: Response, next: NextFunction): void;
 export declare function requireAdminOrManagerWrite(req: AuthRequest, res: Response, next: NextFunction): void;
-export declare function requireAdminManagerOrBidder(req: AuthRequest, res: Response, next: NextFunction): void;
+export declare function requireAdminManagerOrAccount(req: AuthRequest, res: Response, next: NextFunction): void;
 //# sourceMappingURL=auth.d.ts.map

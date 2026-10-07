@@ -103,7 +103,7 @@ function parseIncomingValue(category, key, value) {
         return null;
     return String(value);
 }
-router.delete('/cleanup/application-sessions', async (req, res) => {
+router.delete('/cleanup/application-sessions', auth_1.requireSuper, async (req, res) => {
     const { clearApplicationSessionRecords } = await Promise.resolve().then(() => __importStar(require('../../database/reset-database')));
     const removed = await clearApplicationSessionRecords();
     logger_1.logger.info('Admin cleared application session tables', {
@@ -193,10 +193,14 @@ router.get('/:category/:id', async (req, res) => {
     }
     res.json({ success: true, record });
 });
-router.put('/:category/:id', async (req, res) => {
+router.put('/:category/:id', auth_1.requireSuper, async (req, res) => {
     const category = (0, admin_records_registry_1.getRecordCategory)(req.params.category);
     if (!category) {
         res.status(404).json({ success: false, message: 'Unknown record category.' });
+        return;
+    }
+    if (category.table === 'admins') {
+        res.status(403).json({ success: false, message: 'Manage accounts from the People screen.' });
         return;
     }
     const body = UpdateBodySchema.parse(req.body ?? {});
@@ -250,10 +254,14 @@ router.put('/:category/:id', async (req, res) => {
     });
     res.json({ success: true, record: sanitizeRow(category, updated) });
 });
-router.delete('/:category/:id', async (req, res) => {
+router.delete('/:category/:id', auth_1.requireSuper, async (req, res) => {
     const category = (0, admin_records_registry_1.getRecordCategory)(req.params.category);
     if (!category) {
         res.status(404).json({ success: false, message: 'Unknown record category.' });
+        return;
+    }
+    if (category.table === 'admins') {
+        res.status(403).json({ success: false, message: 'Manage accounts from the People screen.' });
         return;
     }
     if (category.table === 'admins' && req.params.id === String(req.userId)) {

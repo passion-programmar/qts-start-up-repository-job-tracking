@@ -1,8 +1,8 @@
 import { Router, Response } from 'express';
 import { z } from 'zod';
 import { queryAll, queryOne, execute, withTransaction, DbQueryable, dbQuery } from '../../database/connection';
-import { requireAuth, requireAdminWrite, requireAdminOrBidder, AuthRequest } from '../../middleware/auth';
-import { jobBidderFilter, isAdmin, isBidder, isCaller, isManager, jobAccessible } from '../../middleware/scope';
+import { requireAuth, requireAdminWrite, requireAdminOrAccount, AuthRequest } from '../../middleware/auth';
+import { jobAccountFilter, isAdmin, isAccount, isCaller, isManager, jobAccessible } from '../../middleware/scope';
 import { normalizeUrl } from '../../utilities/normalize-url';
 import { logger } from '../../utilities/logger';
 
@@ -33,9 +33,9 @@ async function getJobWithCandidates(jobId: number, req?: AuthRequest) {
     WHERE c.is_active = TRUE`;
   const params: unknown[] = [jobId];
 
-  if (req && isBidder(req) && req.bidderId) {
-    candidateQuery += ' AND c.bidder_id = $2';
-    params.push(req.bidderId);
+  if (req && isAccount(req) && req.accountId) {
+    candidateQuery += ' AND c.account_id = $2';
+    params.push(req.accountId);
   }
 
   candidateQuery += ' ORDER BY c.name ASC';
@@ -47,7 +47,7 @@ async function upsertCandidateStatuses(
   jobId: number,
   statuses: Array<{ candidateId: number; status: string }>,
   client?: DbQueryable,
-  bidderId?: number | null
+  accountId?: number | null
 ) {
   const exec = async (sql: string, params: unknown[]) => {
     if (client) return client.query(sql, params);
@@ -56,9 +56,9 @@ async function upsertCandidateStatuses(
 
   let activeSql = 'SELECT id FROM candidates WHERE is_active = TRUE';
   const activeParams: unknown[] = [];
-  if (bidderId) {
-    activeSql += ' AND bidder_id = $1';
-    activeParams.push(bidderId);
+  if (accountId) {
+    activeSql += ' AND account_id = $1';
+    activeParams.push(accountId);
   }
   const activeResult = await exec(activeSql, activeParams);
   const activeCandidates = activeResult.rows as Array<{ id: number }>;
@@ -118,7 +118,7 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
   const jobSiteId = Number(req.query.jobSiteId || 0);
 
   let query = `
-    SELECT j.id, j.title, j.company, j.url, j.normalized_url, j.source, j.bidder_id,
+    SELECT j.id, j.title, j.company, j.url, j.normalized_url, j.source, j.account_id,
            j.created_by_user_id, j.created_at, j.updated_at,
            COALESCE(app.applied_count, 0)::int AS applied_count
     FROM jobs j
@@ -158,7 +158,7 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
     conditions.push('COALESCE(app.applied_count, 0) > 0');
   }
 
-  const scope = jobBidderFilter(req, 'j', paramIndex);
+  const scope = jobAccountFilter(req, 'j', paramIndex);
   if (scope.clause) {
     conditions.push(scope.clause);
     params.push(...scope.params);
@@ -176,7 +176,7 @@ router.get('/by-url', requireAuth, async (req: AuthRequest, res: Response) => {
   const raw = req.query.url as string;
   if (!raw) { res.status(400).json({ success: false, message: 'URL parameter required.' }); return; }
   const norm = normalizeUrl(raw);
-  const scope = jobBidderFilter(req, 'j', 2);
+  const scope = jobAccountFilter(req, 'j', 2);
   let accessQuery = 'SELECT j.* FROM jobs j WHERE j.normalized_url = $1';
   const accessParams: unknown[] = [norm];
   if (scope.clause) {
@@ -196,18 +196,18 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
   }
 
   const managerId = isManager(req) ? req.userId : null;
-  const bidderId = isBidder(req) ? req.bidderId : null;
-  const scopeId = bidderId ?? managerId ?? null;
-  const managerScope = Boolean(managerId && !bidderId);
+  const accountId = isAccount(req) ? req.accountId : null;
+  const scopeId = accountId ?? managerId ?? null;
+  const managerScope = Boolean(managerId && !accountId);
   const scoped = Boolean(scopeId);
 
   const candidateScopeSql = managerScope
-    ? 'bidder_id IN (SELECT id FROM bidders WHERE manager_id = $1)'
-    : 'bidder_id = $1';
-  const cjBidderJoin = scoped
+    ? 'account_id IN (SELECT id FROM accounts WHERE manager_id = $1)'
+    : 'account_id = $1';
+  const cjAccountJoin = scoped
     ? managerScope
-      ? 'JOIN candidates c_scope ON c_scope.id = cj.candidate_id AND c_scope.bidder_id IN (SELECT id FROM bidders WHERE manager_id = $1)'
-      : 'JOIN candidates c_scope ON c_scope.id = cj.candidate_id AND c_scope.bidder_id = $1'
+      ? 'JOIN candidates c_scope ON c_scope.id = cj.candidate_id AND c_scope.account_id IN (SELECT id FROM accounts WHERE manager_id = $1)'
+      : 'JOIN candidates c_scope ON c_scope.id = cj.candidate_id AND c_scope.account_id = $1'
     : '';
   const cjParams = scopeId ? [scopeId] : [];
 
@@ -217,13 +217,13 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
           j.id IN (
             SELECT DISTINCT cj2.job_id FROM candidate_jobs cj2
             JOIN candidates c2 ON c2.id = cj2.candidate_id
-            WHERE c2.bidder_id IN (SELECT id FROM bidders WHERE manager_id = $1)
-          ) OR j.bidder_id IN (SELECT id FROM bidders WHERE manager_id = $1)
+            WHERE c2.account_id IN (SELECT id FROM accounts WHERE manager_id = $1)
+          ) OR j.account_id IN (SELECT id FROM accounts WHERE manager_id = $1)
         )`
       : `WHERE j.id IN (
           SELECT DISTINCT cj2.job_id FROM candidate_jobs cj2
-          JOIN candidates c2 ON c2.id = cj2.candidate_id WHERE c2.bidder_id = $1
-        ) OR j.bidder_id = $1`
+          JOIN candidates c2 ON c2.id = cj2.candidate_id WHERE c2.account_id = $1
+        ) OR j.account_id = $1`
     : '';
 
   const [
@@ -261,29 +261,29 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
         ? managerScope
           ? `SELECT COUNT(*)::int AS count FROM candidate_jobs cj
              JOIN candidates c_scope ON c_scope.id = cj.candidate_id
-               AND c_scope.bidder_id IN (SELECT id FROM bidders WHERE manager_id = $1)
+               AND c_scope.account_id IN (SELECT id FROM accounts WHERE manager_id = $1)
              WHERE cj.status = 'applied'`
           : `SELECT COUNT(*)::int AS count FROM candidate_jobs cj
-             JOIN candidates c_scope ON c_scope.id = cj.candidate_id AND c_scope.bidder_id = $1
+             JOIN candidates c_scope ON c_scope.id = cj.candidate_id AND c_scope.account_id = $1
              WHERE cj.status = 'applied'`
         : "SELECT COUNT(*)::int AS count FROM candidate_jobs WHERE status = 'applied'",
       cjParams
     ),
     queryOne<{ count: number }>(`
       SELECT COUNT(*)::int AS count FROM candidate_jobs cj
-      ${cjBidderJoin}
+      ${cjAccountJoin}
       WHERE cj.status = 'applied' AND cj.applied_at IS NOT NULL
         AND cj.applied_at::date = CURRENT_DATE
     `, cjParams),
     queryOne<{ count: number }>(`
       SELECT COUNT(*)::int AS count FROM candidate_jobs cj
-      ${cjBidderJoin}
+      ${cjAccountJoin}
       WHERE cj.status = 'applied' AND cj.applied_at IS NOT NULL
         AND cj.applied_at >= NOW() - INTERVAL '7 days'
     `, cjParams),
     queryOne<{ count: number }>(`
       SELECT COUNT(*)::int AS count FROM candidate_jobs cj
-      ${cjBidderJoin}
+      ${cjAccountJoin}
       WHERE cj.status = 'applied' AND cj.applied_at IS NOT NULL
         AND date_trunc('month', cj.applied_at) = date_trunc('month', NOW())
     `, cjParams),
@@ -293,14 +293,14 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
       JOIN jobs j ON j.id = cj.job_id
       JOIN candidates c ON c.id = cj.candidate_id
       WHERE cj.status = 'applied'
-      ${scoped ? (managerScope ? 'AND c.bidder_id IN (SELECT id FROM bidders WHERE manager_id = $1)' : 'AND c.bidder_id = $1') : ''}
+      ${scoped ? (managerScope ? 'AND c.account_id IN (SELECT id FROM accounts WHERE manager_id = $1)' : 'AND c.account_id = $1') : ''}
       ORDER BY cj.applied_at DESC NULLS LAST, cj.updated_at DESC
       LIMIT 50
     `, cjParams),
     queryAll(`
       SELECT cj.applied_at::date AS label, COUNT(*)::int AS count
       FROM candidate_jobs cj
-      ${cjBidderJoin}
+      ${cjAccountJoin}
       WHERE cj.status = 'applied' AND cj.applied_at IS NOT NULL
         AND cj.applied_at >= NOW() - INTERVAL '30 days'
       GROUP BY cj.applied_at::date
@@ -309,7 +309,7 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
     queryAll(`
       SELECT TO_CHAR(cj.applied_at, 'IYYY-"W"IW') AS label, COUNT(*)::int AS count
       FROM candidate_jobs cj
-      ${cjBidderJoin}
+      ${cjAccountJoin}
       WHERE cj.status = 'applied' AND cj.applied_at IS NOT NULL
         AND cj.applied_at >= NOW() - INTERVAL '84 days'
       GROUP BY TO_CHAR(cj.applied_at, 'IYYY-"W"IW')
@@ -319,7 +319,7 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
     queryAll(`
       SELECT TO_CHAR(cj.applied_at, 'YYYY-MM') AS label, COUNT(*)::int AS count
       FROM candidate_jobs cj
-      ${cjBidderJoin}
+      ${cjAccountJoin}
       WHERE cj.status = 'applied' AND cj.applied_at IS NOT NULL
       GROUP BY TO_CHAR(cj.applied_at, 'YYYY-MM')
       ORDER BY label DESC
@@ -338,7 +338,7 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
       FROM jobs j
       LEFT JOIN candidate_jobs cj ON cj.job_id = j.id AND cj.status = 'applied'
       LEFT JOIN candidates c ON c.id = cj.candidate_id
-      ${scoped ? (managerScope ? 'WHERE (c.bidder_id IN (SELECT id FROM bidders WHERE manager_id = $1) OR j.bidder_id IN (SELECT id FROM bidders WHERE manager_id = $1))' : 'WHERE (c.bidder_id = $1 OR j.bidder_id = $1)') : ''}
+      ${scoped ? (managerScope ? 'WHERE (c.account_id IN (SELECT id FROM accounts WHERE manager_id = $1) OR j.account_id IN (SELECT id FROM accounts WHERE manager_id = $1))' : 'WHERE (c.account_id = $1 OR j.account_id = $1)') : ''}
       ORDER BY j.created_at DESC, cj.applied_at DESC NULLS LAST
     `, cjParams),
   ]);
@@ -394,7 +394,7 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
 
 router.get('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
   const jobId = parseInt(req.params.id, 10);
-  const scope = jobBidderFilter(req, 'j', 2);
+  const scope = jobAccountFilter(req, 'j', 2);
   let accessQuery = 'SELECT id FROM jobs j WHERE j.id = $1';
   const accessParams: unknown[] = [jobId];
   if (scope.clause) {
@@ -411,7 +411,7 @@ router.get('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
   res.json({ success: true, job });
 });
 
-router.post('/', requireAuth, requireAdminOrBidder, async (req: AuthRequest, res: Response) => {
+router.post('/', requireAuth, requireAdminOrAccount, async (req: AuthRequest, res: Response) => {
   const data = JobSchema.parse(req.body);
   const normUrl = normalizeUrl(data.url);
 
@@ -429,9 +429,9 @@ router.post('/', requireAuth, requireAdminOrBidder, async (req: AuthRequest, res
   }
 
   const jobId = await withTransaction(async (client) => {
-    const bidderId = isAdmin(req) ? null : (req.bidderId ?? null);
+    const accountId = isAdmin(req) ? null : (req.accountId ?? null);
     const result = await client.query(
-      `INSERT INTO jobs (title, company, url, normalized_url, description, source, bidder_id, created_by_user_id)
+      `INSERT INTO jobs (title, company, url, normalized_url, description, source, account_id, created_by_user_id)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING id`,
       [
@@ -441,12 +441,12 @@ router.post('/', requireAuth, requireAdminOrBidder, async (req: AuthRequest, res
         normUrl,
         data.description,
         data.source || null,
-        bidderId,
+        accountId,
         req.userId ?? null,
       ]
     );
     const id = (result.rows[0] as { id: number }).id;
-    await upsertCandidateStatuses(id, data.candidateStatuses, client, bidderId);
+    await upsertCandidateStatuses(id, data.candidateStatuses, client, accountId);
     return id;
   });
 
@@ -494,10 +494,10 @@ router.delete('/:id', requireAuth, requireAdminWrite, async (req: AuthRequest, r
   res.json({ success: true, message: 'Job deleted.' });
 });
 
-router.post('/upsert', requireAuth, requireAdminOrBidder, async (req: AuthRequest, res: Response) => {
+router.post('/upsert', requireAuth, requireAdminOrAccount, async (req: AuthRequest, res: Response) => {
   const data = JobSchema.parse(req.body);
   const normUrl = normalizeUrl(data.url);
-  const bidderId = isAdmin(req) ? null : (req.bidderId ?? null);
+  const accountId = isAdmin(req) ? null : (req.accountId ?? null);
 
   const existing = await queryOne<{ id: number }>(
     'SELECT id FROM jobs WHERE normalized_url = $1',
@@ -520,7 +520,7 @@ router.post('/upsert', requireAuth, requireAdminOrBidder, async (req: AuthReques
       id = existing.id;
     } else {
       const result = await client.query(
-        `INSERT INTO jobs (title, company, url, normalized_url, description, source, bidder_id, created_by_user_id)
+        `INSERT INTO jobs (title, company, url, normalized_url, description, source, account_id, created_by_user_id)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          RETURNING id`,
         [
@@ -530,13 +530,13 @@ router.post('/upsert', requireAuth, requireAdminOrBidder, async (req: AuthReques
           normUrl,
           data.description,
           data.source || null,
-          bidderId,
+          accountId,
           req.userId ?? null,
         ]
       );
       id = (result.rows[0] as { id: number }).id;
     }
-    await upsertCandidateStatuses(id, data.candidateStatuses, client, bidderId);
+    await upsertCandidateStatuses(id, data.candidateStatuses, client, accountId);
     return id;
   });
 
@@ -558,9 +558,9 @@ router.get('/:jobId/candidates', requireAuth, async (req: AuthRequest, res: Resp
     WHERE c.is_active = TRUE`;
   const params: unknown[] = [jobId];
 
-  if (isBidder(req) && req.bidderId) {
-    query += ' AND c.bidder_id = $2';
-    params.push(req.bidderId);
+  if (isAccount(req) && req.accountId) {
+    query += ' AND c.account_id = $2';
+    params.push(req.accountId);
   }
 
   query += ' ORDER BY c.name ASC';

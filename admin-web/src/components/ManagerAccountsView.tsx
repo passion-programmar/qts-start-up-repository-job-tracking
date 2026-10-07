@@ -3,25 +3,24 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Modal } from '@/components/Modal';
 import { CandidateColorPicker } from '@/components/CandidateColorPicker';
-import { PasswordField } from '@/components/PasswordField';
 import {
-  BidderBranch,
-  buildBidderTree,
+  AccountBranch,
+  buildAccountTree,
   isTreeEntityActive,
 } from '@/components/org-tree';
 import { api } from '@/lib/api';
-import type { Bidder, Candidate } from '@/lib/types';
+import type { Account, Candidate } from '@/lib/types';
 import { nextCandidateColor, normalizeCandidateColor } from '../../shared/candidate-colors';
 import { parseCandidateStacks } from '../../shared/candidate-stacks';
 
-export function ManagerBiddersView() {
-  const [bidders, setBidders] = useState<Bidder[]>([]);
+export function ManagerAccountsView() {
+  const [accounts, setAccounts] = useState<Account[]>([]);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [stackOptions, setStackOptions] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [modal, setModal] = useState<'form' | 'delete' | 'candidate' | 'deleteCandidate' | null>(null);
-  const [selected, setSelected] = useState<Bidder | null>(null);
+  const [selected, setSelected] = useState<Account | null>(null);
   const [selectedCandidate, setSelectedCandidate] = useState<Candidate | null>(null);
   const [form, setForm] = useState({
     name: '',
@@ -32,7 +31,6 @@ export function ManagerBiddersView() {
     accountId: null as number | null,
     customGptUrl: '',
   });
-  const [savedBidderPassword, setSavedBidderPassword] = useState('');
   const [formLoading, setFormLoading] = useState(false);
   const [candidateForm, setCandidateForm] = useState({
     name: '',
@@ -46,18 +44,18 @@ export function ManagerBiddersView() {
   });
   const [error, setError] = useState<string | null>(null);
 
-  const bidderTree = useMemo(
-    () => buildBidderTree(bidders, candidates),
-    [bidders, candidates]
+  const accountTree = useMemo(
+    () => buildAccountTree(accounts, candidates),
+    [accounts, candidates]
   );
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [biddersRes, candidatesRes] = await Promise.all([
-      api<{ success: boolean; bidders?: Bidder[] }>('GET', '/api/bidders'),
+    const [accountsRes, candidatesRes] = await Promise.all([
+      api<{ success: boolean; accounts?: Account[] }>('GET', '/api/accounts'),
       api<{ success: boolean; candidates?: Candidate[] }>('GET', '/api/candidates?minimal=true'),
     ]);
-    setBidders(biddersRes.bidders || []);
+    setAccounts(accountsRes.accounts || []);
     setCandidates(candidatesRes.candidates || []);
     setLoading(false);
   }, []);
@@ -85,9 +83,9 @@ export function ManagerBiddersView() {
 
   function expandAll() {
     const next: Record<string, boolean> = {};
-    for (const node of bidderTree) {
-      if (isTreeEntityActive(node.bidder.is_active)) {
-        next[`b-${node.bidder.id}`] = true;
+    for (const node of accountTree) {
+      if (isTreeEntityActive(node.account.is_active)) {
+        next[`b-${node.account.id}`] = true;
       }
     }
     setExpanded(next);
@@ -100,13 +98,12 @@ export function ManagerBiddersView() {
   function openAddForm() {
     setSelected(null);
     setForm({ name: '', notes: '', isActive: true, password: '', username: '', accountId: null, customGptUrl: '' });
-    setSavedBidderPassword('');
     setFormLoading(false);
     setError(null);
     setModal('form');
   }
 
-  async function openEditForm(b: Bidder) {
+  async function openEditForm(b: Account) {
     setSelected(b);
     setForm({
       name: b.name,
@@ -117,7 +114,6 @@ export function ManagerBiddersView() {
       accountId: null,
       customGptUrl: b.custom_gpt_url || '',
     });
-    setSavedBidderPassword('');
     setError(null);
     setFormLoading(true);
     setModal('form');
@@ -126,7 +122,7 @@ export function ManagerBiddersView() {
       success: boolean;
       message?: string;
       accounts?: Array<{ id: number; username: string; role: string; password?: string | null }>;
-    }>('GET', `/api/bidders/${b.id}`);
+    }>('GET', `/api/accounts/${b.id}`);
 
     setFormLoading(false);
     if (!r.success) {
@@ -135,21 +131,19 @@ export function ManagerBiddersView() {
     }
 
     const primaryAccount =
-      r.accounts?.find((a) => a.role === 'bidder') || r.accounts?.[0] || null;
-    const password = primaryAccount?.password ?? '';
+      r.accounts?.find((a) => a.role === 'account') || r.accounts?.[0] || null;
     setForm({
       name: b.name,
       notes: b.notes || '',
       isActive: b.is_active,
-      password,
+      password: '',
       username: primaryAccount?.username || b.name,
       accountId: primaryAccount?.id ?? null,
       customGptUrl: b.custom_gpt_url || '',
     });
-    setSavedBidderPassword(password);
   }
 
-  async function openAddCandidate(b: Bidder) {
+  async function openAddCandidate(b: Account) {
     const stacks = stackOptions.length ? stackOptions : await loadStackOptions();
     setSelected(b);
     setSelectedCandidate(null);
@@ -167,7 +161,7 @@ export function ManagerBiddersView() {
     setModal('candidate');
   }
 
-  function openEditCandidate(b: Bidder, candidate: Candidate) {
+  function openEditCandidate(b: Account, candidate: Candidate) {
     setSelected(b);
     setSelectedCandidate(candidate);
     setCandidateForm({
@@ -184,49 +178,47 @@ export function ManagerBiddersView() {
     setModal('candidate');
   }
 
-  function openDeleteCandidate(b: Bidder, candidate: Candidate) {
+  function openDeleteCandidate(b: Account, candidate: Candidate) {
     setSelected(b);
     setSelectedCandidate(candidate);
     setModal('deleteCandidate');
   }
 
-  async function saveBidder() {
+  async function saveAccount() {
     if (!form.name.trim()) {
       setError('Name is required.');
       return;
     }
     if (!selected && !form.password) {
-      setError('Password is required for the bidder login.');
+      setError('Password is required for the Account login.');
       return;
     }
-    const passwordChanged = Boolean(selected && form.password !== savedBidderPassword);
     const body = {
       name: form.name.trim(),
       notes: form.notes.trim(),
       isActive: form.isActive,
       customGptUrl: form.customGptUrl.trim() || null,
       ...(!selected ? { password: form.password } : {}),
-      ...(selected && passwordChanged && form.password ? { password: form.password } : {}),
     };
     const r = selected
-      ? await api<{ success: boolean; message?: string }>('PUT', `/api/bidders/${selected.id}`, body)
-      : await api<{ success: boolean; message?: string }>('POST', '/api/bidders', body);
+      ? await api<{ success: boolean; message?: string }>('PUT', `/api/accounts/${selected.id}`, body)
+      : await api<{ success: boolean; message?: string }>('POST', '/api/accounts', body);
     if (r.success) {
       setModal(null);
       void load();
     } else {
-      setError(r.message || 'Could not save bidder.');
+      setError(r.message || 'Could not save account.');
     }
   }
 
-  async function deleteBidder() {
+  async function deleteAccount() {
     if (!selected) return;
-    const r = await api<{ success: boolean; message?: string }>('DELETE', `/api/bidders/${selected.id}`);
+    const r = await api<{ success: boolean; message?: string }>('DELETE', `/api/accounts/${selected.id}`);
     if (r.success) {
       setModal(null);
       void load();
     } else {
-      alert(r.message || 'Could not delete bidder.');
+      alert(r.message || 'Could not delete account.');
     }
   }
 
@@ -243,7 +235,7 @@ export function ManagerBiddersView() {
       notes: candidateForm.notes.trim(),
       stack: candidateForm.stack,
       isActive: candidateForm.isActive,
-      bidderId: selected.id,
+      accountId: selected.id,
       color: candidateForm.color,
     };
     const r = selectedCandidate
@@ -285,12 +277,12 @@ export function ManagerBiddersView() {
   return (
     <>
       <p className="text-muted" style={{ marginBottom: 12 }}>
-        <strong>Bidder</strong> → Candidate. Add bidder organizations with login credentials and manage candidates under each team.
+        <strong>Account</strong> → Candidate. Add Account teams with login credentials and manage candidates under each team.
       </p>
 
       <div className="search-row">
         <button className="btn btn-primary" type="button" onClick={openAddForm}>
-          + Add Bidder
+          + Add Account
         </button>
         <button className="btn btn-ghost" type="button" onClick={expandAll}>Expand all</button>
         <button className="btn btn-ghost" type="button" onClick={collapseAll}>Collapse all</button>
@@ -298,39 +290,39 @@ export function ManagerBiddersView() {
 
       {loading ? (
         <div className="card"><div className="text-muted">Loading…</div></div>
-      ) : bidderTree.length ? (
+      ) : accountTree.length ? (
         <div className="org-tree-list">
-          {bidderTree.map((node) => (
-            <BidderBranch
-              key={node.bidder.id}
+          {accountTree.map((node) => (
+            <AccountBranch
+              key={node.account.id}
               node={node}
               expanded={expanded}
               onToggle={toggleExpanded}
-              onEdit={() => { void openEditForm(node.bidder); }}
+              onEdit={() => { void openEditForm(node.account); }}
               onDelete={() => {
-                setSelected(node.bidder);
+                setSelected(node.account);
                 setModal('delete');
               }}
-              onAddCandidate={() => { void openAddCandidate(node.bidder); }}
-              onEditCandidate={(candidate) => openEditCandidate(node.bidder, candidate)}
-              onDeleteCandidate={(candidate) => openDeleteCandidate(node.bidder, candidate)}
+              onAddCandidate={() => { void openAddCandidate(node.account); }}
+              onEditCandidate={(candidate) => openEditCandidate(node.account, candidate)}
+              onDeleteCandidate={(candidate) => openDeleteCandidate(node.account, candidate)}
             />
           ))}
         </div>
       ) : (
         <div className="card">
-          <p className="org-tree-empty">No bidders yet. Click + Add Bidder to start.</p>
+          <p className="org-tree-empty">No Accounts yet. Click + Add Account to start.</p>
         </div>
       )}
 
       <Modal
         open={modal === 'form'}
-        title={selected ? 'Edit Bidder' : 'Add Bidder'}
+        title={selected ? 'Edit Account' : 'Add Account'}
         onClose={() => setModal(null)}
         footer={
           <>
             <button className="btn btn-ghost" type="button" onClick={() => setModal(null)}>Cancel</button>
-            <button className="btn btn-primary" type="button" disabled={formLoading} onClick={() => { void saveBidder(); }}>Save</button>
+            <button className="btn btn-primary" type="button" disabled={formLoading} onClick={() => { void saveAccount(); }}>Save</button>
           </>
         }
       >
@@ -343,7 +335,7 @@ export function ManagerBiddersView() {
               <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
               {!selected && (
                 <p className="text-muted" style={{ marginTop: 6, fontSize: 12 }}>
-                  Login username will be the bidder name.
+                  Login username will be the Account name.
                 </p>
               )}
             </div>
@@ -353,25 +345,10 @@ export function ManagerBiddersView() {
                 <input value={form.username} readOnly />
               </div>
             )}
-            <div className="form-group">
-              <label>{selected ? 'Password' : 'Password *'}</label>
-              <PasswordField
-                key={selected ? `bidder-${selected.id}` : 'bidder-add'}
-                value={form.password}
-                onChange={(password) => setForm({ ...form, password })}
-                placeholder={selected ? 'Saved password' : undefined}
-              />
-              {selected && savedBidderPassword && (
-                <p className="text-muted" style={{ marginTop: 6, fontSize: 12 }}>
-                  Current password loaded. Use the eye icon to view it before changing.
-                </p>
-              )}
-              {selected && !savedBidderPassword && !form.password && (
-                <p className="text-muted" style={{ marginTop: 6, fontSize: 12 }}>
-                  No saved password on file. Enter a new password to set credentials.
-                </p>
-              )}
-            </div>
+            {!selected && <div className="form-group">
+              <label>Password *</label>
+              <input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
+            </div>}
             <div className="form-group">
               <label>Custom GPT URL</label>
               <input
@@ -398,12 +375,12 @@ export function ManagerBiddersView() {
 
       <Modal
         open={modal === 'delete'}
-        title="Delete Bidder"
+        title="Delete Account"
         onClose={() => setModal(null)}
         footer={
           <>
             <button className="btn btn-ghost" type="button" onClick={() => setModal(null)}>Cancel</button>
-            <button className="btn btn-danger" type="button" onClick={() => { void deleteBidder(); }}>Delete</button>
+            <button className="btn btn-danger" type="button" onClick={() => { void deleteAccount(); }}>Delete</button>
           </>
         }
       >
@@ -411,7 +388,7 @@ export function ManagerBiddersView() {
           Delete <strong>{selected?.name}</strong> and all linked login accounts?
         </p>
         <p className="confirm-text text-muted" style={{ marginTop: 8, fontSize: 13 }}>
-          Candidates under this bidder will be unlinked but not deleted.
+          Candidates under this account will be unlinked but not deleted.
         </p>
       </Modal>
 

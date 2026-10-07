@@ -1,7 +1,7 @@
 import { Router, Response } from 'express';
 import { z } from 'zod';
 import { execute, queryAll, queryOne } from '../../database/connection';
-import { requireAuth, requireAdmin, AuthRequest } from '../../middleware/auth';
+import { requireAuth, requireAdmin, requireSuper, AuthRequest } from '../../middleware/auth';
 import { logger } from '../../utilities/logger';
 import {
   getRecordCategory,
@@ -81,7 +81,7 @@ function parseIncomingValue(
   return String(value);
 }
 
-router.delete('/cleanup/application-sessions', async (req: AuthRequest, res: Response) => {
+router.delete('/cleanup/application-sessions', requireSuper, async (req: AuthRequest, res: Response) => {
   const { clearApplicationSessionRecords } = await import('../../database/reset-database');
   const removed = await clearApplicationSessionRecords();
   logger.info('Admin cleared application session tables', {
@@ -196,10 +196,14 @@ router.get('/:category/:id', async (req: AuthRequest, res: Response) => {
   res.json({ success: true, record });
 });
 
-router.put('/:category/:id', async (req: AuthRequest, res: Response) => {
+router.put('/:category/:id', requireSuper, async (req: AuthRequest, res: Response) => {
   const category = getRecordCategory(req.params.category);
   if (!category) {
     res.status(404).json({ success: false, message: 'Unknown record category.' });
+    return;
+  }
+  if (category.table === 'admins') {
+    res.status(403).json({ success: false, message: 'Manage accounts from the People screen.' });
     return;
   }
 
@@ -262,10 +266,14 @@ router.put('/:category/:id', async (req: AuthRequest, res: Response) => {
   res.json({ success: true, record: sanitizeRow(category, updated as Record<string, unknown>) });
 });
 
-router.delete('/:category/:id', async (req: AuthRequest, res: Response) => {
+router.delete('/:category/:id', requireSuper, async (req: AuthRequest, res: Response) => {
   const category = getRecordCategory(req.params.category);
   if (!category) {
     res.status(404).json({ success: false, message: 'Unknown record category.' });
+    return;
+  }
+  if (category.table === 'admins') {
+    res.status(403).json({ success: false, message: 'Manage accounts from the People screen.' });
     return;
   }
 

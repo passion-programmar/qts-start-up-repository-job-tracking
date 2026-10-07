@@ -26,7 +26,7 @@ const emptyForm = {
   salary: '',
   stage: '',
   callerUserId: '',
-  bidderId: '',
+  accountId: '',
 };
 
 export function InterviewsView() {
@@ -78,7 +78,7 @@ export function InterviewsView() {
       salary: row.salary || '',
       stage: row.stage || '',
       callerUserId: row.caller_user_id ? String(row.caller_user_id) : '',
-      bidderId: row.bidder_id ? String(row.bidder_id) : '',
+      accountId: row.account_id ? String(row.account_id) : '',
     });
     setError(null);
     setModal('form');
@@ -100,7 +100,7 @@ export function InterviewsView() {
       salary: form.salary || null,
       stage: form.stage || null,
       callerUserId: form.callerUserId ? parseInt(form.callerUserId, 10) : null,
-      bidderId: form.bidderId ? parseInt(form.bidderId, 10) : null,
+      accountId: form.accountId ? parseInt(form.accountId, 10) : null,
     };
   }
 

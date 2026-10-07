@@ -6,12 +6,13 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.requireAuth = requireAuth;
 exports.requireAuthOrGptActionKey = requireAuthOrGptActionKey;
 exports.requireAdmin = requireAdmin;
-exports.requireAdminOrBidder = requireAdminOrBidder;
+exports.requireSuper = requireSuper;
+exports.requireAdminOrAccount = requireAdminOrAccount;
 exports.requireAdminOrCaller = requireAdminOrCaller;
 exports.requireAdminOrManager = requireAdminOrManager;
 exports.requireAdminWrite = requireAdminWrite;
 exports.requireAdminOrManagerWrite = requireAdminOrManagerWrite;
-exports.requireAdminManagerOrBidder = requireAdminManagerOrBidder;
+exports.requireAdminManagerOrAccount = requireAdminManagerOrAccount;
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const env_1 = require("../config/env");
 const roles_1 = require("../lib/roles");
@@ -29,15 +30,16 @@ function requireAuth(req, res, next) {
         req.adminId = payload.id;
         req.adminUsername = payload.username;
         req.role = (0, roles_1.normalizeRole)(payload.role);
-        req.bidderId = payload.bidderId != null ? Number(payload.bidderId) : null;
-        req.bidderName = payload.bidderName ?? null;
+        req.accountId = payload.accountId != null ? Number(payload.accountId) : null;
+        req.accountName = payload.accountName ?? null;
+        req.extensionAccountScope = payload.extensionAccountScope === true;
         next();
     }
     catch {
         res.status(401).json({ success: false, message: 'Invalid or expired token. Please log in again.' });
     }
 }
-/** Accepts bidder/admin JWT or the static GPT_ACTION_API_KEY for Custom GPT Actions. */
+/** Accepts account/admin JWT or the static GPT_ACTION_API_KEY for Custom GPT Actions. */
 function requireAuthOrGptActionKey(req, res, next) {
     const header = req.headers.authorization;
     if (!header?.startsWith('Bearer ')) {
@@ -58,8 +60,9 @@ function requireAuthOrGptActionKey(req, res, next) {
         req.adminId = payload.id;
         req.adminUsername = payload.username;
         req.role = (0, roles_1.normalizeRole)(payload.role);
-        req.bidderId = payload.bidderId != null ? Number(payload.bidderId) : null;
-        req.bidderName = payload.bidderName ?? null;
+        req.accountId = payload.accountId != null ? Number(payload.accountId) : null;
+        req.accountName = payload.accountName ?? null;
+        req.extensionAccountScope = payload.extensionAccountScope === true;
         next();
     }
     catch {
@@ -67,49 +70,57 @@ function requireAuthOrGptActionKey(req, res, next) {
     }
 }
 function requireAdmin(req, res, next) {
-    if (req.role !== 'admin') {
+    if (req.role !== 'admin' && req.role !== 'super') {
         res.status(403).json({ success: false, message: 'Admin access required.' });
         return;
     }
     next();
 }
-function requireAdminOrBidder(req, res, next) {
-    if (req.role !== 'admin' && req.role !== 'bidder') {
-        res.status(403).json({ success: false, message: 'Bidder access required.' });
+function requireSuper(req, res, next) {
+    if (req.role !== 'super') {
+        res.status(403).json({ success: false, message: 'Super access required.' });
+        return;
+    }
+    next();
+}
+function requireAdminOrAccount(req, res, next) {
+    if (req.role !== 'admin' && req.role !== 'super' && req.role !== 'account' &&
+        !(req.role === 'manager' && req.extensionAccountScope && req.accountId)) {
+        res.status(403).json({ success: false, message: 'Account access required.' });
         return;
     }
     next();
 }
 function requireAdminOrCaller(req, res, next) {
-    if (req.role !== 'admin' && req.role !== 'caller' && req.role !== 'manager') {
+    if (req.role !== 'admin' && req.role !== 'super' && req.role !== 'caller' && req.role !== 'manager') {
         res.status(403).json({ success: false, message: 'Caller access required.' });
         return;
     }
     next();
 }
 function requireAdminOrManager(req, res, next) {
-    if (req.role !== 'admin' && req.role !== 'manager') {
+    if (req.role !== 'admin' && req.role !== 'super' && req.role !== 'manager') {
         res.status(403).json({ success: false, message: 'Manager access required.' });
         return;
     }
     next();
 }
 function requireAdminWrite(req, res, next) {
-    if (req.role !== 'admin') {
+    if (req.role !== 'admin' && req.role !== 'super') {
         res.status(403).json({ success: false, message: 'Only admins can modify or delete records.' });
         return;
     }
     next();
 }
 function requireAdminOrManagerWrite(req, res, next) {
-    if (req.role !== 'admin' && req.role !== 'manager') {
+    if (req.role !== 'admin' && req.role !== 'super' && req.role !== 'manager') {
         res.status(403).json({ success: false, message: 'Admin or manager access required.' });
         return;
     }
     next();
 }
-function requireAdminManagerOrBidder(req, res, next) {
-    if (req.role !== 'admin' && req.role !== 'manager' && req.role !== 'bidder') {
+function requireAdminManagerOrAccount(req, res, next) {
+    if (req.role !== 'admin' && req.role !== 'super' && req.role !== 'manager' && req.role !== 'account') {
         res.status(403).json({ success: false, message: 'Access denied.' });
         return;
     }

@@ -17,7 +17,7 @@ RUN npm ci --omit=dev && npm cache clean --force
 
 COPY --from=builder /app/dist ./dist
 COPY src/logo.png ./src/logo.png
-COPY src/bidder-logo.png ./src/bidder-logo.png
+COPY src/account-logo.png ./src/account-logo.png
 
 RUN mkdir -p backups
 

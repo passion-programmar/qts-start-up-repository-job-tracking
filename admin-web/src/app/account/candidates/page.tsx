@@ -1,5 +1,5 @@
 import { CandidatesView } from '@/components/CandidatesView';
 
-export default function BidderCandidatesPage() {
+export default function AccountCandidatesPage() {
   return <CandidatesView />;
 }

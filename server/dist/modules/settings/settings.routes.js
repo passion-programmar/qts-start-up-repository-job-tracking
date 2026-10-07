@@ -28,7 +28,7 @@ router.get('/candidate-stacks', async (_req, res) => {
     const stacks = await (0, candidate_stacks_1.getCandidateStacks)();
     res.json({ success: true, stacks });
 });
-router.put('/candidate-stacks', auth_1.requireAdmin, async (req, res) => {
+router.put('/candidate-stacks', auth_1.requireSuper, async (req, res) => {
     const parsed = zod_1.z.object({ stacks: zod_1.z.array(zod_1.z.string()) }).safeParse(req.body);
     if (!parsed.success) {
         res.status(400).json({ success: false, message: 'Stacks must be a list of names.' });
@@ -48,7 +48,7 @@ router.put('/candidate-stacks', auth_1.requireAdmin, async (req, res) => {
         res.status(500).json({ success: false, message: 'Could not save candidate stacks.' });
     }
 });
-router.put('/', auth_1.requireAdmin, async (req, res) => {
+router.put('/', auth_1.requireSuper, async (req, res) => {
     const parsed = zod_1.z.object({ settings: zod_1.z.record(zod_1.z.string()) }).safeParse(req.body);
     if (!parsed.success) {
         res.status(400).json({ success: false, message: 'Invalid settings payload.' });
@@ -79,7 +79,7 @@ router.put('/', auth_1.requireAdmin, async (req, res) => {
     });
     res.json({ success: true, message: 'Settings saved.' });
 });
-router.post('/backup', auth_1.requireAdmin, async (_req, res) => {
+router.post('/backup', auth_1.requireSuper, async (_req, res) => {
     try {
         const dest = await (0, connection_2.backupDb)();
         logger_1.logger.info('Database backup created', { dest });

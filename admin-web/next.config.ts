@@ -14,15 +14,15 @@ const nextConfig: NextConfig = {
         destination: `${apiUrl}/logo.png`,
       },
       {
-        source: '/bidder-logo.png',
-        destination: `${apiUrl}/bidder-logo.png`,
+        source: '/account-logo.png',
+        destination: `${apiUrl}/account-logo.png`,
       },
     ];
   },
   async redirects() {
     return [
-      { source: '/qts-startup-user', destination: '/bidder', permanent: false },
-      { source: '/qts-startup-user/:path*', destination: '/bidder/:path*', permanent: false },
+      { source: '/qts-startup-user', destination: '/account', permanent: false },
+      { source: '/qts-startup-user/:path*', destination: '/account/:path*', permanent: false },
     ];
   },
 };

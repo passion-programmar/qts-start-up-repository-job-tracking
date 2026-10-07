@@ -1,6 +1,6 @@
 # QTS Custom GPT + Extension + Server — Error Report
 
-> **Current system (June 2026):** See [docs/CURRENT-SYSTEM.md](docs/CURRENT-SYSTEM.md) � extension v1.13.25+, job sites, one-step auto-apply.
+> **Current system (June 2026):** See [docs/CURRENT-SYSTEM.md](docs/CURRENT-SYSTEM.md) � extension v1.13.25+, job sites, one-step auto-apply.
 
 **File:** `QTS-CUSTOM-GPT-ERROR-REPORT.md`  
 **Generated:** 2025-06-25  
@@ -69,7 +69,7 @@ Extension polls status → fills form + uploads PDFs
 **Implemented:**
 - Application task API routes (`application-tasks.routes.ts`)
 - Public UUID task IDs (`task_<uuid>`) + legacy `task_<number>` alias
-- `GPT_ACTION_API_KEY` separate from bidder JWT
+- `GPT_ACTION_API_KEY` separate from account JWT
 - Pinned GPT tab reuse (`ensureCustomGptTab`)
 - Handoff scripts (`chatgpt-handoff.js`, `chatgpt-main-handoff.js`, `chatgpt-composer-handoff.js`)
 - Synchronous dispatch (v1.8.3+), fresh-chat detection (v1.8.5)
@@ -101,7 +101,7 @@ Extension polls status → fills form + uploads PDFs
 | # | Symptom | Root cause | Fix / mitigation | Status |
 |---|---------|------------|------------------|--------|
 | S-1 | Saved candidate status lost on reload | Tab URL ≠ extracted job URL on lookup | Try both URLs when loading job | Fixed |
-| S-2 | Bidder cannot update jobs | Extension used admin-only `PUT /api/jobs/:id` | Use `POST /api/jobs/upsert` | Fixed |
+| S-2 | Account cannot update jobs | Extension used admin-only `PUT /api/jobs/:id` | Use `POST /api/jobs/upsert` | Fixed |
 | S-3 | `candidate_jobs.status` null shown wrong | SQL returned null instead of `'none'` | `COALESCE(cj.status, 'none')` | Fixed |
 
 ---
@@ -136,7 +136,7 @@ Extension polls status → fills form + uploads PDFs
 | E-2 | “Unknown error fetching script” | Global content script on all URLs | Scoped injection; removed broad content script | Fixed (v1.2.3+) |
 | E-3 | Service worker importScripts failure | `importScripts` on some paths | Restored modular imports with error handling | Fixed |
 | E-4 | Background extract empty | SW called extractors without injection | Inject extractor scripts before extract | Fixed |
-| E-5 | Missing extension icon | `bidder-logo.png` referenced but absent | Added assets | Fixed |
+| E-5 | Missing extension icon | `account-logo.png` referenced but absent | Added assets | Fixed |
 | E-6 | Auto-extract on `chrome://` pages | No protocol guard | `restrictedPageMessage()` + guards | Fixed |
 
 ---
@@ -309,7 +309,7 @@ When automatic handoff fails:
 
 ## 10. Recommendations
 
-1. **Treat composer automation as assist, not guarantee** — keep clipboard copy + manual paste documented for bidders.
+1. **Treat composer automation as assist, not guarantee** — keep clipboard copy + manual paste documented for accounts.
 2. **Remove `task_8` from Custom GPT** conversation starters and instructions examples; use `task_<uuid>` only.
 3. **Always restart server** after pulling task-route changes.
 4. **Monitor `qtsLastGptHandoffDebug`** in extension storage when debugging handoff.

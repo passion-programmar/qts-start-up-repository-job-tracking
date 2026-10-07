@@ -1,6 +1,6 @@
 # QTS Job Tracking — Custom GPT Integration Guide
 
-> **Current system (June 2026):** See [docs/CURRENT-SYSTEM.md](docs/CURRENT-SYSTEM.md) � extension v1.13.25+, job sites, one-step auto-apply.
+> **Current system (June 2026):** See [docs/CURRENT-SYSTEM.md](docs/CURRENT-SYSTEM.md) � extension v1.13.25+, job sites, one-step auto-apply.
 
 **File:** `QTS-JOB-TRACKING-CUSTOM-GPT-GUIDE.md`  
 **For:** Building the GPT → server → extension application automation pipeline  
@@ -66,21 +66,21 @@ Extension (fill + upload)  →  Job site form
 
 ```mermaid
 sequenceDiagram
-  participant Bidder
+  participant Account
   participant Extension
   participant API as QTS API (PC)
   participant GPT as Custom GPT
   participant Site as Job site
 
-  Bidder->>Extension: Start Application
+  Account->>Extension: Start Application
   Extension->>API: POST session + PATCH fields
   API-->>Extension: applicationId e.g. 8
-  Bidder->>GPT: Session ID 8
+  Account->>GPT: Session ID 8
   GPT->>API: GET gpt-context / pending-fields
   API-->>GPT: JD, company, role, questions
   GPT->>API: POST gpt-package (answers + JSON docs)
   API->>API: Render PDFs → save to disk
-  Bidder->>Extension: Apply GPT package
+  Account->>Extension: Apply GPT package
   Extension->>API: GET documents + answers
   Extension->>Site: Fill fields + upload PDF
 ```
@@ -283,7 +283,7 @@ Extension reads paths from API → fetches file bytes → injects into `input[ty
 
 ## 7. Step 2 — Create a GPT API token
 
-Custom GPT Actions need a **Bearer token** your API accepts. Use a **dedicated static key** for GPT Actions (recommended), separate from the bidder JWT used by the extension.
+Custom GPT Actions need a **Bearer token** your API accepts. Use a **dedicated static key** for GPT Actions (recommended), separate from the account JWT used by the extension.
 
 ### Option A — `GPT_ACTION_API_KEY` (recommended)
 
@@ -294,11 +294,11 @@ Custom GPT Actions need a **Bearer token** your API accepts. Use a **dedicated s
 2. Restart the server (`stop-server.bat` → `start-server.bat`).
 3. In ChatGPT Action authentication, paste the same value as **API Key** / Bearer.
 
-The server accepts either this key (for Custom GPT Actions) or a normal bidder/admin JWT (for the extension).
+The server accepts either this key (for Custom GPT Actions) or a normal account/admin JWT (for the extension).
 
-### Option B — Bidder JWT (testing only)
+### Option B — Account JWT (testing only)
 
-1. In QTS admin/manager UI, create a bidder user e.g. `gpt_service` (or use existing bidder).
+1. In QTS admin/manager UI, create an Account user, e.g. `gpt_service` (or use an existing Account login).
 2. Log in via API:
    ```http
    POST https://qts-job-tracking.vercel.app/api/auth/login
@@ -309,9 +309,9 @@ The server accepts either this key (for Custom GPT Actions) or a normal bidder/a
 3. Copy `token` from response.
 4. Store in ChatGPT Action authentication as **API Key** / Bearer.
 
-### Option C — Personal bidder token
+### Option C — Personal account token
 
-Use your own bidder login token. Simpler for testing; rotate if leaked.
+Use your own account login token. Simpler for testing; rotate if leaked.
 
 **Security:** Never commit tokens to git. Regenerate JWT if exposed.
 
@@ -326,7 +326,7 @@ Use your own bidder login token. Simpler for testing; rotate if leaked.
 5. **Instructions:** paste from [Section 10](#10-step-5--gpt-instructions-copypaste).
 6. **Conversation starters** (optional fallback only):
    - You may add `PROCESS_TASK` as a starter for manual testing.
-   - The extension opens a **fresh** Custom GPT conversation and pastes `PROCESS_TASK: <taskId>` into the composer. It does **not** auto-click conversation starters or **Allow** on Action dialogs — the bidder must approve Actions manually.
+   - The extension opens a **fresh** Custom GPT conversation and pastes `PROCESS_TASK: <taskId>` into the composer. It does **not** auto-click conversation starters or **Allow** on Action dialogs — the account must approve Actions manually.
 7. **Knowledge:** upload optional:
    - `docs/schemas/resume-document.schema.json`
    - `docs/schemas/cover-letter-document.schema.json`
@@ -346,7 +346,7 @@ Use your own bidder login token. Simpler for testing; rotate if leaked.
 3. **Authentication:**
    - Type: **API Key**
    - Auth Type: **Bearer**
-   - API Key: paste `GPT_ACTION_API_KEY` from `server/.env` (or a bidder JWT for testing)
+   - API Key: paste `GPT_ACTION_API_KEY` from `server/.env` (or an Account JWT for testing)
 4. **Privacy policy URL:** your Vercel app URL (required by OpenAI).
 5. Save action.
 
@@ -384,7 +384,7 @@ WORKFLOW
    a) answers[] — one object per pending AI field: { "stableFieldId": "...", "answer": "..." }
    b) resume — JSON matching resume-document.schema.json (required when fileFields is non-empty or resumeRequired is true)
    c) coverLetter — JSON matching cover-letter-document.schema.json (always include; tailored to company and role)
-   d) remainingFields — only non-consent optional fields; NEVER include terms, GDPR, marketing, or cover message (bidder reviews those manually)
+   d) remainingFields — only non-consent optional fields; NEVER include terms, GDPR, marketing, or cover message (account reviews those manually)
 4. Call submitTaskPackage:
    - taskId goes in the URL path only (e.g. /api/application-tasks/task_<uuid>/package)
    - JSON body = answers + resume + coverLetter + remainingFields + optional notes
@@ -392,14 +392,14 @@ WORKFLOW
 5. Call getTaskStatus(taskId) and confirm gptTaskStatus is "ready" or readyToApply is true.
 6. Reply with exactly one word: "Confirmed." — no task ID, no mention of extensions, uploads, or next steps.
 
-When ChatGPT shows an Action confirmation dialog, wait for the bidder to click Allow — do not assume auto-approval.
+When ChatGPT shows an Action confirmation dialog, wait for the account to click Allow — do not assume auto-approval.
 
 RULES
 - Run Actions silently — do not narrate progress, plans, or intermediate status to the user.
 - Never invent candidate email, phone, name, or employers — use only API data.
 - Resume and cover letter must match the job description, company, and role.
 - For checkbox fields: answer only "true" or "false".
-- Do NOT set terms_accepted, gdpr_consent, marketing_opt_in, or cover_message in remainingFields — the bidder fills those on the job site.
+- Do NOT set terms_accepted, gdpr_consent, marketing_opt_in, or cover_message in remainingFields — the account fills those on the job site.
 - For essay/text questions: 80–180 words unless the label clearly needs shorter.
 - Do not describe what happens after save (no extension, browser, upload, or apply steps in your reply).
 - If an API call fails, report the error clearly (401 = auth problem, 404 = task/session not found).
@@ -420,12 +420,12 @@ RULES
 
 ### Phase B — Custom GPT (pinned tab)
 
-1. Receives `PROCESS_TASK: task_<uuid>` from extension composer (or bidder pastes manually if handoff fails).
-2. Bidder clicks **Allow** when ChatGPT prompts for Action approval.
+1. Receives `PROCESS_TASK: task_<uuid>` from extension composer (or account pastes manually if handoff fails).
+2. Account clicks **Allow** when ChatGPT prompts for Action approval.
 3. GPT calls `getTaskContext` → generates answers + resume/cover JSON.
 4. GPT calls `submitTaskPackage` → server marks task ready and writes PDFs to disk.
 
-### Phase C — Review (bidder)
+### Phase C — Review (account)
 
 1. Verify resume uploaded and answers filled on the job form.
 2. Manually check terms, GDPR, marketing opt-in, and any declarations.
@@ -503,7 +503,7 @@ Returns `gptTaskStatus`, `readyToApply`, and field counts for extension polling.
 | GPT Action 404 | Restart server; confirm Vercel proxy + `start-server.bat` |
 | GPT Action 401 | Check `GPT_ACTION_API_KEY` in `.env` matches Action auth |
 | GPT can't reach API | Ensure tunnel running; test `/api/health` |
-| GPT stuck on Allow | Expected — bidder must click Allow manually (extension does not auto-click) |
+| GPT stuck on Allow | Expected — account must click Allow manually (extension does not auto-click) |
 | Composer handoff failed | Open pinned GPT tab; paste `PROCESS_TASK: <taskId>` from extension popup |
 | PDF not on disk | Check `server/data/application-documents/{id}/` |
 | Resume not uploaded | Reload extension v1.7.7+; confirm `gptTaskStatus: ready` |

@@ -1,6 +1,6 @@
 # QTS Job Tracking â€” Full Setup Guide
 
-> **Current system (June 2026):** See [docs/CURRENT-SYSTEM.md](docs/CURRENT-SYSTEM.md) — extension v1.13.25+, job sites, one-step auto-apply.
+> **Current system (June 2026):** See [docs/CURRENT-SYSTEM.md](docs/CURRENT-SYSTEM.md) ï¿½ extension v1.13.25+, job sites, one-step auto-apply.
 
 Use this guide to build and run the project from scratch on a new PC.
 
@@ -158,12 +158,12 @@ AUTO_OPEN_BROWSER=false
 JWT_SECRET=use-a-long-random-string-here
 JWT_EXPIRY=24h
 
-ADMIN_USERNAME=admin
+ADMIN_USERNAME=super
 ADMIN_PASSWORD=your-strong-admin-password
 MANAGER_USERNAME=manager
 MANAGER_PASSWORD=user
-BIDDER_USERNAME=bidder
-BIDDER_PASSWORD=user
+ACCOUNT_USERNAME=account
+ACCOUNT_PASSWORD=user
 CALLER_USERNAME=caller
 CALLER_PASSWORD=user
 
@@ -308,7 +308,7 @@ https://qts-job-tracking.vercel.app
 
 In the extension login popup, **API Server URL** should be the Vercel URL (no `/api/health`).
 
-Each bidder logs in with credentials created by a manager in the admin panel.
+Each account logs in with credentials created by a manager in the admin panel.
 
 ### Reload after code changes
 
@@ -482,7 +482,7 @@ Use this when setting up on a **new PC**:
 - [ ] Double-click `start-server.bat`, wait 2 min
 - [ ] Verify `/api/health` on Vercel URL
 - [ ] Load `extension/` in Chrome
-- [ ] Login as admin, create manager/bidder accounts
+- [ ] Sign in as Admin; create Manager and Account logins
 
 ---
 

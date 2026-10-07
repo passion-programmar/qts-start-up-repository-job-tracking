@@ -40,12 +40,12 @@ function validateCustomGptUrl(raw) {
     }
     return { ok: true, url, id };
 }
-function resolveCustomGptConfig(bidderUrl) {
-    const trimmed = String(bidderUrl || '').trim();
+function resolveCustomGptConfig(accountUrl) {
+    const trimmed = String(accountUrl || '').trim();
     if (trimmed) {
         const validated = validateCustomGptUrl(trimmed);
         if (validated.ok) {
-            return { url: validated.url, id: validated.id, source: 'bidder' };
+            return { url: validated.url, id: validated.id, source: 'account' };
         }
     }
     return {

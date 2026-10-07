@@ -34,10 +34,11 @@ export function useAuth(): AuthContextValue {
 }
 
 function normalizeRole(role?: string): UserRole {
+  if (role === 'super') return 'super';
   if (role === 'admin') return 'admin';
   if (role === 'manager') return 'manager';
   if (role === 'caller') return 'caller';
-  return 'bidder';
+  return 'account';
 }
 
 export function AuthProvider({
@@ -64,7 +65,7 @@ export function AuthProvider({
       username?: string;
       id?: number;
       role?: string;
-      bidderId?: number | null;
+      accountId?: number | null;
       message?: string;
     }>('GET', '/api/auth/me');
 
@@ -98,7 +99,7 @@ export function AuthProvider({
       id: r.id!,
       username: r.username,
       role,
-      bidderId: r.bidderId ?? null,
+      accountId: r.accountId ?? null,
     });
     setLoading(false);
   }, [mode, router]);
@@ -119,7 +120,7 @@ export function AuthProvider({
 
   const canWrite = mode === 'admin' || mode === 'manager';
   const canManageTeam = mode === 'admin' || mode === 'manager';
-  const canAddJobs = mode === 'admin' || mode === 'bidder';
+  const canAddJobs = mode === 'admin' || mode === 'account';
   const canAddCandidates = mode === 'admin' || mode === 'manager';
   const canAddInterviews = mode === 'admin' || mode === 'manager' || mode === 'caller';
 

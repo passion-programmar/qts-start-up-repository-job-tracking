@@ -21,22 +21,23 @@ export function isRecentCandidate(createdAt?: string): boolean {
 }
 
 export function roleHome(role: UserRole | string): string {
-  if (role === 'admin') return '/admin';
+  if (role === 'admin' || role === 'super') return '/admin';
   if (role === 'manager') return '/manager';
   if (role === 'caller') return '/caller';
-  return '/bidder';
+  return '/account';
 }
 
 export function panelModeForRole(role: UserRole | string): PanelMode {
-  if (role === 'admin') return 'admin';
+  if (role === 'admin' || role === 'super') return 'admin';
   if (role === 'manager') return 'manager';
   if (role === 'caller') return 'caller';
-  return 'bidder';
+  return 'account';
 }
 
 export function roleLabel(role: UserRole | string): string {
+  if (role === 'super') return 'Super';
   if (role === 'admin') return 'Admin';
   if (role === 'manager') return 'Manager';
   if (role === 'caller') return 'Caller';
-  return 'Bidder';
+  return 'Account';
 }

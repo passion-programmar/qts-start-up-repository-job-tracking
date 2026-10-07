@@ -13,7 +13,7 @@
     "build": "npm run build --prefix server && npm run build --prefix admin-web",
     "stop": "node scripts/stop.mjs",
     "db:reset": "npm run db:reset --prefix server",
-    "db:clear-bidders": "npm run db:clear-bidders --prefix server"
+    "db:clear-accounts": "npm run db:clear-accounts --prefix server"
   },
   "devDependencies": {
     "concurrently": "^9.1.2",

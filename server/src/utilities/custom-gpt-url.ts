@@ -6,7 +6,7 @@ export const DEFAULT_CUSTOM_GPT_ID = 'g-6a3dc5525fac819198dccf1c216e3fc0';
 export interface ResolvedCustomGpt {
   url: string;
   id: string;
-  source: 'bidder' | 'default';
+  source: 'account' | 'default';
 }
 
 export function parseCustomGptId(url: string): string | null {
@@ -52,13 +52,13 @@ export function validateCustomGptUrl(
 }
 
 export function resolveCustomGptConfig(
-  bidderUrl?: string | null
+  accountUrl?: string | null
 ): ResolvedCustomGpt {
-  const trimmed = String(bidderUrl || '').trim();
+  const trimmed = String(accountUrl || '').trim();
   if (trimmed) {
     const validated = validateCustomGptUrl(trimmed);
     if (validated.ok) {
-      return { url: validated.url, id: validated.id, source: 'bidder' };
+      return { url: validated.url, id: validated.id, source: 'account' };
     }
   }
 

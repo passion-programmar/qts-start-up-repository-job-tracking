@@ -11,7 +11,7 @@
     url: DEFAULT_CUSTOM_GPT_URL,
     id: DEFAULT_CUSTOM_GPT_ID,
     source: 'default',
-    bidderId: null,
+    accountId: null,
   };
 
   function parseGptIdFromUrl(url) {
@@ -28,8 +28,8 @@
     _runtime = {
       url: nextUrl,
       id: nextId,
-      source: config?.source || (config?.url ? 'bidder' : 'default'),
-      bidderId: config?.bidderId ?? null,
+      source: config?.source || (config?.url ? 'account' : 'default'),
+      accountId: config?.accountId ?? null,
     };
     return { changed, url: nextUrl, id: nextId };
   }
@@ -102,7 +102,7 @@
       url: applied.url,
       id: applied.id,
       source: config?.source || _runtime.source,
-      bidderId: config?.bidderId ?? _runtime.bidderId ?? null,
+      accountId: config?.accountId ?? _runtime.accountId ?? null,
       savedAt: Date.now(),
     };
 

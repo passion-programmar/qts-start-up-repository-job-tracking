@@ -61,7 +61,7 @@ function createMemoryApplicationSession(input) {
         candidate_id: input.candidateId,
         job_id: input.jobId ?? null,
         user_id: input.userId,
-        bidder_id: input.bidderId,
+        account_id: input.accountId,
         job_url: input.jobUrl,
         normalized_url: (0, normalize_url_1.normalizeUrl)(input.jobUrl),
         job_title: input.jobTitle ?? null,

@@ -1,6 +1,6 @@
 # QTS Job Tracking — Performance & Optimization Guide
 
-> **Current system (June 2026):** See [docs/CURRENT-SYSTEM.md](docs/CURRENT-SYSTEM.md) � extension v1.13.25+, job sites, one-step auto-apply.
+> **Current system (June 2026):** See [docs/CURRENT-SYSTEM.md](docs/CURRENT-SYSTEM.md) � extension v1.13.25+, job sites, one-step auto-apply.
 
 **File:** `QTS-JOB-TRACKING-PERFORMANCE-GUIDE.md`  
 **For:** Admins, developers, and anyone tuning speed on Vercel, the extension, and the API  
@@ -72,7 +72,7 @@ Typical total: 3–7 seconds (tunnel + Vercel mode)
 ### Extension — login
 
 ```text
-1. POST /api/auth/login        (bcrypt + bidder validation + JWT)
+1. POST /api/auth/login        (bcrypt + account validation + JWT)
 2. loadAll()                   (same chain as above)
 ```
 
@@ -138,8 +138,8 @@ Estimated times in **current** setup (Vercel + tunnel + PC):
 | **12 queries** on `/api/jobs/stats` | `server/src/modules/jobs/jobs.routes.ts` | Slow admin dashboard |
 | **3 sequential queries** on `/api/jobs/by-url` | Same file | Slow job lookup |
 | **`getJobWithCandidates`** loads all active candidates per job | Same file | Heavy on large teams |
-| **Duplicate bidder queries** on login | `server/src/modules/auth/auth.routes.ts` | +50–150 ms |
-| **`/api/auth/me` hits DB** for bidder name every time | Same file | +1 query per session check |
+| **Duplicate account queries** on login | `server/src/modules/auth/auth.routes.ts` | +50–150 ms |
+| **`/api/auth/me` hits DB** for account name every time | Same file | +1 query per session check |
 | Migrations on every server start | `server/src/database/connection.ts` | Slower cold start |
 
 **N+1 pattern (worst save-path bottleneck):**
@@ -245,7 +245,7 @@ Single response:
 
 ```json
 {
-  "user": { "username", "bidderId", "bidderName", "role" },
+  "user": { "username", "accountId", "accountName", "role" },
   "candidates": [ ... ],
   "stacks": [ ... ]
 }
@@ -271,7 +271,7 @@ Replace 12 separate queries with CTEs or one aggregate query. Optional: cache 30
 
 ---
 
-#### 8. Put `bidderName` in JWT
+#### 8. Put `accountName` in JWT
 
 Skip DB lookup in `/api/auth/me`.
 
@@ -322,7 +322,7 @@ Implementable without changing hosting:
 | 2 | Single `executeScript` for all extractors | Low | Medium on extract | `extension/background/service-worker.js` |
 | 3 | Parallel init (`Promise.all`) | Low | Medium on open | `extension/popup/popup.js` |
 | 4 | Dedupe URLs before `getJobByUrl` | Low | Low–medium | `extension/popup/popup.js` |
-| 5 | `bidderName` in JWT | Low | Low per `/me` | `server/src/modules/auth/auth.routes.ts` |
+| 5 | `accountName` in JWT | Low | Low per `/me` | `server/src/modules/auth/auth.routes.ts` |
 | 6 | Combine by-url SQL | Medium | Medium | `server/src/modules/jobs/jobs.routes.ts` |
 | 7 | `GET /api/extension/bootstrap` | Medium | High on open | New route + popup |
 | 8 | Candidate cache (5 min TTL) | Medium | Medium on reopen | `extension/popup/popup.js` |
@@ -335,8 +335,8 @@ These code optimizations are already applied — restart `start-server.bat` and 
 |--------------|--------|
 | Bulk upsert on job save (N+1 → 2 queries) | Done |
 | `GET /api/auth/extension-bootstrap` (1 call vs 3) | Done |
-| JWT includes `bidderName` — `/me` skips DB | Done |
-| Login: single bidder query (not two) | Done |
+| JWT includes `accountName` — `/me` skips DB | Done |
+| Login: single account query (not two) | Done |
 | `/api/jobs/by-url` access check merged | Done |
 | Extension: parallel startup + candidate cache (5 min) | Done |
 | Extension: dedupe job URL lookups | Done |
@@ -394,7 +394,7 @@ Mismatch (e.g. API in US, DB in EU) adds **50–150 ms** per query.
 - [ ] Parallel API calls in extension popup
 - [ ] Bulk upsert for candidate save
 - [ ] Single-shot script injection + lower detect delay
-- [ ] JWT includes `bidderName`
+- [ ] JWT includes `accountName`
 
 **Expected:** Noticeably faster save and extract; moderate improvement on open.
 

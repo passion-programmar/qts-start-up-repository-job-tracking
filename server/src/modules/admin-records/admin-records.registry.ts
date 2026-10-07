@@ -1,6 +1,6 @@
 export type RecordCategoryId =
   | 'accounts'
-  | 'bidders'
+  | 'accounts'
   | 'candidates'
   | 'jobs'
   | 'candidate_jobs'
@@ -34,7 +34,7 @@ export const RECORD_CATEGORIES: RecordCategoryDef[] = [
   {
     id: 'accounts',
     label: 'Accounts',
-    description: 'Admin, manager, bidder, and caller login accounts.',
+    description: 'Admin, manager, account, and caller login accounts.',
     table: 'admins',
     primaryKey: 'id',
     orderBy: 'username ASC',
@@ -43,17 +43,17 @@ export const RECORD_CATEGORIES: RecordCategoryDef[] = [
       { key: 'id', label: 'ID', type: 'number', list: true, ...READONLY },
       { key: 'username', label: 'Username', type: 'text', list: true, editable: true },
       { key: 'role', label: 'Role', type: 'text', list: true, editable: true },
-      { key: 'bidder_id', label: 'Bidder ID', type: 'number', list: true, editable: true },
+      { key: 'account_id', label: 'Account ID', type: 'number', list: true, editable: true },
       { key: 'is_active', label: 'Active', type: 'boolean', list: true, editable: true },
       { key: 'created_at', label: 'Created', type: 'readonly', list: true, ...READONLY },
       { key: 'updated_at', label: 'Updated', type: 'readonly', ...READONLY },
     ],
   },
   {
-    id: 'bidders',
-    label: 'Bidders',
-    description: 'Bidder organizations.',
-    table: 'bidders',
+    id: 'accounts',
+    label: 'Accounts',
+    description: 'Account organizations.',
+    table: 'accounts',
     primaryKey: 'id',
     orderBy: 'name ASC',
     searchColumns: ['name', 'notes'],
@@ -71,7 +71,7 @@ export const RECORD_CATEGORIES: RecordCategoryDef[] = [
   {
     id: 'candidates',
     label: 'Candidates',
-    description: 'Candidate profiles linked to bidder teams.',
+    description: 'Candidate profiles linked to account teams.',
     table: 'candidates',
     primaryKey: 'id',
     orderBy: 'name ASC',
@@ -86,7 +86,7 @@ export const RECORD_CATEGORIES: RecordCategoryDef[] = [
       { key: 'color', label: 'Color', type: 'text', editable: true },
       { key: 'notes', label: 'Notes', type: 'text', editable: true },
       { key: 'is_active', label: 'Active', type: 'boolean', list: true, editable: true },
-      { key: 'bidder_id', label: 'Bidder ID', type: 'number', list: true, editable: true },
+      { key: 'account_id', label: 'Account ID', type: 'number', list: true, editable: true },
       { key: 'created_at', label: 'Created', type: 'readonly', list: true, ...READONLY },
       { key: 'updated_at', label: 'Updated', type: 'readonly', ...READONLY },
     ],
@@ -107,7 +107,7 @@ export const RECORD_CATEGORIES: RecordCategoryDef[] = [
       { key: 'normalized_url', label: 'Normalized URL', type: 'text', editable: true },
       { key: 'source', label: 'Source', type: 'text', list: true, editable: true },
       { key: 'description', label: 'Description', type: 'text', editable: true },
-      { key: 'bidder_id', label: 'Bidder ID', type: 'number', editable: true },
+      { key: 'account_id', label: 'Account ID', type: 'number', editable: true },
       { key: 'created_by_user_id', label: 'Created By User ID', type: 'number', editable: true },
       { key: 'created_at', label: 'Created', type: 'readonly', list: true, ...READONLY },
       { key: 'updated_at', label: 'Updated', type: 'readonly', ...READONLY },
@@ -144,7 +144,7 @@ export const RECORD_CATEGORIES: RecordCategoryDef[] = [
       { key: 'candidate_name', label: 'Candidate Name', type: 'text', list: true, editable: true },
       { key: 'candidate_id', label: 'Candidate ID', type: 'number', editable: true },
       { key: 'caller_user_id', label: 'Caller User ID', type: 'number', editable: true },
-      { key: 'bidder_id', label: 'Bidder ID', type: 'number', list: true, editable: true },
+      { key: 'account_id', label: 'Account ID', type: 'number', list: true, editable: true },
       { key: 'scheduled_date', label: 'Scheduled Date', type: 'text', list: true, editable: true },
       { key: 'attend_date', label: 'Attend Date', type: 'text', editable: true },
       { key: 'interview_time', label: 'Interview Time', type: 'text', editable: true },

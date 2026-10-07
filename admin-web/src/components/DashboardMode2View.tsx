@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { LineChart } from '@/components/LineChart';
 import { api } from '@/lib/api';
-import type { Bidder, JobStats, UserAccount } from '@/lib/types';
+import type { Account, JobStats, UserAccount } from '@/lib/types';
 
 function groupInterviewsByDay(
   interviews: Array<{ scheduled_date?: string | null; candidate_name: string }>
@@ -23,23 +23,23 @@ function groupInterviewsByDay(
 export function DashboardMode2View() {
   const [stats, setStats] = useState<JobStats | null>(null);
   const [users, setUsers] = useState<UserAccount[]>([]);
-  const [bidders, setBidders] = useState<Bidder[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
   const [interviews, setInterviews] = useState<Array<{ scheduled_date?: string | null; candidate_name: string }>>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [statsR, usersR, biddersR, interviewsR] = await Promise.all([
+      const [statsR, usersR, accountsR, interviewsR] = await Promise.all([
         api<{ success: boolean; stats?: JobStats }>('GET', '/api/jobs/stats'),
         api<{ success: boolean; users?: UserAccount[] }>('GET', '/api/users'),
-        api<{ success: boolean; bidders?: Bidder[] }>('GET', '/api/bidders'),
+        api<{ success: boolean; accounts?: Account[] }>('GET', '/api/accounts'),
         api<{ success: boolean; interviews?: Array<{ scheduled_date?: string | null; candidate_name: string }> }>('GET', '/api/interviews'),
       ]);
       if (cancelled) return;
       setStats(statsR.stats || null);
       setUsers(usersR.users || []);
-      setBidders(biddersR.bidders || []);
+      setAccounts(accountsR.accounts || []);
       setInterviews(interviewsR.interviews || []);
       setLoading(false);
     })();
@@ -51,18 +51,18 @@ export function DashboardMode2View() {
       .filter((u) => u.role === 'manager')
       .map((manager) => ({
         name: manager.username,
-        count: bidders.filter((b) => b.manager_id === manager.id).length,
+        count: accounts.filter((b) => b.manager_id === manager.id).length,
       }))
       .sort((a, b) => b.count - a.count)
       .slice(0, 8);
-  }, [users, bidders]);
+  }, [users, accounts]);
 
-  const bidderLeaders = useMemo(() => {
-    return [...bidders]
+  const accountLeaders = useMemo(() => {
+    return [...accounts]
       .sort((a, b) => (b.candidate_count || 0) - (a.candidate_count || 0))
       .slice(0, 8)
       .map((b) => ({ name: b.name, count: b.candidate_count || 0 }));
-  }, [bidders]);
+  }, [accounts]);
 
   const interviewTrend = useMemo(() => groupInterviewsByDay(interviews), [interviews]);
 
@@ -114,11 +114,11 @@ export function DashboardMode2View() {
 
       <div className="two-col ops-layout" style={{ gap: 20, marginTop: 16 }}>
         <div className="card">
-          <div className="card-title">Top Managers (by bidders)</div>
+          <div className="card-title">Top Managers (by accounts)</div>
           <div className="table-scroll">
           <table>
             <thead>
-              <tr><th>Manager</th><th>Bidders</th></tr>
+              <tr><th>Manager</th><th>Accounts</th></tr>
             </thead>
             <tbody>
               {managerLeaders.map((row) => (
@@ -135,21 +135,21 @@ export function DashboardMode2View() {
           </div>
         </div>
         <div className="card">
-          <div className="card-title">Top Bidders (by candidates)</div>
+          <div className="card-title">Top Accounts (by candidates)</div>
           <div className="table-scroll">
           <table>
             <thead>
-              <tr><th>Bidder Org</th><th>Candidates</th></tr>
+              <tr><th>Account Org</th><th>Candidates</th></tr>
             </thead>
             <tbody>
-              {bidderLeaders.map((row) => (
+              {accountLeaders.map((row) => (
                 <tr key={row.name}>
                   <td><strong>{row.name}</strong></td>
                   <td>{row.count}</td>
                 </tr>
               ))}
-              {!bidderLeaders.length && (
-                <tr><td colSpan={2} className="text-muted">No bidders yet.</td></tr>
+              {!accountLeaders.length && (
+                <tr><td colSpan={2} className="text-muted">No accounts yet.</td></tr>
               )}
             </tbody>
           </table>

@@ -3,15 +3,15 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Modal } from '@/components/Modal';
 import { api } from '@/lib/api';
-import type { Bidder } from '@/lib/types';
+import type { Account } from '@/lib/types';
 
 const DEFAULT_CUSTOM_GPT_URL =
   'https://chatgpt.com/g/g-6a3dc5525fac819198dccf1c216e3fc0-qts-job-tracking';
 
-export function AdminBiddersView() {
-  const [bidders, setBidders] = useState<Bidder[]>([]);
+export function AdminAccountsView() {
+  const [accounts, setAccounts] = useState<Account[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selected, setSelected] = useState<Bidder | null>(null);
+  const [selected, setSelected] = useState<Account | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState({ customGptUrl: '' });
   const [error, setError] = useState<string | null>(null);
@@ -19,8 +19,8 @@ export function AdminBiddersView() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const r = await api<{ success: boolean; bidders?: Bidder[] }>('GET', '/api/bidders');
-    setBidders(r.bidders || []);
+    const r = await api<{ success: boolean; accounts?: Account[] }>('GET', '/api/accounts');
+    setAccounts(r.accounts || []);
     setLoading(false);
   }, []);
 
@@ -28,9 +28,9 @@ export function AdminBiddersView() {
     void load();
   }, [load]);
 
-  function openEdit(bidder: Bidder) {
-    setSelected(bidder);
-    setForm({ customGptUrl: bidder.custom_gpt_url || '' });
+  function openEdit(account: Account) {
+    setSelected(account);
+    setForm({ customGptUrl: account.custom_gpt_url || '' });
     setError(null);
     setModalOpen(true);
   }
@@ -48,7 +48,7 @@ export function AdminBiddersView() {
     };
     const r = await api<{ success: boolean; message?: string }>(
       'PUT',
-      `/api/bidders/${selected.id}`,
+      `/api/accounts/${selected.id}`,
       body
     );
     setSaving(false);
@@ -64,7 +64,7 @@ export function AdminBiddersView() {
   return (
     <>
       <p className="text-muted" style={{ marginBottom: 12 }}>
-        Assign a <strong>Custom GPT tab URL</strong> per bidder. Bidders using the Chrome extension
+        Assign a <strong>Custom GPT tab URL</strong> per account. Accounts using the Chrome extension
         will open their assigned GPT instead of the system default.
       </p>
 
@@ -75,7 +75,7 @@ export function AdminBiddersView() {
           <table className="data-table">
             <thead>
               <tr>
-                <th>Bidder</th>
+                <th>Account</th>
                 <th>Manager</th>
                 <th>Custom GPT URL</th>
                 <th>Status</th>
@@ -83,26 +83,26 @@ export function AdminBiddersView() {
               </tr>
             </thead>
             <tbody>
-              {bidders.map((bidder) => (
-                <tr key={bidder.id}>
-                  <td>{bidder.name}</td>
-                  <td>{bidder.manager_name || '—'}</td>
+              {accounts.map((account) => (
+                <tr key={account.id}>
+                  <td>{account.name}</td>
+                  <td>{account.manager_name || '—'}</td>
                   <td style={{ maxWidth: 420, wordBreak: 'break-all' }}>
-                    {bidder.custom_gpt_url || (
+                    {account.custom_gpt_url || (
                       <span className="text-muted">Default system GPT</span>
                     )}
                   </td>
-                  <td>{bidder.is_active ? 'Active' : 'Inactive'}</td>
+                  <td>{account.is_active ? 'Active' : 'Inactive'}</td>
                   <td>
-                    <button className="btn btn-ghost" type="button" onClick={() => openEdit(bidder)}>
+                    <button className="btn btn-ghost" type="button" onClick={() => openEdit(account)}>
                       Assign GPT URL
                     </button>
                   </td>
                 </tr>
               ))}
-              {!bidders.length && (
+              {!accounts.length && (
                 <tr>
-                  <td colSpan={5} className="text-muted">No bidders found.</td>
+                  <td colSpan={5} className="text-muted">No accounts found.</td>
                 </tr>
               )}
             </tbody>

@@ -3,10 +3,10 @@ import { z } from 'zod';
 import { queryAll, queryOne, execute, withTransaction } from '../../database/connection';
 import {
   requireAuth,
-  requireAdminOrBidder,
+  requireAdminOrAccount,
   AuthRequest,
 } from '../../middleware/auth';
-import { candidateBidderFilter, isBidder } from '../../middleware/scope';
+import { candidateAccountFilter, isAccount } from '../../middleware/scope';
 import { normalizeUrl } from '../../utilities/normalize-url';
 import { logger } from '../../utilities/logger';
 import { config } from '../../config/env';
@@ -27,7 +27,7 @@ import applicationDocumentsRoutes from './application-documents.routes';
 
 const router = Router();
 router.use(requireAuth);
-router.use(requireAdminOrBidder);
+router.use(requireAdminOrAccount);
 
 router.use('/:id/documents', applicationDocumentsRoutes);
 
@@ -94,10 +94,10 @@ const SubmitAnswersSchema = z.object({
 
 async function canAccessCandidate(req: AuthRequest, candidateId: number): Promise<boolean> {
   if (req.role === 'admin') return true;
-  if (isBidder(req) && req.bidderId) {
+  if (isAccount(req) && req.accountId) {
     const row = await queryOne<{ id: number }>(
-      'SELECT id FROM candidates WHERE id = $1 AND bidder_id = $2',
-      [candidateId, req.bidderId]
+      'SELECT id FROM candidates WHERE id = $1 AND account_id = $2',
+      [candidateId, req.accountId]
     );
     return Boolean(row);
   }
@@ -108,13 +108,13 @@ async function getSessionForRequest(req: AuthRequest, sessionId: number) {
   if (!config.applicationSessionPersistDb) {
     const session = getMemoryApplicationSession(sessionId);
     if (!session) return null;
-    if (req.role !== 'admin' && isBidder(req) && req.bidderId !== session.bidder_id) {
+    if (req.role !== 'admin' && isAccount(req) && req.accountId !== session.account_id) {
       return null;
     }
     return session as unknown as Record<string, unknown>;
   }
 
-  const scope = candidateBidderFilter(req, 'c', 2);
+  const scope = candidateAccountFilter(req, 'c', 2);
   let query = `
     SELECT s.*,
       c.name AS candidate_name,
@@ -138,7 +138,7 @@ function mapSessionRow(row: Record<string, unknown>) {
     candidateId: row.candidate_id,
     jobId: row.job_id,
     userId: row.user_id,
-    bidderId: row.bidder_id,
+    accountId: row.account_id,
     jobUrl: row.job_url,
     normalizedUrl: row.normalized_url,
     jobTitle: row.job_title,
@@ -212,27 +212,27 @@ router.post('/', async (req: AuthRequest, res: Response) => {
   }
 
   const candidate = await queryOne<{
-    bidder_id: number | null;
+    account_id: number | null;
     name: string;
     email: string | null;
     phone: string | null;
     linkedin_url: string | null;
     stack: string | null;
   }>(
-    'SELECT bidder_id, name, email, phone, linkedin_url, stack FROM candidates WHERE id = $1',
+    'SELECT account_id, name, email, phone, linkedin_url, stack FROM candidates WHERE id = $1',
     [data.candidateId]
   );
-  if (!candidate?.bidder_id) {
-    res.status(400).json({ success: false, message: 'Candidate is not linked to a bidder organization.' });
+  if (!candidate?.account_id) {
+    res.status(400).json({ success: false, message: 'Candidate is not linked to an Account team.' });
     return;
   }
 
-  if (isBidder(req) && req.bidderId !== candidate.bidder_id) {
+  if (isAccount(req) && req.accountId !== candidate.account_id) {
     res.status(403).json({ success: false, message: 'Access denied.' });
     return;
   }
 
-  const bidderId = candidate.bidder_id;
+  const accountId = candidate.account_id;
   const userId = req.userId;
   if (!userId) {
     res.status(401).json({ success: false, message: 'Authentication required.' });
@@ -252,7 +252,7 @@ router.post('/', async (req: AuthRequest, res: Response) => {
       candidateId: data.candidateId,
       jobId: data.jobId ?? null,
       userId,
-      bidderId,
+      accountId,
       jobUrl: data.jobUrl,
       jobTitle: data.jobTitle ?? null,
       company: data.company ?? null,
@@ -277,7 +277,7 @@ router.post('/', async (req: AuthRequest, res: Response) => {
 
   const inserted = await queryOne<Record<string, unknown>>(
     `INSERT INTO application_sessions (
-      candidate_id, job_id, user_id, bidder_id,
+      candidate_id, job_id, user_id, account_id,
       job_url, normalized_url, job_title, company, job_description,
       platform, current_step, discovered_pages, metadata, status
     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13::jsonb, 'scanning')
@@ -286,7 +286,7 @@ router.post('/', async (req: AuthRequest, res: Response) => {
       data.candidateId,
       data.jobId ?? null,
       userId,
-      bidderId,
+      accountId,
       data.jobUrl,
       normalized,
       data.jobTitle ?? null,

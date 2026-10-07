@@ -32,7 +32,7 @@ export interface MemorySession {
     candidate_id: number;
     job_id: number | null;
     user_id: number;
-    bidder_id: number;
+    account_id: number;
     job_url: string;
     normalized_url: string;
     job_title: string | null;
@@ -59,7 +59,7 @@ type CreateSessionInput = {
     candidateId: number;
     jobId?: number | null;
     userId: number;
-    bidderId: number;
+    accountId: number;
     jobUrl: string;
     jobTitle?: string | null;
     company?: string | null;

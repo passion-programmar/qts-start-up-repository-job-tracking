@@ -31,16 +31,16 @@ services:
       - key: JWT_SECRET
         generateValue: true
       - key: ADMIN_USERNAME
-        value: admin
+        value: super
       - key: ADMIN_PASSWORD
         sync: false
       - key: MANAGER_USERNAME
         value: manager
       - key: MANAGER_PASSWORD
         sync: false
-      - key: BIDDER_USERNAME
-        value: bidder
-      - key: BIDDER_PASSWORD
+      - key: ACCOUNT_USERNAME
+        value: account
+      - key: ACCOUNT_PASSWORD
         sync: false
       - key: CALLER_USERNAME
         value: caller

@@ -7,11 +7,11 @@ const SERIAL_TABLES = [
   'interview_processes',
   'jobs',
   'candidates',
-  'bidders',
+  'accounts',
   'admins',
 ] as const;
 
-const BIDDER_CANDIDATE_TABLES = ['candidate_jobs', 'candidates', 'bidders'] as const;
+const ACCOUNT_CANDIDATE_TABLES = ['candidate_jobs', 'candidates', 'accounts'] as const;
 
 async function resetSerialSequences(): Promise<void> {
   for (const table of SERIAL_TABLES) {
@@ -25,8 +25,8 @@ async function resetSerialSequences(): Promise<void> {
   }
 }
 
-async function resetBidderCandidateSequences(): Promise<void> {
-  for (const table of BIDDER_CANDIDATE_TABLES) {
+async function resetAccountCandidateSequences(): Promise<void> {
+  for (const table of ACCOUNT_CANDIDATE_TABLES) {
     await execute(`
       SELECT setval(
         pg_get_serial_sequence('${table}', 'id'),
@@ -37,13 +37,13 @@ async function resetBidderCandidateSequences(): Promise<void> {
   }
 }
 
-/** Remove all bidder orgs, candidates, and bidder/caller login accounts. Keeps admin, managers, jobs, interviews. */
-export async function clearBiddersAndCandidates(): Promise<void> {
+/** Remove all account orgs, candidates, and account/caller login accounts. Keeps Super/Admin, managers, jobs, interviews. */
+export async function clearAccountsAndCandidates(): Promise<void> {
   await execute('DELETE FROM candidates');
-  await execute(`DELETE FROM admins WHERE role IN ('bidder', 'caller')`);
-  await execute('DELETE FROM bidders');
-  await resetBidderCandidateSequences();
-  logger.info('Cleared all bidders and candidates');
+  await execute(`DELETE FROM admins WHERE role IN ('account', 'caller')`);
+  await execute('DELETE FROM accounts');
+  await resetAccountCandidateSequences();
+  logger.info('Cleared all accounts and candidates');
 }
 
 /** Remove ephemeral apply-flow rows (sessions, fields, saved answers). Jobs/candidates are kept. */
@@ -69,17 +69,17 @@ export async function resetDatabaseKeepingAdminOnly(): Promise<void> {
   await execute('DELETE FROM interview_processes');
   await execute('DELETE FROM jobs');
   await execute('DELETE FROM candidates');
-  await execute('UPDATE bidders SET manager_id = NULL');
-  await execute('DELETE FROM bidders');
+  await execute('UPDATE accounts SET manager_id = NULL');
+  await execute('DELETE FROM accounts');
   await execute('DELETE FROM settings');
   await execute(
     `DELETE FROM admins
-     WHERE role <> 'admin' OR username <> $1`,
+     WHERE role <> 'super' OR username <> $1`,
     [config.adminUsername]
   );
   await execute(
-    `UPDATE admins SET bidder_id = NULL, updated_at = NOW()
-     WHERE username = $1 AND role = 'admin'`,
+    `UPDATE admins SET account_id = NULL, updated_at = NOW()
+     WHERE username = $1 AND role = 'super'`,
     [config.adminUsername]
   );
 

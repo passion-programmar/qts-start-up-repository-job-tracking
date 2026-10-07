@@ -1,15 +1,15 @@
-# Generate Chrome extension toolbar + install icons from WYS bidder logo.
+# Generate Chrome extension toolbar + install icons from WYS account logo.
 # Usage: powershell -File scripts/generate-extension-icons.ps1
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $assets = Join-Path $root 'extension\assets'
-$src = Join-Path $assets 'bidder-logo.png'
+$src = Join-Path $assets 'account-logo.png'
 
 if (-not (Test-Path $src)) {
-  $fallback = Join-Path $root 'admin-web\public\bidder-logo.png'
+  $fallback = Join-Path $root 'admin-web\public\account-logo.png'
   if (Test-Path $fallback) { Copy-Item $fallback $src }
-  else { throw "Missing bidder-logo.png in extension/assets" }
+  else { throw "Missing account-logo.png in extension/assets" }
 }
 
 Add-Type -AssemblyName System.Drawing

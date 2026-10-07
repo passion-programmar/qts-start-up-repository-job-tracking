@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.clearBiddersAndCandidates = clearBiddersAndCandidates;
+exports.clearAccountsAndCandidates = clearAccountsAndCandidates;
 exports.clearApplicationSessionRecords = clearApplicationSessionRecords;
 exports.resetDatabaseKeepingAdminOnly = resetDatabaseKeepingAdminOnly;
 const connection_1 = require("./connection");
@@ -11,10 +11,10 @@ const SERIAL_TABLES = [
     'interview_processes',
     'jobs',
     'candidates',
-    'bidders',
+    'accounts',
     'admins',
 ];
-const BIDDER_CANDIDATE_TABLES = ['candidate_jobs', 'candidates', 'bidders'];
+const ACCOUNT_CANDIDATE_TABLES = ['candidate_jobs', 'candidates', 'accounts'];
 async function resetSerialSequences() {
     for (const table of SERIAL_TABLES) {
         await (0, connection_1.execute)(`
@@ -26,8 +26,8 @@ async function resetSerialSequences() {
     `);
     }
 }
-async function resetBidderCandidateSequences() {
-    for (const table of BIDDER_CANDIDATE_TABLES) {
+async function resetAccountCandidateSequences() {
+    for (const table of ACCOUNT_CANDIDATE_TABLES) {
         await (0, connection_1.execute)(`
       SELECT setval(
         pg_get_serial_sequence('${table}', 'id'),
@@ -37,13 +37,13 @@ async function resetBidderCandidateSequences() {
     `);
     }
 }
-/** Remove all bidder orgs, candidates, and bidder/caller login accounts. Keeps admin, managers, jobs, interviews. */
-async function clearBiddersAndCandidates() {
+/** Remove all account orgs, candidates, and account/caller login accounts. Keeps Super/Admin, managers, jobs, interviews. */
+async function clearAccountsAndCandidates() {
     await (0, connection_1.execute)('DELETE FROM candidates');
-    await (0, connection_1.execute)(`DELETE FROM admins WHERE role IN ('bidder', 'caller')`);
-    await (0, connection_1.execute)('DELETE FROM bidders');
-    await resetBidderCandidateSequences();
-    logger_1.logger.info('Cleared all bidders and candidates');
+    await (0, connection_1.execute)(`DELETE FROM admins WHERE role IN ('account', 'caller')`);
+    await (0, connection_1.execute)('DELETE FROM accounts');
+    await resetAccountCandidateSequences();
+    logger_1.logger.info('Cleared all accounts and candidates');
 }
 /** Remove ephemeral apply-flow rows (sessions, fields, saved answers). Jobs/candidates are kept. */
 async function clearApplicationSessionRecords() {
@@ -59,13 +59,13 @@ async function resetDatabaseKeepingAdminOnly() {
     await (0, connection_1.execute)('DELETE FROM interview_processes');
     await (0, connection_1.execute)('DELETE FROM jobs');
     await (0, connection_1.execute)('DELETE FROM candidates');
-    await (0, connection_1.execute)('UPDATE bidders SET manager_id = NULL');
-    await (0, connection_1.execute)('DELETE FROM bidders');
+    await (0, connection_1.execute)('UPDATE accounts SET manager_id = NULL');
+    await (0, connection_1.execute)('DELETE FROM accounts');
     await (0, connection_1.execute)('DELETE FROM settings');
     await (0, connection_1.execute)(`DELETE FROM admins
-     WHERE role <> 'admin' OR username <> $1`, [env_1.config.adminUsername]);
-    await (0, connection_1.execute)(`UPDATE admins SET bidder_id = NULL, updated_at = NOW()
-     WHERE username = $1 AND role = 'admin'`, [env_1.config.adminUsername]);
+     WHERE role <> 'super' OR username <> $1`, [env_1.config.adminUsername]);
+    await (0, connection_1.execute)(`UPDATE admins SET account_id = NULL, updated_at = NOW()
+     WHERE username = $1 AND role = 'super'`, [env_1.config.adminUsername]);
     await resetSerialSequences();
     logger_1.logger.info('Database reset complete — only admin account retained', {
         adminUsername: env_1.config.adminUsername,

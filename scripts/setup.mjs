@@ -49,7 +49,7 @@ function ensureWebEnv() {
 
 function ensureLogoAssets() {
   const mainLogo = join(webDir, 'public', 'logo.png');
-  const bidderLogo = join(webDir, 'public', 'bidder-logo.png');
+  const accountLogo = join(webDir, 'public', 'account-logo.png');
 
   if (existsSync(mainLogo)) {
     const targets = [
@@ -60,19 +60,19 @@ function ensureLogoAssets() {
     }
   }
 
-  if (existsSync(bidderLogo)) {
+  if (existsSync(accountLogo)) {
     const extAssets = join(root, 'extension', 'assets');
     const targets = [
-      join(serverDir, 'src', 'bidder-logo.png'),
-      join(extAssets, 'bidder-logo.png'),
+      join(serverDir, 'src', 'account-logo.png'),
+      join(extAssets, 'account-logo.png'),
     ];
     for (const target of targets) {
-      copyFileSync(bidderLogo, target);
+      copyFileSync(accountLogo, target);
     }
     if (process.platform === 'win32') {
       const ps = `
         Add-Type -AssemblyName System.Drawing
-        $src = '${join(extAssets, 'bidder-logo.png').replace(/\\/g, '\\\\')}'
+        $src = '${join(extAssets, 'account-logo.png').replace(/\\/g, '\\\\')}'
         $img = [System.Drawing.Image]::FromFile($src)
         foreach ($size in 16,32,48,128) {
           $bmp = New-Object System.Drawing.Bitmap $size,$size

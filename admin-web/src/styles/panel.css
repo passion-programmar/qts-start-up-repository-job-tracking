@@ -90,7 +90,7 @@
   padding-right: 10px;
   flex-shrink: 0;
 }
-.org-tree-children--bidders {
+.org-tree-children--accounts {
   padding-left: 20px;
   border-left: 2px solid var(--border);
   margin-left: 18px;
@@ -227,7 +227,7 @@
   background: #fff;
   overflow: hidden;
 }
-.org-tree-branch--bidder .org-tree-row {
+.org-tree-branch--account .org-tree-row {
   padding: 10px 12px;
 }
 .org-tree-children {

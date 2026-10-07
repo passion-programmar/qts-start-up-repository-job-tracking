@@ -15,18 +15,18 @@ const document_builder_1 = require("../document-builder");
 const logger_1 = require("../../utilities/logger");
 const router = (0, express_1.Router)({ mergeParams: true });
 router.use(auth_1.requireAuth);
-router.use(auth_1.requireAdminOrBidder);
+router.use(auth_1.requireAdminOrAccount);
 async function getSessionForRequest(req, sessionId) {
     if (!env_1.config.applicationSessionPersistDb) {
         const session = (0, application_session_store_1.getMemoryApplicationSession)(sessionId);
         if (!session)
             return null;
-        if (req.role !== 'admin' && req.bidderId != null && req.bidderId !== session.bidder_id) {
+        if (req.role !== 'admin' && req.accountId != null && req.accountId !== session.account_id) {
             return null;
         }
         return session;
     }
-    const scope = (0, scope_1.candidateBidderFilter)(req, 'c', 2);
+    const scope = (0, scope_1.candidateAccountFilter)(req, 'c', 2);
     let query = `
     SELECT s.*
     FROM application_sessions s

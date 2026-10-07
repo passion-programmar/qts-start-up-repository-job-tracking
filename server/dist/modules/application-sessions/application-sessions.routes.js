@@ -16,7 +16,7 @@ const application_task_id_1 = require("./application-task-id");
 const application_documents_routes_1 = __importDefault(require("./application-documents.routes"));
 const router = (0, express_1.Router)();
 router.use(auth_1.requireAuth);
-router.use(auth_1.requireAdminOrBidder);
+router.use(auth_1.requireAdminOrAccount);
 router.use('/:id/documents', application_documents_routes_1.default);
 const FieldCategorySchema = zod_1.z.enum([
     'candidate_profile',
@@ -77,8 +77,8 @@ const SubmitAnswersSchema = zod_1.z.object({
 async function canAccessCandidate(req, candidateId) {
     if (req.role === 'admin')
         return true;
-    if ((0, scope_1.isBidder)(req) && req.bidderId) {
-        const row = await (0, connection_1.queryOne)('SELECT id FROM candidates WHERE id = $1 AND bidder_id = $2', [candidateId, req.bidderId]);
+    if ((0, scope_1.isAccount)(req) && req.accountId) {
+        const row = await (0, connection_1.queryOne)('SELECT id FROM candidates WHERE id = $1 AND account_id = $2', [candidateId, req.accountId]);
         return Boolean(row);
     }
     return false;
@@ -88,12 +88,12 @@ async function getSessionForRequest(req, sessionId) {
         const session = (0, application_session_store_1.getMemoryApplicationSession)(sessionId);
         if (!session)
             return null;
-        if (req.role !== 'admin' && (0, scope_1.isBidder)(req) && req.bidderId !== session.bidder_id) {
+        if (req.role !== 'admin' && (0, scope_1.isAccount)(req) && req.accountId !== session.account_id) {
             return null;
         }
         return session;
     }
-    const scope = (0, scope_1.candidateBidderFilter)(req, 'c', 2);
+    const scope = (0, scope_1.candidateAccountFilter)(req, 'c', 2);
     let query = `
     SELECT s.*,
       c.name AS candidate_name,
@@ -116,7 +116,7 @@ function mapSessionRow(row) {
         candidateId: row.candidate_id,
         jobId: row.job_id,
         userId: row.user_id,
-        bidderId: row.bidder_id,
+        accountId: row.account_id,
         jobUrl: row.job_url,
         normalizedUrl: row.normalized_url,
         jobTitle: row.job_title,
@@ -185,16 +185,16 @@ router.post('/', async (req, res) => {
         res.status(404).json({ success: false, message: 'Candidate not found.' });
         return;
     }
-    const candidate = await (0, connection_1.queryOne)('SELECT bidder_id, name, email, phone, linkedin_url, stack FROM candidates WHERE id = $1', [data.candidateId]);
-    if (!candidate?.bidder_id) {
-        res.status(400).json({ success: false, message: 'Candidate is not linked to a bidder organization.' });
+    const candidate = await (0, connection_1.queryOne)('SELECT account_id, name, email, phone, linkedin_url, stack FROM candidates WHERE id = $1', [data.candidateId]);
+    if (!candidate?.account_id) {
+        res.status(400).json({ success: false, message: 'Candidate is not linked to an Account team.' });
         return;
     }
-    if ((0, scope_1.isBidder)(req) && req.bidderId !== candidate.bidder_id) {
+    if ((0, scope_1.isAccount)(req) && req.accountId !== candidate.account_id) {
         res.status(403).json({ success: false, message: 'Access denied.' });
         return;
     }
-    const bidderId = candidate.bidder_id;
+    const accountId = candidate.account_id;
     const userId = req.userId;
     if (!userId) {
         res.status(401).json({ success: false, message: 'Authentication required.' });
@@ -212,7 +212,7 @@ router.post('/', async (req, res) => {
             candidateId: data.candidateId,
             jobId: data.jobId ?? null,
             userId,
-            bidderId,
+            accountId,
             jobUrl: data.jobUrl,
             jobTitle: data.jobTitle ?? null,
             company: data.company ?? null,
@@ -234,7 +234,7 @@ router.post('/', async (req, res) => {
         return;
     }
     const inserted = await (0, connection_1.queryOne)(`INSERT INTO application_sessions (
-      candidate_id, job_id, user_id, bidder_id,
+      candidate_id, job_id, user_id, account_id,
       job_url, normalized_url, job_title, company, job_description,
       platform, current_step, discovered_pages, metadata, status
     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13::jsonb, 'scanning')
@@ -242,7 +242,7 @@ router.post('/', async (req, res) => {
         data.candidateId,
         data.jobId ?? null,
         userId,
-        bidderId,
+        accountId,
         data.jobUrl,
         normalized,
         data.jobTitle ?? null,

@@ -22,7 +22,7 @@ async function ensureServerUrl() {
 }
 
 async function getToken() {
-  const auth = window.__qtsBidderAuth;
+  const auth = window.__qtsAccountAuth;
   if (auth?.getPopupAuthToken) {
     const token = await auth.getPopupAuthToken();
     cachedAuthToken = token || null;
@@ -101,8 +101,8 @@ async function apiRequest(method, path, body) {
 
   data._httpStatus = response.status;
 
-  if (response.status === 401 && window.__qtsBidderAuth?.handleAuthExpired) {
-    await window.__qtsBidderAuth.handleAuthExpired();
+  if (response.status === 401 && window.__qtsAccountAuth?.handleAuthExpired) {
+    await window.__qtsAccountAuth.handleAuthExpired();
     clearCachedToken();
     data.message = data.message || 'Session expired. Please log in again.';
     data._sessionExpired = true;
@@ -168,7 +168,10 @@ window.api = {
     apiRequest('POST', '/api/auth/login', { username, password, extension: true }),
   logout: () => apiRequest('POST', '/api/auth/logout'),
   me: () => apiRequest('GET', '/api/auth/me'),
-  extensionBootstrap: () => apiRequest('GET', '/api/auth/extension-bootstrap'),
+  extensionBootstrap: (accountId) => apiRequest(
+    'GET',
+    `/api/auth/extension-bootstrap${accountId ? `?accountId=${encodeURIComponent(accountId)}` : ''}`
+  ),
   extensionStatus: () => apiRequest('GET', '/api/auth/extension-status'),
   health: () => apiRequest('GET', '/api/health'),
   getCandidates: () => apiRequest('GET', '/api/candidates?active=true'),

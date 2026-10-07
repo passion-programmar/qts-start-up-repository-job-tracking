@@ -20,47 +20,47 @@ const LoginSchema = zod_1.z.object({
     password: zod_1.z.string().min(1),
     extension: zod_1.z.boolean().optional().default(false),
 });
-async function validateBidderAccount(user) {
+async function validateAccountLogin(user) {
     const role = (0, roles_1.normalizeRole)(user.role);
-    if (role !== 'bidder')
-        return { error: null, bidderName: null };
-    if (!user.bidder_id) {
+    if (role !== 'account')
+        return { error: null, accountName: null };
+    if (!user.account_id) {
         return {
-            error: 'This account is not linked to a bidder organization. Ask your admin to create it in QTS_Startup.',
-            bidderName: null,
+            error: 'This Account login is not linked to an Account team. Ask your admin to create it in QTS_Startup.',
+            accountName: null,
         };
     }
-    const bidder = await (0, connection_1.queryOne)(`SELECT b.is_active, b.name, b.manager_id,
+    const account = await (0, connection_1.queryOne)(`SELECT b.is_active, b.name, b.manager_id,
             m.is_active AS manager_is_active,
             m.username AS manager_username
-     FROM bidders b
+     FROM accounts b
      LEFT JOIN admins m ON m.id = b.manager_id AND m.role = 'manager'
-     WHERE b.id = $1`, [user.bidder_id]);
-    if (!bidder) {
+     WHERE b.id = $1`, [user.account_id]);
+    if (!account) {
         return {
-            error: 'Bidder organization not found. Ask your admin to set up your account in QTS_Startup.',
-            bidderName: null,
+            error: 'Account team not found. Ask your admin to set it up in QTS_Startup.',
+            accountName: null,
         };
     }
-    if (!bidder.is_active) {
+    if (!account.is_active) {
         return {
-            error: 'This bidder organization is inactive. Contact your admin.',
-            bidderName: null,
+            error: 'This Account team is inactive. Contact your admin.',
+            accountName: null,
         };
     }
-    if (bidder.manager_id != null && bidder.manager_is_active !== true) {
-        const managerLabel = bidder.manager_username || 'manager';
+    if (account.manager_id != null && account.manager_is_active !== true) {
+        const managerLabel = account.manager_username || 'manager';
         return {
             error: `Your manager (${managerLabel}) is inactive. Contact your admin.`,
-            bidderName: null,
+            accountName: null,
         };
     }
-    return { error: null, bidderName: bidder.name ?? null };
+    return { error: null, accountName: account.name ?? null };
 }
 router.post('/login', async (req, res) => {
     try {
         const { username, password, extension } = LoginSchema.parse(req.body);
-        const user = await (0, connection_1.queryOne)('SELECT id, username, password_hash, role, bidder_id FROM admins WHERE username = $1', [username]);
+        const user = await (0, connection_1.queryOne)('SELECT id, username, password_hash, role, account_id FROM admins WHERE username = $1', [username]);
         if (!user) {
             logger_1.logger.warn('Login failed: unknown username', { username });
             res.status(401).json({ success: false, message: 'Invalid credentials.' });
@@ -73,27 +73,27 @@ router.post('/login', async (req, res) => {
             return;
         }
         const role = (0, roles_1.normalizeRole)(user.role);
-        if (extension && role !== 'bidder') {
-            logger_1.logger.warn('Extension login rejected: not a bidder', { username, role });
+        if (extension && role !== 'manager') {
+            logger_1.logger.warn('Extension login rejected: not a manager', { username, role });
             res.status(403).json({
                 success: false,
-                message: 'The extension requires a bidder account. Use QTS_Startup web for admin or caller access.',
+                message: 'Only Manager accounts can sign in to the extension.',
             });
             return;
         }
-        const bidderCheck = await validateBidderAccount(user);
-        if (bidderCheck.error) {
-            logger_1.logger.warn('Login failed: bidder account not ready', { username });
-            res.status(403).json({ success: false, message: bidderCheck.error });
+        const accountCheck = await validateAccountLogin(user);
+        if (accountCheck.error) {
+            logger_1.logger.warn('Login failed: Account login not ready', { username });
+            res.status(403).json({ success: false, message: accountCheck.error });
             return;
         }
-        const bidderName = bidderCheck.bidderName;
+        const accountName = accountCheck.accountName;
         const token = jsonwebtoken_1.default.sign({
             id: user.id,
             username: user.username,
             role,
-            bidderId: user.bidder_id,
-            bidderName,
+            accountId: user.account_id,
+            accountName,
         }, env_1.config.jwtSecret, { expiresIn: env_1.config.jwtExpiry });
         const decoded = jsonwebtoken_1.default.decode(token);
         const expiresAt = decoded?.exp ? decoded.exp * 1000 : Date.now() + 24 * 60 * 60 * 1000;
@@ -105,8 +105,8 @@ router.post('/login', async (req, res) => {
             id: user.id,
             username: user.username,
             role,
-            bidderId: user.bidder_id,
-            bidderName,
+            accountId: user.account_id,
+            accountName,
         });
     }
     catch (err) {
@@ -123,13 +123,13 @@ router.post('/logout', auth_1.requireAuth, (req, res) => {
     res.json({ success: true, message: 'Logged out.' });
 });
 router.get('/me', auth_1.requireAuth, async (req, res) => {
-    if ((0, roles_1.normalizeRole)(req.role) === 'bidder') {
-        const bidderCheck = await validateBidderAccount({
-            role: req.role || 'bidder',
-            bidder_id: req.bidderId ?? null,
+    if ((0, roles_1.normalizeRole)(req.role) === 'account') {
+        const accountCheck = await validateAccountLogin({
+            role: req.role || 'account',
+            account_id: req.accountId ?? null,
         });
-        if (bidderCheck.error) {
-            res.status(403).json({ success: false, message: bidderCheck.error });
+        if (accountCheck.error) {
+            res.status(403).json({ success: false, message: accountCheck.error });
             return;
         }
     }
@@ -137,66 +137,91 @@ router.get('/me', auth_1.requireAuth, async (req, res) => {
         success: true,
         username: req.username,
         id: req.userId,
-        role: req.role || 'bidder',
-        bidderId: req.bidderId ?? null,
-        bidderName: req.bidderName ?? null,
+        role: req.role || 'account',
+        accountId: req.accountId ?? null,
+        accountName: req.accountName ?? null,
     });
 });
 router.get('/extension-bootstrap', auth_1.requireAuth, async (req, res) => {
     const role = (0, roles_1.normalizeRole)(req.role);
-    const bidderId = req.bidderId != null ? Number(req.bidderId) : null;
-    if (role !== 'bidder' || !bidderId) {
+    if (role !== 'manager' || !req.userId) {
         res.status(403).json({
             success: false,
-            message: 'The extension requires a bidder account linked to a bidder organization.',
+            message: 'Only Manager accounts can use the extension.',
         });
         return;
     }
-    const bidderCheck = await validateBidderAccount({
-        role: req.role || 'bidder',
-        bidder_id: bidderId,
-    });
-    if (bidderCheck.error) {
-        res.status(403).json({ success: false, message: bidderCheck.error });
+    const teams = await (0, connection_1.queryAll)('SELECT id, name FROM accounts WHERE manager_id = $1 AND is_active = TRUE ORDER BY name ASC', [req.userId]);
+    const requestedAccountId = Number(req.query.accountId ?? req.accountId ?? 0);
+    const selectedTeam = requestedAccountId > 0
+        ? teams.find((team) => team.id === requestedAccountId)
+        : null;
+    if (requestedAccountId > 0 && !selectedTeam) {
+        res.status(403).json({ success: false, message: 'That Account team is not assigned to your Manager account.' });
         return;
     }
-    const [candidates, stacks, bidderRow] = await Promise.all([
-        (0, connection_1.queryAll)(`SELECT c.*, b.name AS bidder_name
+    const stacks = await (0, candidate_stacks_1.getCandidateStacks)();
+    if (!selectedTeam) {
+        res.json({
+            success: true,
+            user: {
+                id: req.userId,
+                username: req.username,
+                role,
+                accountId: null,
+                accountName: null,
+            },
+            teams,
+            candidates: [],
+            stacks,
+        });
+        return;
+    }
+    const [candidates, accountRow] = await Promise.all([
+        (0, connection_1.queryAll)(`SELECT c.*, b.name AS account_name
        FROM candidates c
-       LEFT JOIN bidders b ON b.id = c.bidder_id
-       WHERE c.is_active = TRUE AND c.bidder_id = $1
-       ORDER BY c.name ASC`, [bidderId]),
-        (0, candidate_stacks_1.getCandidateStacks)(),
-        (0, connection_1.queryOne)('SELECT custom_gpt_url FROM bidders WHERE id = $1', [bidderId]),
+       LEFT JOIN accounts b ON b.id = c.account_id
+       WHERE c.is_active = TRUE AND c.account_id = $1
+       ORDER BY c.name ASC`, [selectedTeam.id]),
+        (0, connection_1.queryOne)('SELECT custom_gpt_url FROM accounts WHERE id = $1', [selectedTeam.id]),
     ]);
-    const customGpt = (0, custom_gpt_url_1.resolveCustomGptConfig)(bidderRow?.custom_gpt_url);
+    const customGpt = (0, custom_gpt_url_1.resolveCustomGptConfig)(accountRow?.custom_gpt_url);
+    const token = jsonwebtoken_1.default.sign({
+        id: req.userId,
+        username: req.username,
+        role,
+        accountId: selectedTeam.id,
+        accountName: selectedTeam.name,
+        extensionAccountScope: true,
+    }, env_1.config.jwtSecret, { expiresIn: env_1.config.jwtExpiry });
+    const decoded = jsonwebtoken_1.default.decode(token);
     res.json({
         success: true,
+        token,
+        expiresAt: decoded?.exp ? decoded.exp * 1000 : Date.now() + 24 * 60 * 60 * 1000,
         user: {
             id: req.userId,
             username: req.username,
-            role: req.role,
-            bidderId,
-            bidderName: req.bidderName ?? null,
+            role,
+            accountId: selectedTeam.id,
+            accountName: selectedTeam.name,
         },
         candidates,
         stacks,
         customGpt,
+        teams,
     });
 });
 router.get('/extension-status', async (_req, res) => {
     const row = await (0, connection_1.queryOne)(`
     SELECT COUNT(*)::int AS count
-    FROM admins a
-    INNER JOIN bidders b ON b.id = a.bidder_id
-    LEFT JOIN admins m ON m.id = b.manager_id AND m.role = 'manager'
-    WHERE a.role = 'bidder'
-      AND b.is_active = TRUE
-      AND (b.manager_id IS NULL OR m.is_active = TRUE)
+    FROM admins m
+    INNER JOIN accounts b ON b.manager_id = m.id AND b.is_active = TRUE
+    WHERE m.role = 'manager' AND m.is_active = TRUE
   `);
     res.json({
         success: true,
-        hasBidderAccounts: (row?.count ?? 0) > 0,
+        hasManagerAccounts: (row?.count ?? 0) > 0,
     });
 });
 router.get('/setup-status', async (_req, res) => {

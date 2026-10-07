@@ -5,7 +5,7 @@
 ### 1.13.25 — 2026-06-29
 
 - **Job sites:** Admin → Jobs → Job sites — manually add sources (`platform_key`, URL host).
-- **Bidder admission:** Admin admits bidder per site with default candidate; bidder Jobs panel lists sites + jobs.
+- **Account admission:** Admin admits account per site with default candidate; account Jobs panel lists sites + jobs.
 - **Extension:** Fix duplicate `PROCESS_TASK` send (submit lock, no re-insert fallback).
 - **Custom GPT:** Final reply **"Confirmed."** only (update GPT instructions).
 - **Docs:** [docs/CURRENT-SYSTEM.md](docs/CURRENT-SYSTEM.md) canonical architecture reference.
@@ -18,7 +18,7 @@
 
 ### 1.2.0
 
-- Next.js admin UI with role-based panels (admin, bidder, caller)
+- Next.js admin UI with role-based panels (admin, account, caller)
 - PostgreSQL with embedded PGlite for local dev
 - Ports: UI `1027`, API `1028`
 

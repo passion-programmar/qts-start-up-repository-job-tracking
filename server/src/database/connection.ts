@@ -164,7 +164,54 @@ function maskDatabaseUrl(url: string): string {
   }
 }
 
+async function tableExists(table: string): Promise<boolean> {
+  const row = await queryOne<{ exists: boolean }>(
+    `SELECT EXISTS (
+      SELECT 1 FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name = $1
+    ) AS exists`,
+    [table]
+  );
+  return Boolean(row?.exists);
+}
+
+async function migrateLegacyAccountSchema(): Promise<void> {
+  const oldTeamTable = 'bidders';
+  const oldTeamSiteTable = 'bidder_job_sites';
+  const newTeamTable = 'accounts';
+  const newTeamSiteTable = 'account_job_sites';
+
+  if (await tableExists(oldTeamTable)) {
+    if (await tableExists(newTeamTable)) {
+      throw new Error('Both legacy bidder and account tables exist; resolve the table conflict before starting.');
+    }
+    await execute(`ALTER TABLE ${oldTeamTable} RENAME TO ${newTeamTable}`);
+  }
+  if (await tableExists(oldTeamSiteTable)) {
+    if (await tableExists(newTeamSiteTable)) {
+      throw new Error('Both legacy bidder job-site and account job-site tables exist; resolve the table conflict before starting.');
+    }
+    await execute(`ALTER TABLE ${oldTeamSiteTable} RENAME TO ${newTeamSiteTable}`);
+  }
+
+  const legacyColumn = 'bidder_id';
+  const accountColumn = 'account_id';
+  for (const table of ['admins', 'candidates', 'jobs', 'interview_processes', 'application_sessions', newTeamSiteTable]) {
+    if (!(await tableExists(table))) continue;
+    const hasLegacyColumn = await columnExists(table, legacyColumn);
+    const hasAccountColumn = await columnExists(table, accountColumn);
+    if (hasLegacyColumn && hasAccountColumn) {
+      throw new Error(`Both legacy bidder_id and account_id columns exist in ${table}; resolve the column conflict before starting.`);
+    }
+    if (hasLegacyColumn) {
+      await execute(`ALTER TABLE ${table} RENAME COLUMN ${legacyColumn} TO ${accountColumn}`);
+    }
+  }
+}
+
 async function runMigrations(): Promise<void> {
+  await migrateLegacyAccountSchema();
+
   await execute(`
     CREATE TABLE IF NOT EXISTS admins (
       id SERIAL PRIMARY KEY,
@@ -227,7 +274,7 @@ async function runMigrations(): Promise<void> {
   `);
 
   await execute(`
-    CREATE TABLE IF NOT EXISTS bidders (
+    CREATE TABLE IF NOT EXISTS accounts (
       id SERIAL PRIMARY KEY,
       name TEXT NOT NULL,
       notes TEXT,
@@ -243,7 +290,7 @@ async function runMigrations(): Promise<void> {
       candidate_id INTEGER REFERENCES candidates(id) ON DELETE SET NULL,
       candidate_name TEXT NOT NULL,
       caller_user_id INTEGER REFERENCES admins(id) ON DELETE SET NULL,
-      bidder_id INTEGER REFERENCES bidders(id) ON DELETE SET NULL,
+      account_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL,
       scheduled_date DATE,
       attend_date DATE,
       interview_time TEXT,
@@ -274,7 +321,7 @@ async function runMigrations(): Promise<void> {
       candidate_id INTEGER NOT NULL REFERENCES candidates(id) ON DELETE CASCADE,
       job_id INTEGER REFERENCES jobs(id) ON DELETE SET NULL,
       user_id INTEGER NOT NULL REFERENCES admins(id) ON DELETE CASCADE,
-      bidder_id INTEGER NOT NULL REFERENCES bidders(id) ON DELETE CASCADE,
+      account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
       job_url TEXT NOT NULL,
       normalized_url TEXT,
       job_title TEXT,
@@ -344,7 +391,7 @@ async function runMigrations(): Promise<void> {
 
   await execute('CREATE INDEX IF NOT EXISTS idx_app_sessions_candidate ON application_sessions(candidate_id)');
   await execute('CREATE INDEX IF NOT EXISTS idx_app_sessions_job ON application_sessions(job_id)');
-  await execute('CREATE INDEX IF NOT EXISTS idx_app_sessions_bidder ON application_sessions(bidder_id)');
+  await execute('CREATE INDEX IF NOT EXISTS idx_app_sessions_account ON application_sessions(account_id)');
   await execute('CREATE INDEX IF NOT EXISTS idx_app_sessions_user ON application_sessions(user_id)');
   await execute('CREATE INDEX IF NOT EXISTS idx_app_sessions_status ON application_sessions(status)');
   await execute('CREATE INDEX IF NOT EXISTS idx_app_session_fields_session ON application_session_fields(session_id)');
@@ -365,16 +412,16 @@ async function runMigrations(): Promise<void> {
   `);
 
   await execute(`
-    CREATE TABLE IF NOT EXISTS bidder_job_sites (
+    CREATE TABLE IF NOT EXISTS account_job_sites (
       id SERIAL PRIMARY KEY,
-      bidder_id INTEGER NOT NULL REFERENCES bidders(id) ON DELETE CASCADE,
+      account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
       job_site_id INTEGER NOT NULL REFERENCES job_sites(id) ON DELETE CASCADE,
       default_candidate_id INTEGER REFERENCES candidates(id) ON DELETE SET NULL,
       admitted_by INTEGER REFERENCES admins(id) ON DELETE SET NULL,
       is_active BOOLEAN NOT NULL DEFAULT TRUE,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      UNIQUE (bidder_id, job_site_id)
+      UNIQUE (account_id, job_site_id)
     )
   `);
 
@@ -400,26 +447,26 @@ async function migrateSchema(): Promise<void> {
   if (!(await columnExists('candidates', 'color'))) {
     await execute(`ALTER TABLE candidates ADD COLUMN color TEXT`);
   }
-  if (!(await columnExists('admins', 'bidder_id'))) {
-    await execute(`ALTER TABLE admins ADD COLUMN bidder_id INTEGER REFERENCES bidders(id) ON DELETE SET NULL`);
+  if (!(await columnExists('admins', 'account_id'))) {
+    await execute(`ALTER TABLE admins ADD COLUMN account_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL`);
   }
-  if (!(await columnExists('candidates', 'bidder_id'))) {
-    await execute(`ALTER TABLE candidates ADD COLUMN bidder_id INTEGER REFERENCES bidders(id) ON DELETE SET NULL`);
+  if (!(await columnExists('candidates', 'account_id'))) {
+    await execute(`ALTER TABLE candidates ADD COLUMN account_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL`);
   }
   if (!(await columnExists('candidates', 'stack'))) {
     await execute(`ALTER TABLE candidates ADD COLUMN stack TEXT`);
   }
-  if (!(await columnExists('jobs', 'bidder_id'))) {
-    await execute(`ALTER TABLE jobs ADD COLUMN bidder_id INTEGER REFERENCES bidders(id) ON DELETE SET NULL`);
+  if (!(await columnExists('jobs', 'account_id'))) {
+    await execute(`ALTER TABLE jobs ADD COLUMN account_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL`);
   }
   if (!(await columnExists('jobs', 'created_by_user_id'))) {
     await execute(`ALTER TABLE jobs ADD COLUMN created_by_user_id INTEGER REFERENCES admins(id) ON DELETE SET NULL`);
   }
-  if (!(await columnExists('bidders', 'manager_id'))) {
-    await execute(`ALTER TABLE bidders ADD COLUMN manager_id INTEGER REFERENCES admins(id) ON DELETE SET NULL`);
+  if (!(await columnExists('accounts', 'manager_id'))) {
+    await execute(`ALTER TABLE accounts ADD COLUMN manager_id INTEGER REFERENCES admins(id) ON DELETE SET NULL`);
   }
-  if (!(await columnExists('bidders', 'custom_gpt_url'))) {
-    await execute(`ALTER TABLE bidders ADD COLUMN custom_gpt_url TEXT`);
+  if (!(await columnExists('accounts', 'custom_gpt_url'))) {
+    await execute(`ALTER TABLE accounts ADD COLUMN custom_gpt_url TEXT`);
   }
   if (!(await columnExists('admins', 'password_encrypted'))) {
     await execute(`ALTER TABLE admins ADD COLUMN password_encrypted TEXT`);
@@ -441,20 +488,20 @@ async function migrateSchema(): Promise<void> {
     CHECK (category IN ('candidate_profile', 'saved_answer', 'ai_generation', 'document_upload', 'unknown'))
   `);
 
-  await execute(`UPDATE admins SET role = 'bidder' WHERE role = 'user'`);
+  await execute(`UPDATE admins SET role = 'account' WHERE role IN ('user', 'bidder')`);
 
-  await execute('CREATE INDEX IF NOT EXISTS idx_candidates_bidder ON candidates(bidder_id)');
-  await execute('CREATE INDEX IF NOT EXISTS idx_candidates_bidder_active ON candidates(bidder_id, is_active)');
-  await execute('CREATE INDEX IF NOT EXISTS idx_jobs_bidder ON jobs(bidder_id)');
-  await execute('CREATE INDEX IF NOT EXISTS idx_admins_bidder ON admins(bidder_id)');
+  await execute('CREATE INDEX IF NOT EXISTS idx_candidates_account ON candidates(account_id)');
+  await execute('CREATE INDEX IF NOT EXISTS idx_candidates_account_active ON candidates(account_id, is_active)');
+  await execute('CREATE INDEX IF NOT EXISTS idx_jobs_account ON jobs(account_id)');
+  await execute('CREATE INDEX IF NOT EXISTS idx_admins_account ON admins(account_id)');
   await execute('CREATE INDEX IF NOT EXISTS idx_admins_username ON admins(username)');
   await execute('CREATE INDEX IF NOT EXISTS idx_candidate_jobs_status_job ON candidate_jobs(status, job_id)');
-  await execute('CREATE INDEX IF NOT EXISTS idx_bidders_manager ON bidders(manager_id)');
+  await execute('CREATE INDEX IF NOT EXISTS idx_accounts_manager ON accounts(manager_id)');
   await execute('CREATE INDEX IF NOT EXISTS idx_interviews_caller ON interview_processes(caller_user_id)');
-  await execute('CREATE INDEX IF NOT EXISTS idx_interviews_bidder ON interview_processes(bidder_id)');
+  await execute('CREATE INDEX IF NOT EXISTS idx_interviews_account ON interview_processes(account_id)');
   await execute('CREATE INDEX IF NOT EXISTS idx_job_sites_platform ON job_sites(platform_key)');
-  await execute('CREATE INDEX IF NOT EXISTS idx_bidder_job_sites_bidder ON bidder_job_sites(bidder_id)');
-  await execute('CREATE INDEX IF NOT EXISTS idx_bidder_job_sites_site ON bidder_job_sites(job_site_id)');
+  await execute('CREATE INDEX IF NOT EXISTS idx_account_job_sites_account ON account_job_sites(account_id)');
+  await execute('CREATE INDEX IF NOT EXISTS idx_account_job_sites_site ON account_job_sites(job_site_id)');
 }
 
 export async function backupDb(): Promise<string> {
@@ -507,7 +554,7 @@ function runPgDump(destination: string): Promise<void> {
 }
 
 async function runLogicalBackup(destination: string): Promise<void> {
-  const tables = ['bidders', 'admins', 'candidates', 'jobs', 'candidate_jobs', 'interview_processes', 'settings', 'application_sessions', 'application_session_fields', 'candidate_saved_answers'] as const;
+  const tables = ['accounts', 'admins', 'candidates', 'jobs', 'candidate_jobs', 'interview_processes', 'settings', 'application_sessions', 'application_session_fields', 'candidate_saved_answers'] as const;
   const lines: string[] = [
     `-- ${APP_NAME} PostgreSQL logical backup`,
     `-- Generated: ${new Date().toISOString()}`,

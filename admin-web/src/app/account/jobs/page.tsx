@@ -1,5 +1,5 @@
 import { JobsView } from '@/components/JobsView';
 
-export default function BidderJobsPage() {
+export default function AccountJobsPage() {
   return <JobsView />;
 }

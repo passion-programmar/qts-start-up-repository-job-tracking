@@ -8,7 +8,7 @@ import type { PanelMode } from '@/lib/types';
 const BASE_PATHS: Record<PanelMode, string> = {
   admin: '/admin',
   manager: '/manager',
-  bidder: '/bidder',
+  account: '/account',
   caller: '/caller',
 };
 

@@ -8,7 +8,7 @@ const cors_1 = __importDefault(require("cors"));
 const auth_routes_1 = __importDefault(require("./modules/auth/auth.routes"));
 const candidates_routes_1 = __importDefault(require("./modules/candidates/candidates.routes"));
 const jobs_routes_1 = __importDefault(require("./modules/jobs/jobs.routes"));
-const bidders_routes_1 = __importDefault(require("./modules/bidders/bidders.routes"));
+const accounts_routes_1 = __importDefault(require("./modules/accounts/accounts.routes"));
 const users_routes_1 = __importDefault(require("./modules/users/users.routes"));
 const interviews_routes_1 = __importDefault(require("./modules/interviews/interviews.routes"));
 const settings_routes_1 = __importDefault(require("./modules/settings/settings.routes"));
@@ -57,7 +57,7 @@ app.use(express_1.default.urlencoded({ extended: true }));
 app.use('/api/auth', auth_routes_1.default);
 app.use('/api/candidates', candidates_routes_1.default);
 app.use('/api/jobs', jobs_routes_1.default);
-app.use('/api/bidders', bidders_routes_1.default);
+app.use('/api/accounts', accounts_routes_1.default);
 app.use('/api/users', users_routes_1.default);
 app.use('/api/interviews', interviews_routes_1.default);
 app.use('/api/settings', settings_routes_1.default);
@@ -86,8 +86,8 @@ app.get('/logo.png', (_req, res) => {
     }
     res.sendFile(logoPath);
 });
-app.get('/bidder-logo.png', (_req, res) => {
-    const logoPath = (0, paths_1.getBidderLogoPath)();
+app.get('/account-logo.png', (_req, res) => {
+    const logoPath = (0, paths_1.getAccountLogoPath)();
     if (!logoPath) {
         res.status(404).end();
         return;

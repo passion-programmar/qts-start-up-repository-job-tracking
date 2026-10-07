@@ -3,7 +3,8 @@
 (function initAutoApplicationPipeline(global) {
   if (global.__qtsAutoApplicationPipeline) return;
 
-  const DEFAULT_CANDIDATE_KEY = 'qtsDefaultCandidateByBidder';
+  const DEFAULT_CANDIDATE_KEY = 'qtsDefaultCandidateByAccount';
+  const LEGACY_DEFAULT_CANDIDATE_KEY = 'qtsDefaultCandidateByBidder';
   const SESSION_USER_KEY = 'qtsSessionUser';
   const AUTO_APPLY_ENABLED_KEY = 'qtsAutoApplyEnabled';
 
@@ -48,25 +49,32 @@
   }
 
   async function readSessionUser() {
-    if (global.__qtsBidderAuth?.readWorkerSessionUser) {
-      return global.__qtsBidderAuth.readWorkerSessionUser();
+    if (global.__qtsAccountAuth?.readWorkerSessionUser) {
+      return global.__qtsAccountAuth.readWorkerSessionUser();
     }
     const stored = await chrome.storage.local.get([SESSION_USER_KEY, 'authExpiresAt']);
     if (stored.authExpiresAt && Date.now() >= Number(stored.authExpiresAt)) return null;
     return stored[SESSION_USER_KEY] || null;
   }
 
-  async function readDefaultCandidateId(bidderId) {
-    const id = Number(bidderId);
+  async function readDefaultCandidateId(accountId) {
+    const id = Number(accountId);
     if (!Number.isFinite(id) || id <= 0) return null;
-    const stored = await chrome.storage.local.get([DEFAULT_CANDIDATE_KEY]);
-    const map = stored[DEFAULT_CANDIDATE_KEY] || {};
+    const stored = await chrome.storage.local.get([DEFAULT_CANDIDATE_KEY, LEGACY_DEFAULT_CANDIDATE_KEY]);
+    const legacyMap = stored[LEGACY_DEFAULT_CANDIDATE_KEY];
+    const currentMap = stored[DEFAULT_CANDIDATE_KEY];
+    let map = currentMap || {};
+    if (legacyMap && typeof legacyMap === 'object') {
+      map = { ...legacyMap, ...map };
+      await chrome.storage.local.set({ [DEFAULT_CANDIDATE_KEY]: map });
+      await chrome.storage.local.remove(LEGACY_DEFAULT_CANDIDATE_KEY);
+    }
     const candidateId = Number(map[String(id)]);
     return Number.isFinite(candidateId) ? candidateId : null;
   }
 
   async function isAutoApplyEnabled() {
-    const auth = global.__qtsBidderAuth;
+    const auth = global.__qtsAccountAuth;
     const token = auth?.getWorkerAuthToken
       ? await auth.getWorkerAuthToken()
       : (await chrome.storage.local.get(['authToken'])).authToken || '';
@@ -81,17 +89,17 @@
 
   async function isExtensionOperational() {
     const user = await readSessionUser();
-    if (!user || user.role !== 'bidder') return false;
+    if (!user || (user.role !== 'account' && user.role !== 'manager')) return false;
     if (!(await isAutoApplyEnabled())) return false;
-    const candidateId = await readDefaultCandidateId(user.bidderId);
+    const candidateId = await readDefaultCandidateId(user.accountId);
     return Number.isFinite(candidateId) && candidateId > 0;
   }
 
   async function resolveDefaultCandidateId() {
     const user = await readSessionUser();
-    if (!user || user.role !== 'bidder') return null;
+    if (!user || (user.role !== 'account' && user.role !== 'manager')) return null;
     if (!(await isAutoApplyEnabled())) return null;
-    return readDefaultCandidateId(user.bidderId);
+    return readDefaultCandidateId(user.accountId);
   }
 
   async function isDefaultCandidateAlreadyApplied(jobUrl, candidateId) {

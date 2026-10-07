@@ -1,6 +1,6 @@
 # Deploy guide (free tier)
 
-> **Current system (June 2026):** See [docs/CURRENT-SYSTEM.md](docs/CURRENT-SYSTEM.md) — extension v1.13.25+, job sites, one-step auto-apply.
+> **Current system (June 2026):** See [docs/CURRENT-SYSTEM.md](docs/CURRENT-SYSTEM.md) ï¿½ extension v1.13.25+, job sites, one-step auto-apply.
 
 Repo: https://github.com/passion-programmar/qts-start-up-repository-job-tracking
 
@@ -39,7 +39,7 @@ Create token: https://github.com/settings/tokens (classic, **repo** scope)
 3. Uses `render.yaml` in repo root
 4. Set secret env vars when prompted:
    - `DATABASE_URL` = Neon connection string
-   - `ADMIN_PASSWORD`, `MANAGER_PASSWORD`, `BIDDER_PASSWORD`, `CALLER_PASSWORD`
+   - `ADMIN_PASSWORD`, `MANAGER_PASSWORD`, `ACCOUNT_PASSWORD`, `CALLER_PASSWORD`
    - `ADMIN_WEB_URL` = `https://YOUR-APP.vercel.app/login` (after Vercel deploy)
 5. Note API URL: `https://qts-api.onrender.com` (or your service name)
 
@@ -67,7 +67,7 @@ Update Render `ADMIN_WEB_URL` to your Vercel login URL.
 
 - Load unpacked: `extension/` folder
 - **API Server URL:** `https://YOUR-APP.vercel.app` (no `/api/health`)
-- Each user logs in with their bidder account
+- Each Account user signs in with their Account login
 
 ---
 

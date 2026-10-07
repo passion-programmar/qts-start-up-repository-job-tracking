@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import authRoutes from './modules/auth/auth.routes';
 import candidateRoutes from './modules/candidates/candidates.routes';
 import jobRoutes from './modules/jobs/jobs.routes';
-import biddersRoutes from './modules/bidders/bidders.routes';
+import accountsRoutes from './modules/accounts/accounts.routes';
 import usersRoutes from './modules/users/users.routes';
 import interviewsRoutes from './modules/interviews/interviews.routes';
 import settingsRoutes from './modules/settings/settings.routes';
@@ -13,7 +13,7 @@ import applicationTasksRoutes from './modules/application-sessions/application-t
 import adminRecordsRoutes from './modules/admin-records/admin-records.routes';
 import jobSitesRoutes from './modules/job-sites/job-sites.routes';
 import { errorHandler } from './middleware/error-handler';
-import { getBidderLogoPath, getLogoPath } from './config/paths';
+import { getAccountLogoPath, getLogoPath } from './config/paths';
 import { config } from './config/env';
 import { APP_NAME } from './config/branding';
 
@@ -60,7 +60,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use('/api/auth', authRoutes);
 app.use('/api/candidates', candidateRoutes);
 app.use('/api/jobs', jobRoutes);
-app.use('/api/bidders', biddersRoutes);
+app.use('/api/accounts', accountsRoutes);
 app.use('/api/users', usersRoutes);
 app.use('/api/interviews', interviewsRoutes);
 app.use('/api/settings', settingsRoutes);
@@ -92,8 +92,8 @@ app.get('/logo.png', (_req, res) => {
   res.sendFile(logoPath);
 });
 
-app.get('/bidder-logo.png', (_req, res) => {
-  const logoPath = getBidderLogoPath();
+app.get('/account-logo.png', (_req, res) => {
+  const logoPath = getAccountLogoPath();
   if (!logoPath) {
     res.status(404).end();
     return;

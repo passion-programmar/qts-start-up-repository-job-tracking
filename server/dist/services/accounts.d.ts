@@ -3,7 +3,7 @@ export interface CreateAccountInput {
     username: string;
     password: string;
     role: UserRole;
-    bidderId?: number | null;
+    accountId?: number | null;
     isActive?: boolean;
 }
 export declare function createAccount(input: CreateAccountInput): Promise<{

@@ -30,6 +30,6 @@ export function getLogoPath(): string | null {
   return getAssetPath('logo.png');
 }
 
-export function getBidderLogoPath(): string | null {
-  return getAssetPath('bidder-logo.png');
+export function getAccountLogoPath(): string | null {
+  return getAssetPath('account-logo.png');
 }

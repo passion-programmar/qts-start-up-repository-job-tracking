@@ -247,9 +247,10 @@
 
   <div id="session-bar" class="session-bar hidden">
     <div class="session-info">
-      <span class="session-org" id="session-bidder">—</span>
+      <span class="session-org" id="session-account">—</span>
       <span class="session-user" id="session-user">—</span>
     </div>
+    <button class="session-logout hidden" id="btn-change-team" type="button">Change Account</button>
     <button class="session-logout" id="btn-logout" type="button" aria-label="Log out">
       <span class="session-logout-icon" aria-hidden="true">⎋</span>
       <span>Log out</span>
@@ -260,17 +261,17 @@
   <div class="popup-scroll">
     <div class="popup-scroll-inner">
     <!-- Login -->
-    <div id="login-section" class="hidden">
+    <div id="login-section">
       <div class="login-shell">
         <div class="login-card">
           <div class="login-brand">
             <div class="login-badge" aria-hidden="true">QTS</div>
-            <h2 class="login-title">Bidder Sign In</h2>
+            <h2 class="login-title">Manager Sign In</h2>
             <p class="login-subtitle">Sign in to capture jobs from LinkedIn, Indeed, and more</p>
           </div>
 
           <div id="login-setup-hint" class="hidden alert alert-warn login-setup-hint">
-            No bidder accounts exist yet. A manager must add a bidder organization and login before you can sign in here.
+            No Manager accounts exist yet. An Admin must create a Manager account before you can sign in here.
           </div>
           <div id="login-alert"></div>
 
@@ -288,6 +289,16 @@
 
           <div id="login-candidate-step" class="login-candidate-step hidden">
             <p class="login-signed-in-as" id="login-signed-in-as"></p>
+            <div id="login-team-step" class="hidden">
+              <div class="login-field">
+                <label class="login-label" for="login-team">Account team</label>
+                <select id="login-team" class="login-input" aria-label="Account team">
+                  <option value="">— Select Account —</option>
+                </select>
+              </div>
+              <button class="btn btn-primary btn-block login-submit" id="btn-select-team" type="button">Continue</button>
+            </div>
+            <div id="login-candidate-fields">
             <div class="login-field">
               <label class="login-label" for="login-default-candidate">Default candidate</label>
               <select id="login-default-candidate" class="login-input" aria-label="Default candidate">
@@ -299,9 +310,10 @@
               <button class="btn btn-primary btn-block login-submit" id="btn-start-auto-apply" type="button">Start applying on job pages</button>
               <button class="btn btn-ghost btn-block" id="btn-setup-not-now" type="button">Not now</button>
             </div>
+            </div>
           </div>
 
-          <p class="login-footer">Use the bidder account your manager created in QTS_Startup</p>
+          <p class="login-footer">Use your Manager account from QTS_Startup</p>
         </div>
       </div>
     </div>
@@ -456,7 +468,7 @@
         </div>
       </div>
       <div class="cand-list" id="cand-list"></div>
-      <div id="cand-empty" class="hidden text-muted cand-empty">No active candidates for your bidder account. Ask your manager to add candidates under your bidder organization in QTS_Startup.</div>
+      <div id="cand-empty" class="hidden text-muted cand-empty">No active candidates for this Account team. Ask your Manager to add candidates in QTS_Startup.</div>
 
       <div class="field-group field-group-desc">
         <div class="field-label">Description <span class="field-optional">(optional)</span></div>
@@ -500,7 +512,7 @@
   <script src="../shared/candidate-matcher.js"></script>
   <script src="../shared/fill-policy.js"></script>
   <script src="../shared/custom-gpt.js"></script>
-  <script src="../shared/bidder-auth-storage.js"></script>
+  <script src="../shared/account-auth-storage.js"></script>
   <script src="../shared/apply-session-store.js"></script>
   <script src="api-client.js"></script>
   <script src="popup.js"></script>

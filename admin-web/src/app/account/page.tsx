@@ -1,5 +1,5 @@
 import { DashboardView } from '@/components/DashboardView';
 
-export default function BidderDashboardPage() {
+export default function AccountDashboardPage() {
   return <DashboardView />;
 }

@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { CalendarPanel } from '@/components/CalendarPanel';
 import { api } from '@/lib/api';
-import type { Bidder, JobStats } from '@/lib/types';
+import type { Account, JobStats } from '@/lib/types';
 import { formatDate } from '@/lib/utils';
 
 type InterviewRow = {
@@ -12,26 +12,26 @@ type InterviewRow = {
   candidate_name: string;
   company?: string | null;
   scheduled_date?: string | null;
-  bidder_name?: string | null;
+  account_name?: string | null;
 };
 
 export function DashboardMode3View() {
   const [stats, setStats] = useState<JobStats | null>(null);
-  const [bidders, setBidders] = useState<Bidder[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
   const [interviews, setInterviews] = useState<InterviewRow[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [statsR, biddersR, interviewsR] = await Promise.all([
+      const [statsR, accountsR, interviewsR] = await Promise.all([
         api<{ success: boolean; stats?: JobStats }>('GET', '/api/jobs/stats'),
-        api<{ success: boolean; bidders?: Bidder[] }>('GET', '/api/bidders'),
+        api<{ success: boolean; accounts?: Account[] }>('GET', '/api/accounts'),
         api<{ success: boolean; interviews?: InterviewRow[] }>('GET', '/api/interviews'),
       ]);
       if (cancelled) return;
       setStats(statsR.stats || null);
-      setBidders(biddersR.bidders || []);
+      setAccounts(accountsR.accounts || []);
       setInterviews(interviewsR.interviews || []);
       setLoading(false);
     })();
@@ -64,13 +64,13 @@ export function DashboardMode3View() {
   return (
     <>
       <div className="mode-banner mode-banner-operations">
-        Operations mode — calendar-first view for interviews, bidders, and pipeline work.
+        Operations mode — calendar-first view for interviews, accounts, and pipeline work.
       </div>
 
       <div className="stats-grid">
         <div className="stat-card">
-          <div className="stat-label">Active Bidders</div>
-          <div className="stat-value">{bidders.filter((b) => b.is_active).length}</div>
+          <div className="stat-label">Active Accounts</div>
+          <div className="stat-value">{accounts.filter((b) => b.is_active).length}</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">Open Interviews</div>
@@ -105,7 +105,7 @@ export function DashboardMode3View() {
                 <th>Date</th>
                 <th>Candidate</th>
                 <th>Company</th>
-                <th>Bidder</th>
+                <th>Account</th>
               </tr>
             </thead>
             <tbody>
@@ -114,7 +114,7 @@ export function DashboardMode3View() {
                   <td className="text-muted">{row.scheduled_date ? formatDate(row.scheduled_date) : '—'}</td>
                   <td><strong>{row.candidate_name}</strong></td>
                   <td>{row.company || '—'}</td>
-                  <td>{row.bidder_name || '—'}</td>
+                  <td>{row.account_name || '—'}</td>
                 </tr>
               ))}
               {!upcomingInterviews.length && (

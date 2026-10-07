@@ -3,6 +3,7 @@
 const global = globalThis;
 
 let candidates = [];
+let managerTeams = [];
 let candidateStatuses = {};
 let candidateAppliedAt = {};
 let candidateLocked = {};
@@ -32,7 +33,8 @@ const CANDIDATE_CACHE_TTL_MS = 5 * 60 * 1000;
 const WORKSPACE_BACKGROUND_REFRESH_MIN_MS = 45 * 1000;
 const CANDIDATE_CACHE_KEY = 'qtsCandidateCache';
 const SESSION_USER_KEY = 'qtsSessionUser';
-const DEFAULT_CANDIDATE_KEY = 'qtsDefaultCandidateByBidder';
+const DEFAULT_CANDIDATE_KEY = 'qtsDefaultCandidateByAccount';
+const LEGACY_DEFAULT_CANDIDATE_KEY = 'qtsDefaultCandidateByBidder';
 const AUTO_APPLY_ENABLED_KEY = 'qtsAutoApplyEnabled';
 
 async function hydrateApplySessionStore() {
@@ -306,7 +308,7 @@ function applyGptDispatchResult(msg) {
 
 document.addEventListener('DOMContentLoaded', async () => {
   const logoEl = document.getElementById('header-logo');
-  if (logoEl) logoEl.src = chrome.runtime.getURL('assets/bidder-logo.png');
+  if (logoEl) logoEl.src = chrome.runtime.getURL('assets/account-logo.png');
   targetTabId = getQueryTabId() || await resolveTargetTabOnLoad();
   if (targetTabId) {
     await chrome.storage.local.set({ qtsJobSourceTabId: targetTabId });
@@ -331,6 +333,19 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
   document.getElementById('btn-login').addEventListener('click', doLogin);
+  document.getElementById('btn-change-team')?.addEventListener('click', async () => {
+    if (currentUser?.role !== 'manager') return;
+    if (!managerTeams.length) {
+      const workspace = await window.api.extensionBootstrap();
+      managerTeams = workspace.teams || [];
+    }
+    await showManagerTeamStep(currentUser);
+  });
+  document.getElementById('btn-select-team')?.addEventListener('click', () => {
+    selectManagerTeam().catch((e) => {
+      showAlert('login-alert', e?.message || 'Could not load Account team.', 'error');
+    });
+  });
   document.getElementById('btn-start-auto-apply')?.addEventListener('click', () => {
     startAutoApplyFromLoginStep().catch((e) => {
       showAlert('login-alert', e?.message || 'Could not start auto-apply.', 'error');
@@ -554,7 +569,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 async function bootstrapPopupFast() {
-  const hydrated = await global.__qtsBidderAuth?.hydratePopupAuth?.();
+  const hydrated = await global.__qtsAccountAuth?.hydratePopupAuth?.();
   if (!hydrated) {
     hideLoading(true);
     await showLogin();
@@ -571,7 +586,7 @@ async function bootstrapPopupFast() {
   await hydrateApplySessionStore();
 
   const sessionUser = await readSessionUser();
-  if (!sessionUser || !isBidderSession(sessionUser)) {
+  if (!sessionUser || !isExtensionWorkspaceUser(sessionUser)) {
     await clearAuthState();
     hideLoading(true);
     await showLogin();
@@ -579,10 +594,17 @@ async function bootstrapPopupFast() {
   }
 
   const cache = await readCandidateCache();
+  if (sessionUser.role === 'manager' && !sessionUser.accountId) {
+    const workspace = await fetchWorkspaceData(true);
+    managerTeams = workspace.teams || [];
+    hideLoading(true);
+    await showManagerTeamStep(sessionUser);
+    return;
+  }
   if (Array.isArray(cache?.candidates) && cache.candidates.length) {
     applyCandidatesData(cache.candidates, cache.stacks || []);
   }
-  defaultCandidateId = await readDefaultCandidateId(sessionUser.bidderId);
+  defaultCandidateId = await readDefaultCandidateId(sessionUser.accountId);
   if (await needsDefaultCandidateSelection(sessionUser)) {
     hideLoading(true);
     await showDefaultCandidateStep(sessionUser);
@@ -600,7 +622,7 @@ async function bootstrapPopupFast() {
     refreshWorkspaceInBackground();
     return;
   }
-  await global.__qtsBidderAuth?.armWorkerAuth?.();
+  await global.__qtsAccountAuth?.armWorkerAuth?.();
   setSession(sessionUser);
   showJobSection();
   hideLoading(true);
@@ -620,7 +642,7 @@ async function refreshWorkspaceInBackground() {
     }
     const workspace = await fetchWorkspaceData(true);
     if (workspace?.success && workspace.user) {
-      defaultCandidateId = await readDefaultCandidateId(workspace.user.bidderId);
+      defaultCandidateId = await readDefaultCandidateId(workspace.user.accountId);
       renderCandidates();
       updateJobSummary();
       updateDefaultCandidateUi();
@@ -664,10 +686,10 @@ function setStatus(state) {
 }
 
 // ---- Auth ----
-function isBidderSession(user) {
-  if (!user || user.role !== 'bidder') return false;
-  const bidderId = Number(user.bidderId);
-  return Number.isFinite(bidderId) && bidderId > 0;
+function isAccountSession(user) {
+  if (!user || (user.role !== 'account' && user.role !== 'manager')) return false;
+  const accountId = Number(user.accountId);
+  return Number.isFinite(accountId) && accountId > 0;
 }
 
 function normalizeCandidateRecord(candidate) {
@@ -685,29 +707,44 @@ function normalizeCandidateList(list) {
     .filter((candidate) => candidate && candidate.is_active !== false);
 }
 
-function getBidderIdFromUser(user) {
-  const bidderId = Number(user?.bidderId);
-  return Number.isFinite(bidderId) && bidderId > 0 ? bidderId : null;
+function getAccountIdFromUser(user) {
+  const accountId = Number(user?.accountId);
+  return Number.isFinite(accountId) && accountId > 0 ? accountId : null;
 }
 
 async function readDefaultCandidateMap() {
   const stored = await new Promise((resolve) => {
-    chrome.storage.local.get([DEFAULT_CANDIDATE_KEY], (result) => resolve(result[DEFAULT_CANDIDATE_KEY] || {}));
+    chrome.storage.local.get(
+      [DEFAULT_CANDIDATE_KEY, LEGACY_DEFAULT_CANDIDATE_KEY],
+      (result) => resolve(result)
+    );
   });
-  return stored && typeof stored === 'object' ? stored : {};
+  const legacyMap = stored[LEGACY_DEFAULT_CANDIDATE_KEY];
+  const currentMap = stored[DEFAULT_CANDIDATE_KEY];
+  if (legacyMap && typeof legacyMap === 'object') {
+    const merged = { ...legacyMap, ...(currentMap || {}) };
+    await new Promise((resolve) => {
+      chrome.storage.local.set({ [DEFAULT_CANDIDATE_KEY]: merged }, resolve);
+    });
+    await new Promise((resolve) => {
+      chrome.storage.local.remove(LEGACY_DEFAULT_CANDIDATE_KEY, resolve);
+    });
+    return merged;
+  }
+  return currentMap && typeof currentMap === 'object' ? currentMap : {};
 }
 
-async function readDefaultCandidateId(bidderId) {
-  const id = getBidderIdFromUser({ bidderId });
+async function readDefaultCandidateId(accountId) {
+  const id = getAccountIdFromUser({ accountId });
   if (!id) return null;
   const map = await readDefaultCandidateMap();
   const candidateId = Number(map[String(id)]);
   return Number.isFinite(candidateId) ? candidateId : null;
 }
 
-async function storeDefaultCandidateId(bidderId, candidateId) {
-  const id = getBidderIdFromUser({ bidderId });
-  if (!id) throw new Error('Missing bidder account.');
+async function storeDefaultCandidateId(accountId, candidateId) {
+  const id = getAccountIdFromUser({ accountId });
+  if (!id) throw new Error('Select an Account team first.');
   const numericCandidateId = Number(candidateId);
   if (!Number.isFinite(numericCandidateId)) throw new Error('Select a candidate.');
   const map = await readDefaultCandidateMap();
@@ -728,9 +765,9 @@ async function setAutoApplyEnabled(enabled) {
     chrome.storage.local.set({ [AUTO_APPLY_ENABLED_KEY]: Boolean(enabled) }, resolve);
   });
   if (enabled) {
-    await global.__qtsBidderAuth?.armWorkerAuth?.();
+    await global.__qtsAccountAuth?.armWorkerAuth?.();
   } else {
-    await global.__qtsBidderAuth?.disarmWorkerAuth?.();
+    await global.__qtsAccountAuth?.disarmWorkerAuth?.();
     chrome.runtime.sendMessage({ type: 'RESET_AUTO_PIPELINE_STATE' }).catch(() => {});
   }
   updateAutoApplyBarUi();
@@ -749,9 +786,9 @@ function isValidDefaultCandidateId(candidateId) {
 }
 
 async function needsDefaultCandidateSelection(user) {
-  const bidderId = getBidderIdFromUser(user);
-  if (!bidderId) return false;
-  const savedId = await readDefaultCandidateId(bidderId);
+  const accountId = getAccountIdFromUser(user);
+  if (!accountId) return false;
+  const savedId = await readDefaultCandidateId(accountId);
   if (!savedId) return true;
   if (!candidates.length) {
     defaultCandidateId = savedId;
@@ -784,8 +821,77 @@ function populateDefaultCandidateSelect(selectEl, { includePlaceholder = true } 
 function resetLoginFormView() {
   document.getElementById('login-form')?.classList.remove('hidden');
   document.getElementById('login-candidate-step')?.classList.add('hidden');
+  document.getElementById('login-team-step')?.classList.add('hidden');
+  document.getElementById('login-candidate-fields')?.classList.remove('hidden');
   const signedInEl = document.getElementById('login-signed-in-as');
   if (signedInEl) signedInEl.textContent = '';
+}
+
+function isExtensionWorkspaceUser(user) {
+  return user?.role === 'manager';
+}
+
+function populateManagerTeamSelect() {
+  const select = document.getElementById('login-team');
+  if (!select) return;
+  select.innerHTML = [
+    '<option value="">— Select Account —</option>',
+    ...managerTeams.map((team) => `<option value="${Number(team.id)}">${escHtml(team.name)}</option>`),
+  ].join('');
+  const activeAccountId = Number(currentUser?.accountId);
+  if (Number.isFinite(activeAccountId) && managerTeams.some((team) => Number(team.id) === activeAccountId)) {
+    select.value = String(activeAccountId);
+  }
+}
+
+async function showManagerTeamStep(user) {
+  setSession(user);
+  document.getElementById('login-section')?.classList.remove('hidden');
+  document.getElementById('job-section')?.classList.add('hidden');
+  document.getElementById('action-bar')?.classList.add('hidden');
+  document.getElementById('login-form')?.classList.add('hidden');
+  document.getElementById('login-candidate-step')?.classList.remove('hidden');
+  document.getElementById('login-team-step')?.classList.remove('hidden');
+  document.getElementById('login-candidate-fields')?.classList.add('hidden');
+  const signedInEl = document.getElementById('login-signed-in-as');
+  if (signedInEl) signedInEl.textContent = `Signed in as Manager ${user.username}`;
+  populateManagerTeamSelect();
+  if (!managerTeams.length) {
+    showAlert('login-alert', 'No active Account teams are assigned to your Manager account. Ask an Admin to assign one.', 'error');
+  }
+  scheduleFitPopup();
+}
+
+async function selectManagerTeam() {
+  const select = document.getElementById('login-team');
+  const accountId = Number(select?.value);
+  if (!Number.isFinite(accountId) || accountId <= 0) {
+    showAlert('login-alert', 'Select an Account team first.', 'error');
+    return;
+  }
+  showLoading('Loading Account team…');
+  try {
+    const workspace = await window.api.extensionBootstrap(accountId);
+    if (!workspace.success || !workspace.user || !workspace.token) {
+      showAlert('login-alert', workspace.message || 'Could not load that Account team.', 'error');
+      return;
+    }
+    managerTeams = workspace.teams || managerTeams;
+    const sessionSnapshot = workspace.user;
+    await global.__qtsAccountAuth.storePopupAuth(workspace.token, sessionSnapshot, workspace.expiresAt);
+    window.api.setCachedToken(workspace.token);
+    await storeSessionUser(sessionSnapshot);
+    applyCandidatesData(workspace.candidates || [], workspace.stacks || []);
+    if (workspace.customGpt) await applyWorkspaceCustomGpt(workspace.customGpt, sessionSnapshot);
+    await writeCandidateCache(workspace.candidates || [], workspace.stacks || [], sessionSnapshot);
+    document.getElementById('login-team-step')?.classList.add('hidden');
+    document.getElementById('login-candidate-fields')?.classList.remove('hidden');
+    setSession(sessionSnapshot);
+    defaultCandidateId = await readDefaultCandidateId(sessionSnapshot.accountId);
+    await showDefaultCandidateStep(sessionSnapshot);
+  } finally {
+    hideLoading();
+  }
 }
 
 async function showDefaultCandidateStep(user, { armOnly = false } = {}) {
@@ -798,7 +904,7 @@ async function showDefaultCandidateStep(user, { armOnly = false } = {}) {
 
   const signedInEl = document.getElementById('login-signed-in-as');
   if (signedInEl) {
-    const label = (user?.username || user?.bidderName || 'Bidder').trim();
+    const label = (user?.username || user?.accountName || 'Account').trim();
     signedInEl.textContent = armOnly
       ? `Signed in as ${label} — press Start when you are ready to apply on job pages`
       : `Signed in as ${label}`;
@@ -813,7 +919,7 @@ async function showDefaultCandidateStep(user, { armOnly = false } = {}) {
     }
   }
 
-  defaultCandidateId = await readDefaultCandidateId(user?.bidderId);
+  defaultCandidateId = await readDefaultCandidateId(user?.accountId);
   const select = document.getElementById('login-default-candidate');
   populateDefaultCandidateSelect(select, { includePlaceholder: true });
   if (defaultCandidateId && isValidDefaultCandidateId(defaultCandidateId)) {
@@ -858,11 +964,11 @@ async function armAutoApplyOnCurrentJobTab() {
 
 async function startAutoApplyFromLoginStep() {
   const user = currentUser || await readSessionUser();
-  if (!user || !isBidderSession(user)) {
+  if (!user || !isAccountSession(user)) {
     throw new Error('Sign in first.');
   }
   const candidateId = readSelectedDefaultCandidateId();
-  await storeDefaultCandidateId(user.bidderId, candidateId);
+  await storeDefaultCandidateId(user.accountId, candidateId);
   await setAutoApplyEnabled(true);
   expandedCandidateIds.add(candidateId);
   resetLoginFormView();
@@ -871,13 +977,13 @@ async function startAutoApplyFromLoginStep() {
 
 async function dismissSetupWithoutAutoApply() {
   const user = currentUser || await readSessionUser();
-  if (!user || !isBidderSession(user)) {
+  if (!user || !isAccountSession(user)) {
     throw new Error('Sign in first.');
   }
   const select = document.getElementById('login-default-candidate');
   const candidateId = parseInt(select?.value, 10);
   if (Number.isFinite(candidateId) && isValidDefaultCandidateId(candidateId)) {
-    await storeDefaultCandidateId(user.bidderId, candidateId);
+    await storeDefaultCandidateId(user.accountId, candidateId);
   }
   await setAutoApplyEnabled(false);
   resetLoginFormView();
@@ -891,14 +997,14 @@ async function dismissSetupWithoutAutoApply() {
 
 async function toggleAutoApplyFromPopup() {
   const user = currentUser || await readSessionUser();
-  if (!user || !isBidderSession(user)) {
+  if (!user || !isAccountSession(user)) {
     throw new Error('Sign in first.');
   }
   if (!(await readAutoApplyEnabled())) {
     const select = document.getElementById('main-default-candidate');
     const fromMain = parseInt(select?.value, 10);
     if (Number.isFinite(fromMain) && isValidDefaultCandidateId(fromMain)) {
-      await storeDefaultCandidateId(user.bidderId, fromMain);
+      await storeDefaultCandidateId(user.accountId, fromMain);
     }
     if (!defaultCandidateId || !isValidDefaultCandidateId(defaultCandidateId)) {
       await showDefaultCandidateStep(user);
@@ -921,6 +1027,10 @@ function updateAutoApplyBarUi() {
 
   readAutoApplyEnabled().then((enabled) => {
     bar.classList.remove('hidden');
+    const changeTeamButton = document.getElementById('btn-change-team');
+    if (changeTeamButton) {
+      changeTeamButton.classList.toggle('hidden', user.role !== 'manager');
+    }
     bar.classList.toggle('is-active', enabled);
     const def = getDefaultCandidate();
     if (enabled) {
@@ -941,14 +1051,14 @@ function updateAutoApplyBarUi() {
 
 async function onMainDefaultCandidateChange(event) {
   const user = currentUser;
-  if (!user || !isBidderSession(user)) return;
+  if (!user || !isAccountSession(user)) return;
   const candidateId = parseInt(event.target.value, 10);
   if (!Number.isFinite(candidateId)) return;
   if (!isValidDefaultCandidateId(candidateId)) {
     event.target.value = defaultCandidateId ? String(defaultCandidateId) : '';
     throw new Error('That candidate is not available.');
   }
-  await storeDefaultCandidateId(user.bidderId, candidateId);
+  await storeDefaultCandidateId(user.accountId, candidateId);
   expandedCandidateIds.add(candidateId);
   renderCandidates();
   updateDefaultCandidateUi();
@@ -992,12 +1102,12 @@ async function startApplicationWithDefault() {
 }
 
 async function ensureWorkspaceReady(user) {
-  if (!user || !isBidderSession(user)) return false;
+  if (!user || !isAccountSession(user)) return false;
   if (await needsDefaultCandidateSelection(user)) {
     await showDefaultCandidateStep(user);
     return false;
   }
-  defaultCandidateId = await readDefaultCandidateId(user.bidderId);
+  defaultCandidateId = await readDefaultCandidateId(user.accountId);
   updateAutoApplyBarUi();
   return true;
 }
@@ -1005,11 +1115,11 @@ async function ensureWorkspaceReady(user) {
 function setSession(user) {
   currentUser = user;
   const bar = document.getElementById('session-bar');
-  const orgEl = document.getElementById('session-bidder');
+  const orgEl = document.getElementById('session-account');
   const userEl = document.getElementById('session-user');
   if (!user || !bar || !orgEl || !userEl) return;
 
-  const orgLabel = (user.bidderName || `Organization #${user.bidderId}`).trim();
+  const orgLabel = (user.accountName || `Organization #${user.accountId}`).trim();
   const username = (user.username || '—').trim();
   const showBoth = orgLabel.toLowerCase() !== username.toLowerCase();
 
@@ -1046,7 +1156,7 @@ async function prepareLoginForm() {
     const status = await window.api.extensionStatus();
     const hint = document.getElementById('login-setup-hint');
     if (hint) {
-      if (status.success && !status.hasBidderAccounts) {
+      if (status.success && !status.hasManagerAccounts) {
         hint.classList.remove('hidden');
       } else {
         hint.classList.add('hidden');
@@ -1066,8 +1176,13 @@ async function checkAuth() {
     showLoading('Loading your account…');
     try {
       const workspace = await fetchWorkspaceData(false);
-      if (workspace?.success && workspace.user && isBidderSession(workspace.user)) {
+      if (workspace?.success && workspace.user && isAccountSession(workspace.user)) {
         await enterJobWorkspace(workspace.user, { skipBackgroundRefresh: true });
+        return;
+      }
+      if (workspace?.success && workspace.user?.role === 'manager' && !workspace.user.accountId) {
+        managerTeams = workspace.teams || [];
+        await showManagerTeamStep(workspace.user);
         return;
       }
 
@@ -1085,7 +1200,7 @@ async function checkAuth() {
       const cached = await readCandidateCache();
       const fallbackUser = sessionUser || cached?.user;
 
-      if (fallbackUser && isBidderSession(fallbackUser)) {
+      if (fallbackUser && isAccountSession(fallbackUser)) {
         const refreshed = await fetchWorkspaceData(true);
         if (!refreshed?.success && Array.isArray(cached?.candidates) && cached.candidates.length) {
           applyCandidatesData(cached.candidates, cached.stacks || []);
@@ -1098,7 +1213,7 @@ async function checkAuth() {
       }
 
       const me = await window.api.me();
-      if (me.success && isBidderSession(me)) {
+      if (me.success && isAccountSession(me)) {
         await storeSessionUser(me);
         const loaded = await fetchWorkspaceData(true);
         if (!loaded?.success) {
@@ -1137,7 +1252,7 @@ async function doLogin() {
   showLoading('Signing in…');
   if (loginBtn) loginBtn.disabled = true;
   try {
-    if (!global.__qtsBidderAuth?.storePopupAuth) {
+    if (!global.__qtsAccountAuth?.storePopupAuth) {
       throw new Error('Extension auth module not loaded. Reload the extension in chrome://extensions.');
     }
     const r = await window.api.login(username, password);
@@ -1149,15 +1264,16 @@ async function doLogin() {
       );
       return;
     }
-    if (r.success && isBidderSession(r)) {
+    if (r.success && r.role === 'manager') {
+      await clearCandidateCache();
       const sessionSnapshot = {
         id: r.id,
         username: r.username,
         role: r.role,
-        bidderId: r.bidderId,
-        bidderName: r.bidderName,
+        accountId: r.accountId,
+        accountName: r.accountName,
       };
-      await global.__qtsBidderAuth.storePopupAuth(r.token, sessionSnapshot, r.expiresAt);
+      await global.__qtsAccountAuth.storePopupAuth(r.token, sessionSnapshot, r.expiresAt);
       window.api.setCachedToken(r.token);
       setSession(sessionSnapshot);
       clearAlert('login-alert');
@@ -1165,10 +1281,20 @@ async function doLogin() {
         const workspace = await fetchWorkspaceData(true);
         if (workspace?.user) {
           setSession(workspace.user);
-          await global.__qtsBidderAuth.storeSessionUser(workspace.user);
+          await global.__qtsAccountAuth.storeSessionUser(workspace.user);
+          managerTeams = workspace.teams || [];
         }
       } catch { /* session already saved */ }
-      defaultCandidateId = await readDefaultCandidateId(r.bidderId);
+      if (!managerTeams.length && !sessionSnapshot.accountId) {
+        showAlert('login-alert', 'No active Account teams are assigned to your Manager account. Ask an Admin to assign one.', 'error');
+        return;
+      }
+      if (!sessionSnapshot.accountId) {
+        hideLoading(true);
+        await showManagerTeamStep(sessionSnapshot);
+        return;
+      }
+      defaultCandidateId = await readDefaultCandidateId(r.accountId);
       if (await needsDefaultCandidateSelection(r)) {
         hideLoading(true);
         await showDefaultCandidateStep(currentUser || sessionSnapshot);
@@ -1179,7 +1305,7 @@ async function doLogin() {
         await showDefaultCandidateStep(currentUser || sessionSnapshot, { armOnly: true });
         return;
       }
-      await global.__qtsBidderAuth.armWorkerAuth();
+      await global.__qtsAccountAuth.armWorkerAuth();
       showJobSection();
       resetLoginFormView();
       hideLoading(true);
@@ -1191,7 +1317,7 @@ async function doLogin() {
     } else if (r.success) {
       showAlert(
         'login-alert',
-        'The extension requires a bidder account. Use QTS_Startup web for admin or caller access.',
+        'Only Manager accounts can sign in to the extension.',
         'error'
       );
     } else {
@@ -1258,8 +1384,8 @@ async function applyWorkspaceCustomGpt(customGpt, user) {
   await global.__qtsCustomGpt.persistCustomGptConfig({
     url: customGpt.url,
     id: customGpt.id,
-    source: customGpt.source || 'bidder',
-    bidderId: user?.bidderId ?? null,
+    source: customGpt.source || 'account',
+    accountId: user?.accountId ?? null,
   });
 }
 
@@ -1272,6 +1398,7 @@ async function fetchWorkspaceFromApi() {
       candidates: normalizeCandidateList(boot.candidates),
       stacks: boot.stacks || [],
       customGpt: boot.customGpt || null,
+      teams: boot.teams || [],
       _httpStatus: boot._httpStatus,
     };
   }
@@ -1282,10 +1409,10 @@ async function fetchWorkspaceFromApi() {
     window.api.getCandidateStacks(),
   ]);
 
-  if (!meRes.success || !isBidderSession(meRes)) {
+  if (!meRes.success || !isAccountSession(meRes)) {
     return {
       success: false,
-      message: boot.message || meRes.message || 'Could not load bidder workspace.',
+      message: boot.message || meRes.message || 'Could not load account workspace.',
       _httpStatus: boot._httpStatus || meRes._httpStatus,
     };
   }
@@ -1304,13 +1431,14 @@ async function fetchWorkspaceData(forceRefresh = false) {
     const cached = await readCandidateCache();
     if (cached?.user && Array.isArray(cached.candidates) && cached.candidates.length > 0) {
       applyCandidatesData(cached.candidates, cached.stacks || []);
-      return { success: true, user: cached.user, fromCache: true };
+      return { success: true, user: cached.user, fromCache: true, teams: managerTeams };
     }
   }
 
   const workspace = await fetchWorkspaceFromApi();
   if (!workspace.success) return workspace;
 
+  managerTeams = workspace.teams || managerTeams;
   lastWorkspaceFetchAt = Date.now();
   applyCandidatesData(workspace.candidates, workspace.stacks);
   if (workspace.user) await storeSessionUser(workspace.user);
@@ -1388,8 +1516,8 @@ async function persistSession(user, nextCandidates, nextStacks) {
 }
 
 async function readSessionUser() {
-  if (global.__qtsBidderAuth?.readPopupSessionUser) {
-    return global.__qtsBidderAuth.readPopupSessionUser();
+  if (global.__qtsAccountAuth?.readPopupSessionUser) {
+    return global.__qtsAccountAuth.readPopupSessionUser();
   }
   return null;
 }
@@ -1400,11 +1528,11 @@ async function storeSessionUser(user) {
     id: user.id,
     username: user.username,
     role: user.role,
-    bidderId: user.bidderId != null ? Number(user.bidderId) : null,
-    bidderName: user.bidderName ?? null,
+    accountId: user.accountId != null ? Number(user.accountId) : null,
+    accountName: user.accountName ?? null,
   };
-  if (global.__qtsBidderAuth?.storeSessionUser) {
-    await global.__qtsBidderAuth.storeSessionUser(snapshot);
+  if (global.__qtsAccountAuth?.storeSessionUser) {
+    await global.__qtsAccountAuth.storeSessionUser(snapshot);
     return;
   }
 }
@@ -1415,7 +1543,7 @@ async function clearSessionUser() {
 
 async function clearAuthState() {
   await clearToken();
-  await global.__qtsBidderAuth?.clearAuth?.();
+  await global.__qtsAccountAuth?.clearAuth?.();
   await clearCandidateCache();
   await global.__qtsApplySessionStore?.clearActive?.();
   await new Promise((resolve) => {
@@ -3261,15 +3389,15 @@ function escAttr(s) {
 
 async function storeToken(token) {
   window.api.setCachedToken(token);
-  if (global.__qtsBidderAuth?.setPopupAuthToken) {
-    return global.__qtsBidderAuth.setPopupAuthToken(token);
+  if (global.__qtsAccountAuth?.setPopupAuthToken) {
+    return global.__qtsAccountAuth.setPopupAuthToken(token);
   }
-  return global.__qtsBidderAuth?.setPopupCachedToken?.(token);
+  return global.__qtsAccountAuth?.setPopupCachedToken?.(token);
 }
 
 async function getStoredToken() {
-  if (global.__qtsBidderAuth?.getPopupAuthToken) {
-    const token = await global.__qtsBidderAuth.getPopupAuthToken();
+  if (global.__qtsAccountAuth?.getPopupAuthToken) {
+    const token = await global.__qtsAccountAuth.getPopupAuthToken();
     window.api.setCachedToken(token);
     return token;
   }
@@ -3278,6 +3406,6 @@ async function getStoredToken() {
 
 function clearToken() {
   window.api.clearCachedToken();
-  global.__qtsBidderAuth?.clearPopupCachedToken?.();
+  global.__qtsAccountAuth?.clearPopupCachedToken?.();
   return Promise.resolve();
 }

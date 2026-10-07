@@ -4,31 +4,31 @@ import { useCallback, useEffect, useState } from 'react';
 import { Modal } from '@/components/Modal';
 import { useAuth } from '@/components/AuthProvider';
 import { api } from '@/lib/api';
-import type { Bidder, UserAccount } from '@/lib/types';
+import type { Account, UserAccount } from '@/lib/types';
 
-export function BiddersView() {
+export function AccountsView() {
   const { user } = useAuth();
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = user?.role === 'admin' || user?.role === 'super';
 
-  const [bidders, setBidders] = useState<Bidder[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
   const [managers, setManagers] = useState<UserAccount[]>([]);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState<'form' | 'detail' | 'delete' | 'account' | 'editAccount' | 'deleteAccount' | null>(null);
-  const [selected, setSelected] = useState<Bidder | null>(null);
+  const [selected, setSelected] = useState<Account | null>(null);
   const [selectedAccount, setSelectedAccount] = useState<{ id: number; username: string; role: string } | null>(null);
   const [detail, setDetail] = useState<{
     accounts: Array<{ id: number; username: string; role: string }>;
     candidates: Array<{ id: number; name: string }>;
   } | null>(null);
   const [form, setForm] = useState({ name: '', notes: '', isActive: true, managerId: '' });
-  const [accountForm, setAccountForm] = useState({ username: '', password: '', role: 'bidder' as 'bidder' | 'caller' });
+  const [accountForm, setAccountForm] = useState({ username: '', password: '', role: 'account' as 'account' | 'caller' });
   const [accountPassword, setAccountPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
-    const r = await api<{ success: boolean; bidders?: Bidder[] }>('GET', '/api/bidders');
-    setBidders(r.bidders || []);
+    const r = await api<{ success: boolean; accounts?: Account[] }>('GET', '/api/accounts');
+    setAccounts(r.accounts || []);
     setLoading(false);
   }, []);
 
@@ -43,18 +43,18 @@ export function BiddersView() {
     void loadManagers();
   }, [load, loadManagers]);
 
-  async function openDetail(b: Bidder) {
+  async function openDetail(b: Account) {
     const r = await api<{
       success: boolean;
       accounts?: Array<{ id: number; username: string; role: string }>;
       candidates?: Array<{ id: number; name: string }>;
-    }>('GET', `/api/bidders/${b.id}`);
+    }>('GET', `/api/accounts/${b.id}`);
     setSelected(b);
     setDetail({ accounts: r.accounts || [], candidates: r.candidates || [] });
     setModal('detail');
   }
 
-  async function saveBidder() {
+  async function saveAccount() {
     if (!form.name.trim()) {
       setError('Name is required.');
       return;
@@ -70,19 +70,19 @@ export function BiddersView() {
       ...(isAdmin ? { managerId: parseInt(form.managerId, 10) } : {}),
     };
     const r = selected
-      ? await api<{ success: boolean; message?: string }>('PUT', `/api/bidders/${selected.id}`, body)
-      : await api<{ success: boolean; message?: string }>('POST', '/api/bidders', body);
+      ? await api<{ success: boolean; message?: string }>('PUT', `/api/accounts/${selected.id}`, body)
+      : await api<{ success: boolean; message?: string }>('POST', '/api/accounts', body);
     if (r.success) {
       setModal(null);
       void load();
     } else {
-      setError(r.message || 'Could not save bidder.');
+      setError(r.message || 'Could not save account.');
     }
   }
 
-  async function deleteBidder() {
+  async function deleteAccountTeam() {
     if (!selected) return;
-    await api('DELETE', `/api/bidders/${selected.id}`);
+    await api('DELETE', `/api/accounts/${selected.id}`);
     setModal(null);
     void load();
   }
@@ -94,7 +94,7 @@ export function BiddersView() {
     }
     const r = await api<{ success: boolean; message?: string }>(
       'PUT',
-      `/api/bidders/${selected.id}/accounts/${selectedAccount.id}`,
+      `/api/accounts/${selected.id}/logins/${selectedAccount.id}`,
       { password: accountPassword }
     );
     if (r.success) {
@@ -106,11 +106,11 @@ export function BiddersView() {
     }
   }
 
-  async function deleteAccount() {
+  async function deleteAccountLogin() {
     if (!selected || !selectedAccount) return;
     const r = await api<{ success: boolean; message?: string }>(
       'DELETE',
-      `/api/bidders/${selected.id}/accounts/${selectedAccount.id}`
+      `/api/accounts/${selected.id}/logins/${selectedAccount.id}`
     );
     if (r.success) {
       setModal('detail');
@@ -127,13 +127,13 @@ export function BiddersView() {
     }
     const r = await api<{ success: boolean; message?: string }>(
       'POST',
-      `/api/bidders/${selected.id}/accounts`,
+      `/api/accounts/${selected.id}/logins`,
       accountForm
     );
     if (r.success) {
       setModal('detail');
       void openDetail(selected);
-      setAccountForm({ username: '', password: '', role: 'bidder' });
+      setAccountForm({ username: '', password: '', role: 'account' });
       setError(null);
     } else {
       setError(r.message || 'Could not create account.');
@@ -152,7 +152,7 @@ export function BiddersView() {
     setModal('form');
   }
 
-  function openEditForm(b: Bidder) {
+  function openEditForm(b: Account) {
     setSelected(b);
     setForm({
       name: b.name,
@@ -169,12 +169,12 @@ export function BiddersView() {
     <>
       {!isAdmin && (
         <p className="text-muted" style={{ marginBottom: 12 }}>
-          Add bidder organizations and their login accounts. Candidates you create belong to each bidder team.
+          Add Account teams and their login accounts. Candidates belong to the Account team they are created under.
         </p>
       )}
       <div className="search-row">
         <button className="btn btn-primary" type="button" onClick={openAddForm}>
-          + Add Bidder
+          + Add Account
         </button>
       </div>
 
@@ -195,7 +195,7 @@ export function BiddersView() {
               </tr>
             </thead>
             <tbody>
-              {bidders.map((b) => (
+              {accounts.map((b) => (
                 <tr key={b.id}>
                   <td><strong>{b.name}</strong></td>
                   {isAdmin && <td className="text-muted">{b.manager_name || '—'}</td>}
@@ -228,8 +228,8 @@ export function BiddersView() {
                   </td>
                 </tr>
               ))}
-              {!bidders.length && (
-                <tr><td colSpan={colSpan} className="text-muted">No bidders yet.</td></tr>
+              {!accounts.length && (
+                <tr><td colSpan={colSpan} className="text-muted">No accounts yet.</td></tr>
               )}
             </tbody>
           </table>
@@ -239,12 +239,12 @@ export function BiddersView() {
 
       <Modal
         open={modal === 'form'}
-        title={selected ? 'Edit Bidder' : 'Add Bidder'}
+        title={selected ? 'Edit Account' : 'Add Account'}
         onClose={() => setModal(null)}
         footer={
           <>
             <button className="btn btn-ghost" type="button" onClick={() => setModal(null)}>Cancel</button>
-            <button className="btn btn-primary" type="button" onClick={() => { void saveBidder(); }}>Save</button>
+            <button className="btn btn-primary" type="button" onClick={() => { void saveAccount(); }}>Save</button>
           </>
         }
       >
@@ -284,7 +284,7 @@ export function BiddersView() {
 
       <Modal
         open={modal === 'detail'}
-        title={`Bidder: ${selected?.name || ''}`}
+        title={`Account: ${selected?.name || ''}`}
         onClose={() => setModal(null)}
         footer={
           <>
@@ -295,7 +295,7 @@ export function BiddersView() {
       >
         <div className="section-title">Linked Accounts</div>
         <p className="text-muted" style={{ marginBottom: 8, fontSize: 12 }}>
-          Bidder and caller logins for this organization. Managers control credentials for their own bidders only.
+          Account and caller logins for this team. Managers manage their assigned Accounts.
         </p>
         <div className="table-scroll">
         <table>
@@ -306,7 +306,7 @@ export function BiddersView() {
                 <td>{a.username}</td>
                 <td>{a.role}</td>
                 <td className="text-right">
-                  <button
+                  {a.role !== 'account' && <button
                     className="btn btn-ghost btn-sm"
                     type="button"
                     onClick={() => {
@@ -317,7 +317,7 @@ export function BiddersView() {
                     }}
                   >
                     Reset password
-                  </button>
+                  </button>}
                   <button
                     className="btn btn-danger btn-sm"
                     type="button"
@@ -374,8 +374,8 @@ export function BiddersView() {
         </div>
         <div className="form-group">
           <label>Role</label>
-          <select value={accountForm.role} onChange={(e) => setAccountForm({ ...accountForm, role: e.target.value as 'bidder' | 'caller' })}>
-            <option value="bidder">Bidder</option>
+          <select value={accountForm.role} onChange={(e) => setAccountForm({ ...accountForm, role: e.target.value as 'account' | 'caller' })}>
+            <option value="account">Account</option>
             <option value="caller">Caller</option>
           </select>
         </div>
@@ -411,7 +411,7 @@ export function BiddersView() {
         footer={
           <>
             <button className="btn btn-ghost" type="button" onClick={() => setModal('detail')}>Cancel</button>
-            <button className="btn btn-danger" type="button" onClick={() => { void deleteAccount(); }}>Delete</button>
+            <button className="btn btn-danger" type="button" onClick={() => { void deleteAccountLogin(); }}>Delete</button>
           </>
         }
       >
@@ -422,12 +422,12 @@ export function BiddersView() {
 
       <Modal
         open={modal === 'delete'}
-        title="Delete Bidder"
+        title="Delete Account"
         onClose={() => setModal(null)}
         footer={
           <>
             <button className="btn btn-ghost" type="button" onClick={() => setModal(null)}>Cancel</button>
-            <button className="btn btn-danger" type="button" onClick={() => { void deleteBidder(); }}>Delete</button>
+            <button className="btn btn-danger" type="button" onClick={() => { void deleteAccountTeam(); }}>Delete</button>
           </>
         }
       >

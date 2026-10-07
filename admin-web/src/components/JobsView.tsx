@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Modal } from '@/components/Modal';
 import { useAuth } from '@/components/AuthProvider';
 import { api } from '@/lib/api';
-import type { BidderJobSiteAdmission, Job } from '@/lib/types';
+import type { AccountJobSiteAdmission, Job } from '@/lib/types';
 import { formatDate } from '@/lib/utils';
 
 interface StatusDraft {
@@ -16,12 +16,12 @@ interface StatusDraft {
 
 export function JobsView() {
   const { canWrite, user } = useAuth();
-  const isBidder = user?.role === 'bidder';
+  const isAccount = user?.role === 'account';
   const [search, setSearch] = useState('');
   const [query, setQuery] = useState('');
   const [siteFilter, setSiteFilter] = useState('');
   const [jobs, setJobs] = useState<Job[]>([]);
-  const [admissions, setAdmissions] = useState<BidderJobSiteAdmission[]>([]);
+  const [admissions, setAdmissions] = useState<AccountJobSiteAdmission[]>([]);
   const [loading, setLoading] = useState(true);
 
   const [modal, setModal] = useState<'detail' | 'delete' | null>(null);
@@ -51,13 +51,13 @@ export function JobsView() {
   }, []);
 
   const loadAdmissions = useCallback(async () => {
-    if (!isBidder) return;
-    const r = await api<{ success: boolean; admissions?: BidderJobSiteAdmission[] }>(
+    if (!isAccount) return;
+    const r = await api<{ success: boolean; admissions?: AccountJobSiteAdmission[] }>(
       'GET',
       '/api/job-sites/my-admissions'
     );
     setAdmissions(r.admissions || []);
-  }, [isBidder]);
+  }, [isAccount]);
 
   useEffect(() => {
     void loadAdmissions();
@@ -141,7 +141,7 @@ export function JobsView() {
 
   return (
     <>
-      {isBidder && admissions.length > 0 && (
+      {isAccount && admissions.length > 0 && (
         <div className="card" style={{ marginBottom: 12 }}>
           <strong>Your admitted job sites</strong>
           <div className="table-scroll" style={{ marginTop: 8 }}>
@@ -177,7 +177,7 @@ export function JobsView() {
             if (e.key === 'Enter') setQuery(search);
           }}
         />
-        {isBidder && admissions.length > 0 && (
+        {isAccount && admissions.length > 0 && (
           <select
             value={siteFilter}
             onChange={(e) => setSiteFilter(e.target.value)}

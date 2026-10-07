@@ -1,6 +1,6 @@
 # justjoin.it Application Flow Analysis
 
-> **Current system (June 2026):** See [docs/CURRENT-SYSTEM.md](docs/CURRENT-SYSTEM.md) � extension v1.13.25+, job sites, one-step auto-apply.
+> **Current system (June 2026):** See [docs/CURRENT-SYSTEM.md](docs/CURRENT-SYSTEM.md) � extension v1.13.25+, job sites, one-step auto-apply.
 
 This document describes how QTS Job Tracking detects and handles different apply flows on [justjoin.it](https://justjoin.it) job-offer pages.
 
@@ -26,7 +26,7 @@ Examples:
 
 ### 1. Modal popup (most common on justjoin.it)
 
-**No justjoin.it account required.** Bidders open the public job-offer page (full description visible), click **Apply**, and complete the in-page modal. QTS extension login is separate — that is your bidder account in QTS_Startup, not a justjoin.it account.
+**No justjoin.it account required.** Accounts open the public job-offer page (full description visible), click **Apply**, and complete the in-page modal. QTS extension login is separate — use your Manager login in QTS_Startup, not a justjoin.it account.
 
 **Trigger:** User or extension clicks **Apply** on the job-offer page.
 
@@ -68,7 +68,7 @@ Rare on justjoin native forms; more common on external ATS after redirect.
 
 **Detection:** `detectExternalApplyLink()` before clicking.
 
-**Extension behavior:** Warns bidder; does not follow redirect automatically. User opens external page and runs Start Application there.
+**Extension behavior:** Warns account; does not follow redirect automatically. User opens external page and runs Start Application there.
 
 ### 5. Dynamic fields
 

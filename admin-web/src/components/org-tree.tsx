@@ -2,19 +2,19 @@
 
 import type { ReactNode } from 'react';
 import { CandidateName } from '@/components/CandidateName';
-import type { Bidder, Candidate, UserAccount } from '@/lib/types';
+import type { Account, Candidate, UserAccount } from '@/lib/types';
 
 export const GROUP_MANAGERS = 'group-managers';
 export const GROUP_CALLERS = 'group-callers';
 
-export type BidderNode = {
-  bidder: Bidder;
+export type AccountNode = {
+  account: Account;
   candidates: Candidate[];
 };
 
 export type ManagerNode = {
   manager: UserAccount;
-  bidders: BidderNode[];
+  accounts: AccountNode[];
 };
 
 export function isTreeEntityActive(active: boolean | undefined | null): boolean {
@@ -29,42 +29,42 @@ export function isCallerAccount(user: UserAccount): boolean {
   return user.role === 'caller';
 }
 
-export function buildBidderTree(bidders: Bidder[], candidates: Candidate[]): BidderNode[] {
-  const candidatesByBidder = new Map<number, Candidate[]>();
+export function buildAccountTree(accounts: Account[], candidates: Candidate[]): AccountNode[] {
+  const candidatesByAccount = new Map<number, Candidate[]>();
   for (const candidate of candidates) {
-    if (!candidate.bidder_id) continue;
-    const list = candidatesByBidder.get(candidate.bidder_id) || [];
+    if (!candidate.account_id) continue;
+    const list = candidatesByAccount.get(candidate.account_id) || [];
     list.push(candidate);
-    candidatesByBidder.set(candidate.bidder_id, list);
+    candidatesByAccount.set(candidate.account_id, list);
   }
 
-  return [...bidders]
+  return [...accounts]
     .sort((a, b) => a.name.localeCompare(b.name))
-    .map((bidder) => ({
-      bidder,
-      candidates: (candidatesByBidder.get(bidder.id) || []).sort((a, b) => a.name.localeCompare(b.name)),
+    .map((account) => ({
+      account,
+      candidates: (candidatesByAccount.get(account.id) || []).sort((a, b) => a.name.localeCompare(b.name)),
     }));
 }
 
 export function buildManagerTree(
   managers: UserAccount[],
-  bidders: Bidder[],
+  accounts: Account[],
   candidates: Candidate[]
 ): ManagerNode[] {
-  const candidatesByBidder = new Map<number, Candidate[]>();
+  const candidatesByAccount = new Map<number, Candidate[]>();
   for (const candidate of candidates) {
-    if (!candidate.bidder_id) continue;
-    const list = candidatesByBidder.get(candidate.bidder_id) || [];
+    if (!candidate.account_id) continue;
+    const list = candidatesByAccount.get(candidate.account_id) || [];
     list.push(candidate);
-    candidatesByBidder.set(candidate.bidder_id, list);
+    candidatesByAccount.set(candidate.account_id, list);
   }
 
-  const biddersByManager = new Map<number, Bidder[]>();
-  for (const bidder of bidders) {
-    if (!bidder.manager_id) continue;
-    const list = biddersByManager.get(bidder.manager_id) || [];
-    list.push(bidder);
-    biddersByManager.set(bidder.manager_id, list);
+  const accountsByManager = new Map<number, Account[]>();
+  for (const account of accounts) {
+    if (!account.manager_id) continue;
+    const list = accountsByManager.get(account.manager_id) || [];
+    list.push(account);
+    accountsByManager.set(account.manager_id, list);
   }
 
   return managers
@@ -72,11 +72,11 @@ export function buildManagerTree(
     .sort((a, b) => a.username.localeCompare(b.username))
     .map((manager) => ({
       manager,
-      bidders: (biddersByManager.get(manager.id) || [])
+      accounts: (accountsByManager.get(manager.id) || [])
         .sort((a, b) => a.name.localeCompare(b.name))
-        .map((bidder) => ({
-          bidder,
-          candidates: (candidatesByBidder.get(bidder.id) || []).sort((a, b) =>
+        .map((account) => ({
+          account,
+          candidates: (candidatesByAccount.get(account.id) || []).sort((a, b) =>
             a.name.localeCompare(b.name)
           ),
         })),
@@ -174,7 +174,7 @@ export function CandidateLeaf({
   );
 }
 
-export function BidderBranch({
+export function AccountBranch({
   node,
   expanded,
   onToggle,
@@ -185,7 +185,7 @@ export function BidderBranch({
   onEditCandidate,
   onDeleteCandidate,
 }: {
-  node: BidderNode;
+  node: AccountNode;
   expanded: Record<string, boolean>;
   onToggle: (key: string) => void;
   onEdit?: () => void;
@@ -195,21 +195,21 @@ export function BidderBranch({
   onEditCandidate?: (candidate: Candidate) => void;
   onDeleteCandidate?: (candidate: Candidate) => void;
 }) {
-  const key = `b-${node.bidder.id}`;
-  const active = isTreeEntityActive(node.bidder.is_active);
+  const key = `b-${node.account.id}`;
+  const active = isTreeEntityActive(node.account.is_active);
   const isOpen = active && Boolean(expanded[key]);
   const hasActions = Boolean(onEdit || onManage || onDelete || onAddCandidate);
 
   return (
-    <div className={`org-tree-branch org-tree-branch--bidder${active ? '' : ' is-inactive'}`}>
+    <div className={`org-tree-branch org-tree-branch--account${active ? '' : ' is-inactive'}`}>
       <div className={hasActions ? 'org-tree-branch-header' : undefined}>
         <TreeRowToggle
           active={active}
           isOpen={isOpen}
           onToggle={() => onToggle(key)}
         >
-          <span className="org-tree-type">Bidder</span>
-          <span className="org-tree-name">{node.bidder.name}</span>
+          <span className="org-tree-type">Account</span>
+          <span className="org-tree-name">{node.account.name}</span>
           {!active && <InactiveBadge />}
           <span className="text-muted org-tree-meta">
             {node.candidates.length} candidate{node.candidates.length === 1 ? '' : 's'}
@@ -259,7 +259,7 @@ export function ManagerBranch({
   onEdit,
   onDelete,
   hideManagerActions = false,
-  renderBidder,
+  renderAccount,
 }: {
   node: ManagerNode;
   expanded: Record<string, boolean>;
@@ -267,12 +267,12 @@ export function ManagerBranch({
   onEdit?: () => void;
   onDelete?: () => void;
   hideManagerActions?: boolean;
-  renderBidder?: (bidderNode: BidderNode) => ReactNode;
+  renderAccount?: (accountNode: AccountNode) => ReactNode;
 }) {
   const key = `m-${node.manager.id}`;
   const active = isTreeEntityActive(node.manager.is_active);
   const isOpen = active && Boolean(expanded[key]);
-  const candidateTotal = node.bidders.reduce((sum, b) => sum + b.candidates.length, 0);
+  const candidateTotal = node.accounts.reduce((sum, b) => sum + b.candidates.length, 0);
 
   return (
     <div className={`org-tree-branch org-tree-branch--manager${active ? '' : ' is-inactive'}`}>
@@ -287,7 +287,7 @@ export function ManagerBranch({
           <span className="org-tree-name">{node.manager.username}</span>
           {!active && <InactiveBadge />}
           <span className="text-muted org-tree-meta">
-            {node.bidders.length} bidder{node.bidders.length === 1 ? '' : 's'} · {candidateTotal} candidate{candidateTotal === 1 ? '' : 's'}
+            {node.accounts.length} Account{node.accounts.length === 1 ? '' : 's'} · {candidateTotal} candidate{candidateTotal === 1 ? '' : 's'}
           </span>
         </TreeRowToggle>
         {!hideManagerActions && (onEdit || onDelete) && (
@@ -298,22 +298,22 @@ export function ManagerBranch({
         )}
       </div>
       {isOpen && (
-        <div className="org-tree-children org-tree-children--bidders">
-          {node.bidders.length ? (
-            node.bidders.map((bidderNode) =>
-              renderBidder ? (
-                <div key={bidderNode.bidder.id}>{renderBidder(bidderNode)}</div>
+        <div className="org-tree-children org-tree-children--accounts">
+          {node.accounts.length ? (
+            node.accounts.map((accountNode) =>
+              renderAccount ? (
+                <div key={accountNode.account.id}>{renderAccount(accountNode)}</div>
               ) : (
-                <BidderBranch
-                  key={bidderNode.bidder.id}
-                  node={bidderNode}
+                <AccountBranch
+                  key={accountNode.account.id}
+                  node={accountNode}
                   expanded={expanded}
                   onToggle={onToggle}
                 />
               )
             )
           ) : (
-            <p className="org-tree-empty">No bidders yet.</p>
+            <p className="org-tree-empty">No Accounts yet.</p>
           )}
         </div>
       )}
@@ -350,10 +350,10 @@ export function CallerBranch({
           <span className="org-tree-type">Caller</span>
           <span className="org-tree-name">{caller.username}</span>
           {!active && <InactiveBadge />}
-          {caller.bidder_name ? (
-            <span className="text-muted org-tree-meta">{caller.bidder_name}</span>
+          {caller.account_name ? (
+            <span className="text-muted org-tree-meta">{caller.account_name}</span>
           ) : (
-            <span className="text-muted org-tree-meta">No bidder linked</span>
+            <span className="text-muted org-tree-meta">No account linked</span>
           )}
         </TreeRowToggle>
         {hasActions && (

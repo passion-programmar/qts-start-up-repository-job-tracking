@@ -1,7 +1,7 @@
 import { Router, Response } from 'express';
 import { z } from 'zod';
 import { queryAll, withTransaction } from '../../database/connection';
-import { requireAuth, requireAdmin, AuthRequest } from '../../middleware/auth';
+import { requireAuth, requireAdmin, requireSuper, AuthRequest } from '../../middleware/auth';
 import { backupDb } from '../../database/connection';
 import { logger } from '../../utilities/logger';
 import {
@@ -40,7 +40,7 @@ router.get('/candidate-stacks', async (_req: AuthRequest, res: Response) => {
   res.json({ success: true, stacks });
 });
 
-router.put('/candidate-stacks', requireAdmin, async (req: AuthRequest, res: Response) => {
+router.put('/candidate-stacks', requireSuper, async (req: AuthRequest, res: Response) => {
   const parsed = z.object({ stacks: z.array(z.string()) }).safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ success: false, message: 'Stacks must be a list of names.' });
@@ -60,7 +60,7 @@ router.put('/candidate-stacks', requireAdmin, async (req: AuthRequest, res: Resp
   }
 });
 
-router.put('/', requireAdmin, async (req: AuthRequest, res: Response) => {
+router.put('/', requireSuper, async (req: AuthRequest, res: Response) => {
   const parsed = z.object({ settings: z.record(z.string()) }).safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ success: false, message: 'Invalid settings payload.' });
@@ -98,7 +98,7 @@ router.put('/', requireAdmin, async (req: AuthRequest, res: Response) => {
   res.json({ success: true, message: 'Settings saved.' });
 });
 
-router.post('/backup', requireAdmin, async (_req: AuthRequest, res: Response) => {
+router.post('/backup', requireSuper, async (_req: AuthRequest, res: Response) => {
   try {
     const dest = await backupDb();
     logger.info('Database backup created', { dest });

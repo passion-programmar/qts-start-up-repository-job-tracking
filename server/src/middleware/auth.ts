@@ -9,8 +9,9 @@ export interface AuthRequest extends Request {
   userId?: number;
   username?: string;
   role?: UserRole;
-  bidderId?: number | null;
-  bidderName?: string | null;
+  accountId?: number | null;
+  accountName?: string | null;
+  extensionAccountScope?: boolean;
   /** @deprecated Use userId */
   adminId?: number;
   /** @deprecated Use username */
@@ -32,23 +33,25 @@ export function requireAuth(req: AuthRequest, res: Response, next: NextFunction)
       id: number;
       username: string;
       role?: string;
-      bidderId?: number | null;
-      bidderName?: string | null;
+      accountId?: number | null;
+      accountName?: string | null;
+      extensionAccountScope?: boolean;
     };
     req.userId = payload.id;
     req.username = payload.username;
     req.adminId = payload.id;
     req.adminUsername = payload.username;
     req.role = normalizeRole(payload.role);
-    req.bidderId = payload.bidderId != null ? Number(payload.bidderId) : null;
-    req.bidderName = payload.bidderName ?? null;
+    req.accountId = payload.accountId != null ? Number(payload.accountId) : null;
+    req.accountName = payload.accountName ?? null;
+    req.extensionAccountScope = payload.extensionAccountScope === true;
     next();
   } catch {
     res.status(401).json({ success: false, message: 'Invalid or expired token. Please log in again.' });
   }
 }
 
-/** Accepts bidder/admin JWT or the static GPT_ACTION_API_KEY for Custom GPT Actions. */
+/** Accepts account/admin JWT or the static GPT_ACTION_API_KEY for Custom GPT Actions. */
 export function requireAuthOrGptActionKey(req: AuthRequest, res: Response, next: NextFunction): void {
   const header = req.headers.authorization;
   if (!header?.startsWith('Bearer ')) {
@@ -69,16 +72,18 @@ export function requireAuthOrGptActionKey(req: AuthRequest, res: Response, next:
       id: number;
       username: string;
       role?: string;
-      bidderId?: number | null;
-      bidderName?: string | null;
+      accountId?: number | null;
+      accountName?: string | null;
+      extensionAccountScope?: boolean;
     };
     req.userId = payload.id;
     req.username = payload.username;
     req.adminId = payload.id;
     req.adminUsername = payload.username;
     req.role = normalizeRole(payload.role);
-    req.bidderId = payload.bidderId != null ? Number(payload.bidderId) : null;
-    req.bidderName = payload.bidderName ?? null;
+    req.accountId = payload.accountId != null ? Number(payload.accountId) : null;
+    req.accountName = payload.accountName ?? null;
+    req.extensionAccountScope = payload.extensionAccountScope === true;
     next();
   } catch {
     res.status(401).json({ success: false, message: 'Invalid or expired token. Please log in again.' });
@@ -86,23 +91,32 @@ export function requireAuthOrGptActionKey(req: AuthRequest, res: Response, next:
 }
 
 export function requireAdmin(req: AuthRequest, res: Response, next: NextFunction): void {
-  if (req.role !== 'admin') {
+  if (req.role !== 'admin' && req.role !== 'super') {
     res.status(403).json({ success: false, message: 'Admin access required.' });
     return;
   }
   next();
 }
 
-export function requireAdminOrBidder(req: AuthRequest, res: Response, next: NextFunction): void {
-  if (req.role !== 'admin' && req.role !== 'bidder') {
-    res.status(403).json({ success: false, message: 'Bidder access required.' });
+export function requireSuper(req: AuthRequest, res: Response, next: NextFunction): void {
+  if (req.role !== 'super') {
+    res.status(403).json({ success: false, message: 'Super access required.' });
+    return;
+  }
+  next();
+}
+
+export function requireAdminOrAccount(req: AuthRequest, res: Response, next: NextFunction): void {
+  if (req.role !== 'admin' && req.role !== 'super' && req.role !== 'account' &&
+      !(req.role === 'manager' && req.extensionAccountScope && req.accountId)) {
+    res.status(403).json({ success: false, message: 'Account access required.' });
     return;
   }
   next();
 }
 
 export function requireAdminOrCaller(req: AuthRequest, res: Response, next: NextFunction): void {
-  if (req.role !== 'admin' && req.role !== 'caller' && req.role !== 'manager') {
+  if (req.role !== 'admin' && req.role !== 'super' && req.role !== 'caller' && req.role !== 'manager') {
     res.status(403).json({ success: false, message: 'Caller access required.' });
     return;
   }
@@ -110,7 +124,7 @@ export function requireAdminOrCaller(req: AuthRequest, res: Response, next: Next
 }
 
 export function requireAdminOrManager(req: AuthRequest, res: Response, next: NextFunction): void {
-  if (req.role !== 'admin' && req.role !== 'manager') {
+  if (req.role !== 'admin' && req.role !== 'super' && req.role !== 'manager') {
     res.status(403).json({ success: false, message: 'Manager access required.' });
     return;
   }
@@ -118,7 +132,7 @@ export function requireAdminOrManager(req: AuthRequest, res: Response, next: Nex
 }
 
 export function requireAdminWrite(req: AuthRequest, res: Response, next: NextFunction): void {
-  if (req.role !== 'admin') {
+  if (req.role !== 'admin' && req.role !== 'super') {
     res.status(403).json({ success: false, message: 'Only admins can modify or delete records.' });
     return;
   }
@@ -126,15 +140,15 @@ export function requireAdminWrite(req: AuthRequest, res: Response, next: NextFun
 }
 
 export function requireAdminOrManagerWrite(req: AuthRequest, res: Response, next: NextFunction): void {
-  if (req.role !== 'admin' && req.role !== 'manager') {
+  if (req.role !== 'admin' && req.role !== 'super' && req.role !== 'manager') {
     res.status(403).json({ success: false, message: 'Admin or manager access required.' });
     return;
   }
   next();
 }
 
-export function requireAdminManagerOrBidder(req: AuthRequest, res: Response, next: NextFunction): void {
-  if (req.role !== 'admin' && req.role !== 'manager' && req.role !== 'bidder') {
+export function requireAdminManagerOrAccount(req: AuthRequest, res: Response, next: NextFunction): void {
+  if (req.role !== 'admin' && req.role !== 'super' && req.role !== 'manager' && req.role !== 'account') {
     res.status(403).json({ success: false, message: 'Access denied.' });
     return;
   }
