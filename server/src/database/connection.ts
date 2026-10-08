@@ -276,6 +276,7 @@ async function runMigrations(): Promise<void> {
       UNIQUE (u_id, j_id)
     )
   `);
+  await execute('ALTER TABLE bids ADD COLUMN IF NOT EXISTS resume_path TEXT');
 
   await execute(`
     CREATE TABLE IF NOT EXISTS interviews (

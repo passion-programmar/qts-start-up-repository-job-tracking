@@ -38,8 +38,8 @@ export default function ChangePasswordPage() {
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
-    if (newPassword.length < 8) {
-      setError('New password must be at least 8 characters.');
+    if (newPassword.length < 4) {
+      setError('New password must be at least 4 characters.');
       return;
     }
     if (newPassword !== confirmPassword) {
@@ -81,12 +81,12 @@ export default function ChangePasswordPage() {
           />
         </div>
         <div className="form-group">
-          <label htmlFor="new-password">New password (minimum 8 characters)</label>
+          <label htmlFor="new-password">New password (minimum 4 characters)</label>
           <input
             id="new-password"
             type="password"
             autoComplete="new-password"
-            minLength={8}
+            minLength={4}
             value={newPassword}
             onChange={(event) => setNewPassword(event.target.value)}
             required
@@ -98,7 +98,7 @@ export default function ChangePasswordPage() {
             id="confirm-password"
             type="password"
             autoComplete="new-password"
-            minLength={8}
+            minLength={4}
             value={confirmPassword}
             onChange={(event) => setConfirmPassword(event.target.value)}
             required

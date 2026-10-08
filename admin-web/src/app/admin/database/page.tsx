@@ -1,5 +1,5 @@
-import { redirect } from 'next/navigation';
+import { NewSchemaDatabaseView } from '@/components/NewSchemaDatabaseView';
 
 export default function AdminDatabasePage() {
-  redirect('/admin/jobs');
+  return <NewSchemaDatabaseView />;
 }

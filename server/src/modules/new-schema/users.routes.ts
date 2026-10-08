@@ -16,8 +16,7 @@ router.use(requireNewSchemaAuth, requireNewSchemaPasswordChanged);
 
 const staffCreateSchema = z.object({
   username: z.string().trim().min(1).max(100),
-  name: z.string().trim().min(1).max(200),
-  password: z.string().min(8).max(200),
+  password: z.string().min(4).max(200),
   role: z.enum(['admin', 'manager', 'caller']),
 });
 
@@ -36,7 +35,7 @@ const accountProfileSchema = z.object({
 const staffUpdateSchema = z.object({
   username: z.string().trim().min(1).max(100).optional(),
   name: z.string().trim().min(1).max(200).optional(),
-  temporaryPassword: z.string().min(8).max(200).optional(),
+  temporaryPassword: z.string().min(4).max(200).optional(),
 });
 
 const accountUpdateSchema = accountProfileSchema.partial().extend({
@@ -188,7 +187,7 @@ router.post('/', async (req: NewSchemaAuthRequest, res: Response) => {
 
   const parsed = staffCreateSchema.safeParse(req.body);
   if (!parsed.success || parsed.data.role !== role) {
-    res.status(400).json({ success: false, message: 'Enter a username, display name, and temporary password of at least 8 characters.' });
+    res.status(400).json({ success: false, message: 'Enter a username and temporary password of at least 4 characters.' });
     return;
   }
   const data = parsed.data;
@@ -205,7 +204,7 @@ router.post('/', async (req: NewSchemaAuthRequest, res: Response) => {
     `INSERT INTO users (username, name, role, password_hash, must_change_password, parent_user_id)
      VALUES ($1, $2, $3, $4, TRUE, $5)
      RETURNING u_id`,
-    [data.username, data.name, data.role, passwordHash, actor.id]
+    [data.username, data.username, data.role, passwordHash, actor.id]
   );
   const user = await queryOne(
     `SELECT ${staffColumns} FROM users WHERE u_id = $1`,

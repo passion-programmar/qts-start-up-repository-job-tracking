@@ -146,6 +146,8 @@ each Account to bid on many jobs, but prevents the same Account from bidding
 on the same job more than once. The database currently does not verify that
 `u_id` has the Account role.
 
+The Jobs page displays each bid's `resume_path` as plain text.
+
 ### `interviews`
 
 Stores individual interview-stage records for a Bid. Multiple rows for one Bid
@@ -290,6 +292,10 @@ legacy data:
 - `/api/v2/analytics` provides role-scoped bid and interview counts grouped by
   day, week, month, or year, with Manager and Account breakdowns for Admins and
   Super users.
+- `/api/v2/database` provides Super-only, read-only browsing of an explicit
+  allowlist of legacy and new-schema business tables, with search and
+  pagination. Credential hashes, settings, and application-session data are
+  deliberately excluded.
 
 The role-based frontend now uses the versioned APIs for login, first-login
 password changes, staff and Account management, jobs, interviews, categories,

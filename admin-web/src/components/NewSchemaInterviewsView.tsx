@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { useAuth } from '@/components/AuthProvider';
+import { Modal } from '@/components/Modal';
 import { formatDate } from '@/lib/utils';
 import type { NewSchemaBid, NewSchemaInterview } from '@/lib/types';
 
@@ -31,6 +32,8 @@ export function NewSchemaInterviewsView() {
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [showForm, setShowForm] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -61,7 +64,7 @@ export function NewSchemaInterviewsView() {
   function startCreate() {
     setEditingId(null);
     setForm(emptyForm);
-    setError(null);
+    setFormError(null);
     setShowForm(true);
   }
 
@@ -76,11 +79,15 @@ export function NewSchemaInterviewsView() {
       step: interview.step,
       status: interview.status,
     });
+    setFormError(null);
     setShowForm(true);
   }
 
   async function save(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (saving) return;
+    setSaving(true);
+    setFormError(null);
     const body = {
       bidId: Number(form.bidId),
       interviewTime: form.interviewTime,
@@ -94,11 +101,16 @@ export function NewSchemaInterviewsView() {
       ? await api<{ success: boolean; message?: string }>('PUT', `/api/v2/interviews/${editingId}`, body)
       : await api<{ success: boolean; message?: string }>('POST', '/api/v2/interviews', body);
     if (!result.success) {
-      setError(result.message || 'Could not save interview.');
+      setFormError(result.message || 'Could not save interview.');
+      setSaving(false);
       return;
     }
     setShowForm(false);
-    await load();
+    try {
+      await load();
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function updateOutcome(interview: NewSchemaInterview, outcome: NewSchemaInterview['outcome']) {
@@ -132,10 +144,22 @@ export function NewSchemaInterviewsView() {
     <>
       {error && <div className="alert alert-error">{error}</div>}
       {isManager && <div className="search-row"><button className="btn btn-primary" type="button" onClick={startCreate}>+ Schedule Interview</button></div>}
-      {showForm && isManager && (
-        <form className="card" onSubmit={(event) => { void save(event); }} style={{ marginBottom: 16 }}>
-          <div className="card-title">{editingId ? 'Edit Interview' : 'Schedule Interview'}</div>
-          {error && <div className="alert alert-error">{error}</div>}
+      <Modal
+        open={showForm && isManager}
+        title={editingId ? 'Edit Interview' : 'Schedule Interview'}
+        onClose={() => {
+          if (!saving) setShowForm(false);
+        }}
+        footer={(
+          <>
+            <button className="btn btn-ghost" type="button" disabled={saving} onClick={() => setShowForm(false)}>Cancel</button>
+            <button className="btn btn-primary" type="submit" form="new-interview-form" disabled={saving}>
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+          </>
+        )}
+      >
+        <form id="new-interview-form" onSubmit={(event) => { void save(event); }}>
           <div className="form-group">
             <label htmlFor="interview-bid">Account / Job</label>
             <select id="interview-bid" required value={form.bidId} onChange={(event) => setForm({ ...form, bidId: event.target.value })}>
@@ -165,9 +189,9 @@ export function NewSchemaInterviewsView() {
               {(['todo', 'did', 'failed', 'respond_waiting'] as const).map((status) => <option key={status} value={status}>{status}</option>)}
             </select>
           </div>
-          <div style={{ display: 'flex', gap: 8 }}><button className="btn btn-primary" type="submit">Save</button><button className="btn btn-ghost" type="button" onClick={() => setShowForm(false)}>Cancel</button></div>
         </form>
-      )}
+        {formError && <div className="alert alert-error">{formError}</div>}
+      </Modal>
       <div className="card">
         {loading ? <div className="text-muted">Loading…</div> : (
           <div className="table-scroll table-scroll--wide">

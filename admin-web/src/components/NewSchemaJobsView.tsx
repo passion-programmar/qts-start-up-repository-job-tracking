@@ -4,7 +4,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { formatDate } from '@/lib/utils';
 import { useAuth } from '@/components/AuthProvider';
-import type { NewSchemaAccountProfile, NewSchemaCategory, NewSchemaJob } from '@/lib/types';
+import { Modal } from '@/components/Modal';
+import type { NewSchemaAccountProfile, NewSchemaBid, NewSchemaCategory, NewSchemaJob } from '@/lib/types';
 
 const emptyForm = {
   title: '',
@@ -19,18 +20,22 @@ export function NewSchemaJobsView() {
   const { user } = useAuth();
   const isManager = user?.role === 'manager';
   const [jobs, setJobs] = useState<NewSchemaJob[]>([]);
+  const [bids, setBids] = useState<NewSchemaBid[]>([]);
   const [accounts, setAccounts] = useState<NewSchemaAccountProfile[]>([]);
   const [categories, setCategories] = useState<NewSchemaCategory[]>([]);
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [showForm, setShowForm] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [jobResult, accountResult, categoryResult] = await Promise.all([
+    setError(null);
+    const [jobResult, accountResult, categoryResult, bidResult] = await Promise.all([
       api<{ success: boolean; jobs?: NewSchemaJob[] }>('GET', '/api/v2/jobs'),
       isManager
         ? api<{ success: boolean; accounts?: NewSchemaAccountProfile[] }>('GET', '/api/v2/users/accounts')
@@ -38,11 +43,17 @@ export function NewSchemaJobsView() {
       isManager
         ? api<{ success: boolean; categories?: NewSchemaCategory[] }>('GET', '/api/v2/categories')
         : Promise.resolve({ success: true, categories: [] }),
+      api<{ success: boolean; bids?: NewSchemaBid[] }>('GET', '/api/v2/bids'),
     ]);
     if (jobResult.success) setJobs(jobResult.jobs || []);
     else setError('Could not load jobs.');
     if (accountResult.success) setAccounts(accountResult.accounts || []);
     if (categoryResult.success) setCategories(categoryResult.categories || []);
+    if (bidResult.success) setBids(bidResult.bids || []);
+    else {
+      setBids([]);
+      setError('Could not load resume paths.');
+    }
     setLoading(false);
   }, [isManager]);
 
@@ -60,7 +71,7 @@ export function NewSchemaJobsView() {
   function beginCreate() {
     setEditingId(null);
     setForm(emptyForm);
-    setError(null);
+    setFormError(null);
     setShowForm(true);
   }
 
@@ -74,7 +85,7 @@ export function NewSchemaJobsView() {
       categoryIds: job.category_ids || [],
       accountIds: job.selected_account_u_ids || [],
     });
-    setError(null);
+    setFormError(null);
     setShowForm(true);
   }
 
@@ -89,7 +100,9 @@ export function NewSchemaJobsView() {
 
   async function save(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setError(null);
+    if (saving) return;
+    setSaving(true);
+    setFormError(null);
     const payload = {
       title: form.title.trim(),
       company: form.company.trim(),
@@ -102,11 +115,16 @@ export function NewSchemaJobsView() {
       ? await api<{ success: boolean; message?: string }>('PUT', `/api/v2/jobs/${editingId}`, payload)
       : await api<{ success: boolean; message?: string }>('POST', '/api/v2/jobs', payload);
     if (!result.success) {
-      setError(result.message || 'Could not save job.');
+      setFormError(result.message || 'Could not save job.');
+      setSaving(false);
       return;
     }
     setShowForm(false);
-    await load();
+    try {
+      await load();
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function remove(job: NewSchemaJob) {
@@ -136,10 +154,22 @@ export function NewSchemaJobsView() {
         )}
       </div>
 
-      {showForm && isManager && (
-        <form className="card" onSubmit={(event) => { void save(event); }} style={{ marginBottom: 16 }}>
-          <div className="card-title">{editingId ? 'Edit Job' : 'Add Job'}</div>
-          {error && <div className="alert alert-error">{error}</div>}
+      <Modal
+        open={showForm && isManager}
+        title={editingId ? 'Edit Job' : 'Add Job'}
+        onClose={() => {
+          if (!saving) setShowForm(false);
+        }}
+        footer={(
+          <>
+            <button className="btn btn-ghost" type="button" disabled={saving} onClick={() => setShowForm(false)}>Cancel</button>
+            <button className="btn btn-primary" type="submit" form="new-job-form" disabled={saving}>
+              {saving ? 'Saving…' : 'Save Job'}
+            </button>
+          </>
+        )}
+      >
+        <form id="new-job-form" className="job-form" onSubmit={(event) => { void save(event); }}>
           <div className="form-group">
             <label htmlFor="new-job-title">Title</label>
             <input id="new-job-title" required maxLength={300} value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} />
@@ -177,18 +207,15 @@ export function NewSchemaJobsView() {
             ))}
             {!accounts.length && <p className="text-muted">Create Account profiles before assigning them to jobs.</p>}
           </fieldset>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button className="btn btn-primary" type="submit">Save Job</button>
-            <button className="btn btn-ghost" type="button" onClick={() => setShowForm(false)}>Cancel</button>
-          </div>
         </form>
-      )}
+        {formError && <div className="alert alert-error">{formError}</div>}
+      </Modal>
 
       <div className="card">
         {loading ? <div className="text-muted">Loading…</div> : (
           <div className="table-scroll">
             <table>
-              <thead><tr><th>Title</th><th>Company</th><th>Status</th><th>Accounts</th><th>Bids</th><th>Added</th><th /></tr></thead>
+              <thead><tr><th>Title</th><th>Company</th><th>Status</th><th>Accounts</th><th>Bids</th><th>Resume paths</th><th>Added</th><th /></tr></thead>
               <tbody>
                 {visibleJobs.map((job) => (
                   <tr key={job.id}>
@@ -197,6 +224,16 @@ export function NewSchemaJobsView() {
                     <td>{job.status}</td>
                     <td>{job.selected_account_u_ids?.length || 0}</td>
                     <td>{job.bid_count}</td>
+                    <td>
+                      {bids.filter((bid) => bid.job_id === job.id).map((bid) => (
+                        <div key={bid.b_id}>
+                          <span>{bid.account_name}: </span>
+                          <code style={{ whiteSpace: 'normal', overflowWrap: 'anywhere' }}>
+                            {bid.resume_path || 'Not provided'}
+                          </code>
+                        </div>
+                      ))}
+                    </td>
                     <td>{formatDate(job.get_date)}</td>
                     <td className="text-right">
                       {isManager && <button className="btn btn-ghost btn-sm" type="button" onClick={() => beginEdit(job)}>Edit</button>}
@@ -204,7 +241,7 @@ export function NewSchemaJobsView() {
                     </td>
                   </tr>
                 ))}
-                {!visibleJobs.length && <tr><td colSpan={7} className="text-muted">No jobs found.</td></tr>}
+                {!visibleJobs.length && <tr><td colSpan={8} className="text-muted">No jobs found.</td></tr>}
               </tbody>
             </table>
           </div>

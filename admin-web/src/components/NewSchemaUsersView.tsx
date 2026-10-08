@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '@/components/AuthProvider';
+import { Modal } from '@/components/Modal';
 import { api } from '@/lib/api';
 
 interface ManagedUser {
@@ -22,8 +23,10 @@ export function NewSchemaUsersView() {
     user?.role === 'super' ? 'admin' : 'manager'
   );
   const [username, setUsername] = useState('');
-  const [name, setName] = useState('');
   const [password, setPassword] = useState('');
+  const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -43,22 +46,28 @@ export function NewSchemaUsersView() {
 
   async function create(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setCreating(true);
+    setCreateError(null);
     const result = await api<{ success: boolean; message?: string }>('POST', '/api/v2/users', {
       role,
       username: username.trim(),
-      name: name.trim(),
       password,
     });
     if (!result.success) {
-      setError(result.message || 'Could not create user.');
+      setCreateError(result.message || 'Could not create user.');
+      setCreating(false);
       return;
     }
     setUsername('');
-    setName('');
     setPassword('');
+    setCreateModalOpen(false);
     setMessage('User created. Give them the temporary password and ask them to change it at first sign-in.');
     setError(null);
-    await load();
+    try {
+      await load();
+    } finally {
+      setCreating(false);
+    }
   }
 
   async function toggleBlock(target: ManagedUser) {
@@ -76,7 +85,7 @@ export function NewSchemaUsersView() {
   }
 
   async function resetPassword(target: ManagedUser) {
-    const temporaryPassword = window.prompt(`Enter a temporary password for ${target.name} (minimum 8 characters):`);
+    const temporaryPassword = window.prompt(`Enter a temporary password for ${target.username} (minimum 4 characters):`);
     if (!temporaryPassword) return;
     const result = await api<{ success: boolean; message?: string }>(
       'PUT',
@@ -110,19 +119,18 @@ export function NewSchemaUsersView() {
     <>
       {error && <div className="alert alert-error">{error}</div>}
       {message && <div className="alert alert-success">{message}</div>}
-      <form className="card" onSubmit={(event) => { void create(event); }} style={{ marginBottom: 16 }}>
-        <div className="card-title">Create {role}</div>
-        <div className="form-group">
-          <label htmlFor="staff-role">Role</label>
-          <select id="staff-role" value={role} onChange={(event) => setRole(event.target.value as typeof role)}>
-            {creatableRoles.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-          </select>
-        </div>
-        <div className="form-group"><label htmlFor="staff-name">Name</label><input id="staff-name" required value={name} onChange={(event) => setName(event.target.value)} /></div>
-        <div className="form-group"><label htmlFor="staff-username">Username</label><input id="staff-username" required value={username} onChange={(event) => setUsername(event.target.value)} /></div>
-        <div className="form-group"><label htmlFor="staff-password">Temporary password (minimum 8 characters)</label><input id="staff-password" required minLength={8} type="password" value={password} onChange={(event) => setPassword(event.target.value)} /></div>
-        <button className="btn btn-primary" type="submit">Create {role}</button>
-      </form>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
+        <button
+          className="btn btn-primary"
+          type="button"
+          onClick={() => {
+            setCreateError(null);
+            setCreateModalOpen(true);
+          }}
+        >
+          Create User
+        </button>
+      </div>
       <div className="card">
         {loading ? <div className="text-muted">Loading…</div> : (
           <div className="table-scroll"><table>
@@ -149,6 +157,73 @@ export function NewSchemaUsersView() {
           </table></div>
         )}
       </div>
+      <Modal
+        open={createModalOpen}
+        title={`Create ${role}`}
+        onClose={() => {
+          if (!creating) setCreateModalOpen(false);
+        }}
+        footer={(
+          <>
+            <button
+              className="btn btn-ghost"
+              type="button"
+              disabled={creating}
+              onClick={() => setCreateModalOpen(false)}
+            >
+              Cancel
+            </button>
+            <button
+              className="btn btn-primary"
+              type="submit"
+              form="create-staff-user-form"
+              disabled={creating}
+            >
+              {creating ? 'Creating…' : `Create ${role}`}
+            </button>
+          </>
+        )}
+      >
+        <form id="create-staff-user-form" onSubmit={(event) => { void create(event); }}>
+          <div className="form-group">
+            <label htmlFor="staff-role">Role</label>
+            <select
+              id="staff-role"
+              value={role}
+              onChange={(event) => setRole(event.target.value as typeof role)}
+            >
+              {creatableRoles.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </div>
+          <div className="form-group">
+            <label htmlFor="staff-username">Username</label>
+            <input
+              id="staff-username"
+              required
+              maxLength={100}
+              autoComplete="username"
+              value={username}
+              onChange={(event) => setUsername(event.target.value)}
+            />
+          </div>
+          <div className="form-group">
+            <label htmlFor="staff-password">Temporary password (minimum 4 characters)</label>
+            <input
+              id="staff-password"
+              required
+              minLength={4}
+              maxLength={200}
+              type="password"
+              autoComplete="new-password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+            />
+          </div>
+          {createError && <div className="alert alert-error">{createError}</div>}
+        </form>
+      </Modal>
     </>
   );
 }

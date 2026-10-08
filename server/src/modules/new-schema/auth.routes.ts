@@ -16,14 +16,14 @@ const LoginSchema = z.object({
 
 const ChangePasswordSchema = z.object({
   currentPassword: z.string().min(1).max(200),
-  newPassword: z.string().min(8).max(200),
+  newPassword: z.string().min(4).max(200),
 });
 
 const UpdateProfileSchema = z.object({
   currentPassword: z.string().min(1).max(200),
   username: z.string().trim().min(1).max(100),
   name: z.string().trim().min(1).max(200),
-  newPassword: z.string().min(8).max(200).optional(),
+  newPassword: z.string().min(4).max(200).optional(),
 });
 
 function createToken(user: {
@@ -117,7 +117,7 @@ router.post('/logout', requireNewSchemaAuth, (_req: NewSchemaAuthRequest, res: R
 router.put('/change-password', requireNewSchemaAuth, async (req: NewSchemaAuthRequest, res: Response) => {
   const parsed = ChangePasswordSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ success: false, message: 'Enter your current password and a new password of at least 8 characters.' });
+    res.status(400).json({ success: false, message: 'Enter your current password and a new password of at least 4 characters.' });
     return;
   }
 
@@ -154,7 +154,7 @@ router.put('/change-password', requireNewSchemaAuth, async (req: NewSchemaAuthRe
 router.put('/me', requireNewSchemaAuth, async (req: NewSchemaAuthRequest, res: Response) => {
   const parsed = UpdateProfileSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ success: false, message: 'Enter your current password, username, and display name. New passwords must have at least 8 characters.' });
+    res.status(400).json({ success: false, message: 'Enter your current password, username, and display name. New passwords must have at least 4 characters.' });
     return;
   }
   if (req.newSchemaUser?.mustChangePassword && !parsed.data.newPassword) {

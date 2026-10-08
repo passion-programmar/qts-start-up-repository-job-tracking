@@ -6,18 +6,20 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth, roleLabel } from '@/components/AuthProvider';
 import { api } from '@/lib/api';
 import { panelLogoUrl } from '@/lib/branding';
-import type { PanelMode } from '@/lib/types';
+import type { PanelMode, UserRole } from '@/lib/types';
 
 type NavItem = {
   href: string;
   label: string;
   page: string;
   modes: PanelMode[];
+  roles?: UserRole[];
 };
 
 const NAV_ITEMS: NavItem[] = [
   { href: '/jobs', label: '💼 Jobs', page: 'jobs', modes: ['admin', 'manager'] },
   { href: '/analytics', label: '📊 Analytics', page: 'analytics', modes: ['admin', 'manager'] },
+  { href: '/database', label: '🗄️ Database', page: 'database', modes: ['admin'], roles: ['super'] },
   { href: '/accounts', label: '👤 Account Profiles', page: 'accounts', modes: ['manager'] },
   { href: '/people', label: '👥 People', page: 'people', modes: ['admin'] },
   { href: '/categories', label: '🏷️ Categories', page: 'categories', modes: ['admin'] },
@@ -59,8 +61,10 @@ export function PanelShell({
   const [navOpen, setNavOpen] = useState(false);
 
   const navItems = useMemo(() => {
-    return NAV_ITEMS.filter((item) => item.modes.includes(mode));
-  }, [mode]);
+    return NAV_ITEMS.filter((item) =>
+      item.modes.includes(mode) && (!item.roles || (user && item.roles.includes(user.role)))
+    );
+  }, [mode, user]);
 
   const page = resolvePage(pathname, basePath);
   const title = page === 'accounts' && mode === 'manager'

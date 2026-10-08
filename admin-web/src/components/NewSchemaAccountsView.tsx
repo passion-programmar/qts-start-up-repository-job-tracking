@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { Modal } from '@/components/Modal';
 import { api } from '@/lib/api';
 import type { NewSchemaAccountProfile, NewSchemaCategory } from '@/lib/types';
 
@@ -31,6 +32,8 @@ export function NewSchemaAccountsView() {
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [showForm, setShowForm] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -56,7 +59,7 @@ export function NewSchemaAccountsView() {
   function startCreate() {
     setEditingId(null);
     setForm(emptyForm);
-    setError(null);
+    setFormError(null);
     setShowForm(true);
   }
 
@@ -73,12 +76,15 @@ export function NewSchemaAccountsView() {
       city: profile.city,
       categoryId: String(profile.category_id),
     });
-    setError(null);
+    setFormError(null);
     setShowForm(true);
   }
 
   async function save(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (saving) return;
+    setSaving(true);
+    setFormError(null);
     const payload = {
       name: form.name.trim(),
       email: form.email.trim(),
@@ -94,11 +100,16 @@ export function NewSchemaAccountsView() {
       ? await api<{ success: boolean; message?: string }>('PUT', `/api/v2/users/${editingId}`, payload)
       : await api<{ success: boolean; message?: string }>('POST', '/api/v2/users', { ...payload, role: 'account' });
     if (!result.success) {
-      setError(result.message || 'Could not save Account profile.');
+      setFormError(result.message || 'Could not save Account profile.');
+      setSaving(false);
       return;
     }
     setShowForm(false);
-    await load();
+    try {
+      await load();
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function remove(profile: Profile) {
@@ -115,35 +126,6 @@ export function NewSchemaAccountsView() {
     <>
       {error && <div className="alert alert-error">{error}</div>}
       <div className="search-row"><button className="btn btn-primary" type="button" onClick={startCreate}>+ Add Account Profile</button></div>
-      {showForm && (
-        <form className="card" onSubmit={(event) => { void save(event); }} style={{ marginBottom: 16 }}>
-          <div className="card-title">{editingId ? 'Edit Account Profile' : 'Add Account Profile'}</div>
-          {error && <div className="alert alert-error">{error}</div>}
-          {([
-            ['name', 'Name'], ['email', 'Email'], ['address', 'Address'], ['sex', 'Sex'],
-            ['birthday', 'Birthday'], ['phone', 'Phone'], ['country', 'Country'], ['city', 'City'],
-          ] as const).map(([key, label]) => (
-            <div className="form-group" key={key}>
-              <label htmlFor={`account-${key}`}>{label}</label>
-              <input
-                id={`account-${key}`}
-                type={key === 'email' ? 'email' : key === 'birthday' ? 'date' : 'text'}
-                required
-                value={form[key]}
-                onChange={(event) => setForm({ ...form, [key]: event.target.value })}
-              />
-            </div>
-          ))}
-          <div className="form-group">
-            <label htmlFor="account-category">Category</label>
-            <select id="account-category" required value={form.categoryId} onChange={(event) => setForm({ ...form, categoryId: event.target.value })}>
-              <option value="">Select category</option>
-              {categories.map((category) => <option key={category.category_id} value={category.category_id}>{category.category_title}</option>)}
-            </select>
-          </div>
-          <div style={{ display: 'flex', gap: 8 }}><button className="btn btn-primary" type="submit">Save Profile</button><button className="btn btn-ghost" type="button" onClick={() => setShowForm(false)}>Cancel</button></div>
-        </form>
-      )}
       <div className="card">
         {loading ? <div className="text-muted">Loading…</div> : (
           <div className="table-scroll"><table>
@@ -158,6 +140,48 @@ export function NewSchemaAccountsView() {
           </table></div>
         )}
       </div>
+      <Modal
+        open={showForm}
+        title={editingId ? 'Edit Account Profile' : 'Add Account Profile'}
+        onClose={() => {
+          if (!saving) setShowForm(false);
+        }}
+        footer={(
+          <>
+            <button className="btn btn-ghost" type="button" disabled={saving} onClick={() => setShowForm(false)}>Cancel</button>
+            <button className="btn btn-primary" type="submit" form="account-profile-form" disabled={saving}>
+              {saving ? 'Saving…' : 'Save Profile'}
+            </button>
+          </>
+        )}
+      >
+        <form id="account-profile-form" onSubmit={(event) => { void save(event); }}>
+          {([
+            ['name', 'Name'], ['email', 'Email'], ['address', 'Address'], ['sex', 'Sex'],
+            ['birthday', 'Birthday'], ['phone', 'Phone'], ['country', 'Country'], ['city', 'City'],
+          ] as const).map(([key, label]) => (
+            <div className="form-group" key={key}>
+              <label htmlFor={`account-${key}`}>{label}</label>
+              <input
+                id={`account-${key}`}
+                type={key === 'email' ? 'email' : key === 'birthday' ? 'date' : 'text'}
+                required
+                maxLength={key === 'address' ? 500 : key === 'country' || key === 'city' ? 100 : key === 'sex' ? 50 : undefined}
+                value={form[key]}
+                onChange={(event) => setForm({ ...form, [key]: event.target.value })}
+              />
+            </div>
+          ))}
+          <div className="form-group">
+            <label htmlFor="account-category">Category</label>
+            <select id="account-category" required value={form.categoryId} onChange={(event) => setForm({ ...form, categoryId: event.target.value })}>
+              <option value="">Select category</option>
+              {categories.map((category) => <option key={category.category_id} value={category.category_id}>{category.category_title}</option>)}
+            </select>
+          </div>
+        </form>
+        {formError && <div className="alert alert-error">{formError}</div>}
+      </Modal>
     </>
   );
 }

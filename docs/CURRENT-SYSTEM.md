@@ -2,6 +2,24 @@
 
 Canonical reference for architecture after **one-step easy apply** fixes (extension **v1.13.25+**).
 
+## Database model transition
+
+The database initialization now creates the proposed `users`, `bids`, `interviews`,
+`job_list`, `categories`, and `app_settings` tables alongside the existing schema.
+See [NEW-DATABASE-SCHEMA.md](./NEW-DATABASE-SCHEMA.md) for the tables, fields,
+relationships, and integrity notes.
+`app_settings` is temporary naming to avoid colliding with the legacy `settings`
+table still used by the current server. The News table is deferred.
+
+This is a schema-only first phase: the existing server and frontend still use the
+legacy tables, which are intentionally retained so the current application keeps
+working. No existing rows are copied or deleted yet. Do not remove the legacy
+tables until the server/frontend migration and data conversion are implemented
+and verified. Job category IDs and selected Account user IDs are stored as
+integer arrays in `job_list`; application code must validate those IDs and
+role-specific assignments (Manager for jobs, Account for bids, Caller for
+interviews).
+
 ## Components
 
 | Layer | Role |

@@ -155,7 +155,7 @@ export interface NewSchemaBid {
   job_title: string;
   company: string;
   url: string;
-  resume_path: string;
+  resume_path: string | null;
   applied_date: string;
 }
 
