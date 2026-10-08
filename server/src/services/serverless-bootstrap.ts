@@ -9,9 +9,6 @@ function validateServerlessEnvironment(): void {
     'DATABASE_URL',
     'JWT_SECRET',
     'ADMIN_PASSWORD',
-    'MANAGER_PASSWORD',
-    'ACCOUNT_PASSWORD',
-    'CALLER_PASSWORD',
   ];
   const missing = required.filter((name) => !process.env[name]);
   if (missing.length) {

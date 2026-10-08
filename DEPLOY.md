@@ -37,15 +37,14 @@ the public web app URL, so it follows the same proxy.
    | `JWT_SECRET` | Unique random secret with at least 32 characters |
    | `ADMIN_USERNAME` | Initial Super account name |
    | `ADMIN_PASSWORD` | Strong initial Super account password |
-   | `MANAGER_PASSWORD` | Strong seed password |
-   | `ACCOUNT_PASSWORD` | Strong seed password |
-   | `CALLER_PASSWORD` | Strong seed password |
    | `ADMIN_WEB_URL` | `https://YOUR-WEB-APP.vercel.app/login` |
    | `AUTO_OPEN_BROWSER` | `false` |
    | `HOST` | `0.0.0.0` |
 
-   The four passwords are required by the API startup validation. Change the
-   initial account passwords after the first login.
+   Only the initial Super account password is needed to seed the first login.
+   Super can then create Admin accounts, and Admins or Managers can create
+   accounts in their assigned roles and set those users' passwords through the
+   application.
 
 4. Deploy. The first API request initializes the Neon schema and seeds accounts.
 5. Test `https://YOUR-API-PROJECT.vercel.app/api/health`.
