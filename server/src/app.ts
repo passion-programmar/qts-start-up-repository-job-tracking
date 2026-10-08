@@ -1,17 +1,5 @@
 import express from 'express';
 import cors from 'cors';
-import fs from 'node:fs';
-import authRoutes from './modules/auth/auth.routes';
-import candidateRoutes from './modules/candidates/candidates.routes';
-import jobRoutes from './modules/jobs/jobs.routes';
-import accountsRoutes from './modules/accounts/accounts.routes';
-import usersRoutes from './modules/users/users.routes';
-import interviewsRoutes from './modules/interviews/interviews.routes';
-import settingsRoutes from './modules/settings/settings.routes';
-import applicationSessionsRoutes from './modules/application-sessions/application-sessions.routes';
-import applicationTasksRoutes from './modules/application-sessions/application-tasks.routes';
-import adminRecordsRoutes from './modules/admin-records/admin-records.routes';
-import jobSitesRoutes from './modules/job-sites/job-sites.routes';
 import newSchemaAuthRoutes from './modules/new-schema/auth.routes';
 import newSchemaUsersRoutes from './modules/new-schema/users.routes';
 import newSchemaInterviewsRoutes from './modules/new-schema/interviews.routes';
@@ -83,17 +71,6 @@ if (process.env.VERCEL) {
   });
 }
 
-app.use('/api/auth', authRoutes);
-app.use('/api/candidates', candidateRoutes);
-app.use('/api/jobs', jobRoutes);
-app.use('/api/accounts', accountsRoutes);
-app.use('/api/users', usersRoutes);
-app.use('/api/interviews', interviewsRoutes);
-app.use('/api/settings', settingsRoutes);
-app.use('/api/application-sessions', applicationSessionsRoutes);
-app.use('/api/application-tasks', applicationTasksRoutes);
-app.use('/api/admin-records', adminRecordsRoutes);
-app.use('/api/job-sites', jobSitesRoutes);
 app.use('/api/v2/auth', newSchemaAuthRoutes);
 app.use('/api/v2/users', newSchemaUsersRoutes);
 app.use('/api/v2/interviews', newSchemaInterviewsRoutes);
@@ -110,11 +87,7 @@ app.get('/api/health', (_req, res) => {
     status: 'online',
     timestamp: new Date().toISOString(),
     apiVersion: '1.6.0',
-    features: {
-      documentUploadCategory: true,
-      applicationDocuments: true,
-      applicationTasks: true,
-    },
+    features: { schema: 'new' },
   });
 });
 

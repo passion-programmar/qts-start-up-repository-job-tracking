@@ -38,7 +38,6 @@ const ADMIN_NAV_MODE1: AdminNavItem[] = [
   { href: '', label: '📊 Dashboard', page: 'dashboard', modes: ['admin'] },
   { href: '/jobs', label: '💼 Jobs', page: 'jobs', modes: ['admin'] },
   { href: '/people', label: '👥 People', page: 'people', modes: ['admin'] },
-  { href: '/accounts', label: '🤖 Custom GPT', page: 'accounts', modes: ['admin'] },
   { href: '/database', label: '🗄️ Database', page: 'database', modes: ['admin'] },
   { href: '/interviews', label: '📅 Interviews', page: 'interviews', modes: ['admin'] },
   { href: '/settings', label: '⚙️ Settings', page: 'settings', modes: ['admin'] },
@@ -47,7 +46,6 @@ const ADMIN_NAV_MODE1: AdminNavItem[] = [
 const ADMIN_NAV_MODE2: AdminNavItem[] = [
   { href: '', label: '📊 Analytics', page: 'dashboard', modes: ['admin'] },
   { href: '/people', label: '👥 People', page: 'people', modes: ['admin'] },
-  { href: '/accounts', label: '🤖 Custom GPT', page: 'accounts', modes: ['admin'] },
   { href: '/database', label: '🗄️ Database', page: 'database', modes: ['admin'] },
   { href: '/interviews', label: '📅 Interviews', page: 'interviews', modes: ['admin'] },
   { href: '/settings', label: '⚙️ Settings', page: 'settings', modes: ['admin'] },
@@ -57,7 +55,6 @@ const ADMIN_NAV_MODE3: AdminNavItem[] = [
   { href: '', label: '📊 Overview', page: 'dashboard', modes: ['admin'] },
   { href: '/interviews', label: '📅 Interviews', page: 'interviews', modes: ['admin'] },
   { href: '/people', label: '👥 People', page: 'people', modes: ['admin'] },
-  { href: '/accounts', label: '🤖 Custom GPT', page: 'accounts', modes: ['admin'] },
   { href: '/database', label: '🗄️ Database', page: 'database', modes: ['admin'] },
   { href: '/jobs', label: '💼 Jobs', page: 'jobs', modes: ['admin'] },
   { href: '/settings', label: '⚙️ Settings', page: 'settings', modes: ['admin'] },

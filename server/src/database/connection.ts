@@ -164,54 +164,7 @@ function maskDatabaseUrl(url: string): string {
   }
 }
 
-async function tableExists(table: string): Promise<boolean> {
-  const row = await queryOne<{ exists: boolean }>(
-    `SELECT EXISTS (
-      SELECT 1 FROM information_schema.tables
-      WHERE table_schema = 'public' AND table_name = $1
-    ) AS exists`,
-    [table]
-  );
-  return Boolean(row?.exists);
-}
-
-async function migrateLegacyAccountSchema(): Promise<void> {
-  const oldTeamTable = 'bidders';
-  const oldTeamSiteTable = 'bidder_job_sites';
-  const newTeamTable = 'accounts';
-  const newTeamSiteTable = 'account_job_sites';
-
-  if (await tableExists(oldTeamTable)) {
-    if (await tableExists(newTeamTable)) {
-      throw new Error('Both legacy bidder and account tables exist; resolve the table conflict before starting.');
-    }
-    await execute(`ALTER TABLE ${oldTeamTable} RENAME TO ${newTeamTable}`);
-  }
-  if (await tableExists(oldTeamSiteTable)) {
-    if (await tableExists(newTeamSiteTable)) {
-      throw new Error('Both legacy bidder job-site and account job-site tables exist; resolve the table conflict before starting.');
-    }
-    await execute(`ALTER TABLE ${oldTeamSiteTable} RENAME TO ${newTeamSiteTable}`);
-  }
-
-  const legacyColumn = 'bidder_id';
-  const accountColumn = 'account_id';
-  for (const table of ['admins', 'candidates', 'jobs', 'interview_processes', 'application_sessions', newTeamSiteTable]) {
-    if (!(await tableExists(table))) continue;
-    const hasLegacyColumn = await columnExists(table, legacyColumn);
-    const hasAccountColumn = await columnExists(table, accountColumn);
-    if (hasLegacyColumn && hasAccountColumn) {
-      throw new Error(`Both legacy bidder_id and account_id columns exist in ${table}; resolve the column conflict before starting.`);
-    }
-    if (hasLegacyColumn) {
-      await execute(`ALTER TABLE ${table} RENAME COLUMN ${legacyColumn} TO ${accountColumn}`);
-    }
-  }
-}
-
 async function runMigrations(): Promise<void> {
-  await migrateLegacyAccountSchema();
-
   await execute(`
     CREATE TABLE IF NOT EXISTS categories (
       category_id SERIAL PRIMARY KEY,
@@ -317,231 +270,17 @@ async function runMigrations(): Promise<void> {
   await execute('CREATE INDEX IF NOT EXISTS idx_interviews_caller ON interviews(caller_user_id)');
   await execute('CREATE INDEX IF NOT EXISTS idx_interviews_outcome_date ON interviews(outcome, interview_date)');
 
-  await execute(`
-    CREATE TABLE IF NOT EXISTS admins (
-      id SERIAL PRIMARY KEY,
-      username TEXT NOT NULL UNIQUE,
-      password_hash TEXT NOT NULL,
-      role TEXT NOT NULL DEFAULT 'admin',
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
-
-  await execute(`
-    CREATE TABLE IF NOT EXISTS candidates (
-      id SERIAL PRIMARY KEY,
-      name TEXT NOT NULL,
-      email TEXT,
-      phone TEXT,
-      linkedin_url TEXT,
-      notes TEXT,
-      color TEXT,
-      is_active BOOLEAN NOT NULL DEFAULT TRUE,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
-
-  await execute(`
-    CREATE TABLE IF NOT EXISTS jobs (
-      id SERIAL PRIMARY KEY,
-      title TEXT NOT NULL,
-      company TEXT NOT NULL,
-      url TEXT NOT NULL UNIQUE,
-      normalized_url TEXT NOT NULL UNIQUE,
-      description TEXT NOT NULL,
-      source TEXT,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
-
-  await execute(`
-    CREATE TABLE IF NOT EXISTS candidate_jobs (
-      id SERIAL PRIMARY KEY,
-      candidate_id INTEGER NOT NULL REFERENCES candidates(id) ON DELETE CASCADE,
-      job_id INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
-      status TEXT NOT NULL DEFAULT 'none' CHECK (status IN ('none', 'applied')),
-      applied_at TIMESTAMPTZ,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      UNIQUE (candidate_id, job_id)
-    )
-  `);
-
-  await execute(`
-    CREATE TABLE IF NOT EXISTS settings (
-      key TEXT PRIMARY KEY,
-      value TEXT,
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
-
-  await execute(`
-    CREATE TABLE IF NOT EXISTS accounts (
-      id SERIAL PRIMARY KEY,
-      name TEXT NOT NULL,
-      notes TEXT,
-      is_active BOOLEAN NOT NULL DEFAULT TRUE,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
-
-  await execute(`
-    CREATE TABLE IF NOT EXISTS interview_processes (
-      id SERIAL PRIMARY KEY,
-      candidate_id INTEGER REFERENCES candidates(id) ON DELETE SET NULL,
-      candidate_name TEXT NOT NULL,
-      caller_user_id INTEGER REFERENCES admins(id) ON DELETE SET NULL,
-      account_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL,
-      scheduled_date DATE,
-      attend_date DATE,
-      interview_time TEXT,
-      timezone TEXT NOT NULL DEFAULT 'UTC',
-      position TEXT,
-      company TEXT,
-      job_url TEXT,
-      resume TEXT,
-      meeting_url TEXT,
-      salary TEXT,
-      stage TEXT,
-      created_by_user_id INTEGER REFERENCES admins(id) ON DELETE SET NULL,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
-
-  await execute('CREATE INDEX IF NOT EXISTS idx_jobs_company ON jobs(company)');
-  await execute('CREATE INDEX IF NOT EXISTS idx_jobs_title ON jobs(title)');
-  await execute('CREATE INDEX IF NOT EXISTS idx_candidate_jobs_candidate ON candidate_jobs(candidate_id)');
-  await execute('CREATE INDEX IF NOT EXISTS idx_candidate_jobs_job ON candidate_jobs(job_id)');
-  await execute('CREATE INDEX IF NOT EXISTS idx_candidate_jobs_status ON candidate_jobs(status)');
-  await execute('CREATE INDEX IF NOT EXISTS idx_candidate_jobs_applied_at ON candidate_jobs(applied_at)');
-
-  await execute(`
-    CREATE TABLE IF NOT EXISTS application_sessions (
-      id SERIAL PRIMARY KEY,
-      candidate_id INTEGER NOT NULL REFERENCES candidates(id) ON DELETE CASCADE,
-      job_id INTEGER REFERENCES jobs(id) ON DELETE SET NULL,
-      user_id INTEGER NOT NULL REFERENCES admins(id) ON DELETE CASCADE,
-      account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-      job_url TEXT NOT NULL,
-      normalized_url TEXT,
-      job_title TEXT,
-      company TEXT,
-      job_description TEXT,
-      platform TEXT,
-      current_step TEXT NOT NULL DEFAULT 'init',
-      discovered_pages JSONB NOT NULL DEFAULT '[]',
-      generated_answers JSONB NOT NULL DEFAULT '{}',
-      status TEXT NOT NULL DEFAULT 'active'
-        CHECK (status IN ('active', 'scanning', 'filling', 'awaiting_ai', 'completed', 'abandoned', 'error')),
-      metadata JSONB NOT NULL DEFAULT '{}',
-      started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      last_activity_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      completed_at TIMESTAMPTZ,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
-
-  await execute(`
-    CREATE TABLE IF NOT EXISTS application_session_fields (
-      id SERIAL PRIMARY KEY,
-      session_id INTEGER NOT NULL REFERENCES application_sessions(id) ON DELETE CASCADE,
-      stable_field_id TEXT NOT NULL,
-      label TEXT,
-      field_type TEXT NOT NULL,
-      required BOOLEAN NOT NULL DEFAULT FALSE,
-      options JSONB,
-      current_value TEXT,
-      placeholder TEXT,
-      section_heading TEXT,
-      page_step TEXT,
-      page_url TEXT,
-      name_attr TEXT,
-      autocomplete_attr TEXT,
-      validation_message TEXT,
-      selector_hints JSONB,
-      field_fingerprint TEXT NOT NULL,
-      category TEXT NOT NULL DEFAULT 'unknown'
-        CHECK (category IN ('candidate_profile', 'saved_answer', 'ai_generation', 'document_upload', 'unknown')),
-      profile_key TEXT,
-      saved_answer_key TEXT,
-      document_slot TEXT,
-      fill_value TEXT,
-      fill_status TEXT NOT NULL DEFAULT 'pending'
-        CHECK (fill_status IN ('pending', 'filled', 'skipped', 'awaiting_answer', 'error', 'manual')),
-      generated_answer TEXT,
-      discovered_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      UNIQUE (session_id, stable_field_id)
-    )
-  `);
-
-  await execute(`
-    CREATE TABLE IF NOT EXISTS application_session_documents (
-      session_id INTEGER NOT NULL REFERENCES application_sessions(id) ON DELETE CASCADE,
-      doc_type TEXT NOT NULL CHECK (doc_type IN ('resume', 'cover_letter')),
-      file_name TEXT NOT NULL,
-      content BYTEA NOT NULL,
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      PRIMARY KEY (session_id, doc_type)
-    )
-  `);
-
-  await execute(`
-    CREATE TABLE IF NOT EXISTS candidate_saved_answers (
-      id SERIAL PRIMARY KEY,
-      candidate_id INTEGER NOT NULL REFERENCES candidates(id) ON DELETE CASCADE,
-      answer_key TEXT NOT NULL,
-      answer_value TEXT NOT NULL,
-      approved BOOLEAN NOT NULL DEFAULT TRUE,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      UNIQUE (candidate_id, answer_key)
-    )
-  `);
-
-  await execute('CREATE INDEX IF NOT EXISTS idx_app_sessions_candidate ON application_sessions(candidate_id)');
-  await execute('CREATE INDEX IF NOT EXISTS idx_app_sessions_job ON application_sessions(job_id)');
-  await execute('CREATE INDEX IF NOT EXISTS idx_app_sessions_account ON application_sessions(account_id)');
-  await execute('CREATE INDEX IF NOT EXISTS idx_app_sessions_user ON application_sessions(user_id)');
-  await execute('CREATE INDEX IF NOT EXISTS idx_app_sessions_status ON application_sessions(status)');
-  await execute('CREATE INDEX IF NOT EXISTS idx_app_session_fields_session ON application_session_fields(session_id)');
-  await execute('CREATE INDEX IF NOT EXISTS idx_app_session_fields_category ON application_session_fields(category)');
-  await execute('CREATE INDEX IF NOT EXISTS idx_candidate_saved_answers_candidate ON candidate_saved_answers(candidate_id)');
-
-  await execute(`
-    CREATE TABLE IF NOT EXISTS job_sites (
-      id SERIAL PRIMARY KEY,
-      name TEXT NOT NULL,
-      platform_key TEXT NOT NULL UNIQUE,
-      url_host TEXT,
-      notes TEXT,
-      is_active BOOLEAN NOT NULL DEFAULT TRUE,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
-
-  await execute(`
-    CREATE TABLE IF NOT EXISTS account_job_sites (
-      id SERIAL PRIMARY KEY,
-      account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-      job_site_id INTEGER NOT NULL REFERENCES job_sites(id) ON DELETE CASCADE,
-      default_candidate_id INTEGER REFERENCES candidates(id) ON DELETE SET NULL,
-      admitted_by INTEGER REFERENCES admins(id) ON DELETE SET NULL,
-      is_active BOOLEAN NOT NULL DEFAULT TRUE,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      UNIQUE (account_id, job_site_id)
-    )
-  `);
-
   await migrateSchema();
+
+  await execute(`
+    DROP TABLE IF EXISTS
+      bidders, bidder_job_sites, account_job_sites, job_sites,
+      application_session_documents, application_session_fields, application_sessions,
+      candidate_saved_answers, candidate_jobs, interview_processes,
+      candidates, jobs, admins, accounts, settings
+    CASCADE
+  `);
+  logger.info('Legacy tables removed; new-schema data retained');
   logger.info('Database migrations complete');
 }
 
@@ -557,73 +296,15 @@ async function columnExists(table: string, column: string): Promise<boolean> {
 }
 
 async function migrateSchema(): Promise<void> {
-  if (await tableExists('users') && !(await columnExists('users', 'must_change_password'))) {
+  if (!(await columnExists('users', 'must_change_password'))) {
     await execute(`ALTER TABLE users ADD COLUMN must_change_password BOOLEAN NOT NULL DEFAULT FALSE`);
   }
-  if (!(await columnExists('admins', 'role'))) {
-    await execute(`ALTER TABLE admins ADD COLUMN role TEXT NOT NULL DEFAULT 'admin'`);
-  }
-  if (!(await columnExists('candidates', 'color'))) {
-    await execute(`ALTER TABLE candidates ADD COLUMN color TEXT`);
-  }
-  if (!(await columnExists('admins', 'account_id'))) {
-    await execute(`ALTER TABLE admins ADD COLUMN account_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL`);
-  }
-  if (!(await columnExists('candidates', 'account_id'))) {
-    await execute(`ALTER TABLE candidates ADD COLUMN account_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL`);
-  }
-  if (!(await columnExists('candidates', 'stack'))) {
-    await execute(`ALTER TABLE candidates ADD COLUMN stack TEXT`);
-  }
-  if (!(await columnExists('jobs', 'account_id'))) {
-    await execute(`ALTER TABLE jobs ADD COLUMN account_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL`);
-  }
-  if (!(await columnExists('jobs', 'created_by_user_id'))) {
-    await execute(`ALTER TABLE jobs ADD COLUMN created_by_user_id INTEGER REFERENCES admins(id) ON DELETE SET NULL`);
-  }
-  if (!(await columnExists('accounts', 'manager_id'))) {
-    await execute(`ALTER TABLE accounts ADD COLUMN manager_id INTEGER REFERENCES admins(id) ON DELETE SET NULL`);
-  }
-  if (!(await columnExists('accounts', 'custom_gpt_url'))) {
-    await execute(`ALTER TABLE accounts ADD COLUMN custom_gpt_url TEXT`);
-  }
-  if (!(await columnExists('admins', 'password_encrypted'))) {
-    await execute(`ALTER TABLE admins ADD COLUMN password_encrypted TEXT`);
-  }
-  if (!(await columnExists('admins', 'is_active'))) {
-    await execute(`ALTER TABLE admins ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT TRUE`);
+  if (!(await columnExists('bids', 'resume_path'))) {
+    await execute(`ALTER TABLE bids ADD COLUMN resume_path TEXT`);
   }
   if (!(await columnExists('interviews', 'outcome'))) {
     await execute(`ALTER TABLE interviews ADD COLUMN outcome TEXT CHECK (outcome IN ('good', 'bad', 'normal'))`);
   }
-  if (!(await columnExists('application_session_fields', 'document_slot'))) {
-    await execute(`ALTER TABLE application_session_fields ADD COLUMN document_slot TEXT`);
-  }
-
-  await execute(`
-    ALTER TABLE application_session_fields
-    DROP CONSTRAINT IF EXISTS application_session_fields_category_check
-  `);
-  await execute(`
-    ALTER TABLE application_session_fields
-    ADD CONSTRAINT application_session_fields_category_check
-    CHECK (category IN ('candidate_profile', 'saved_answer', 'ai_generation', 'document_upload', 'unknown'))
-  `);
-
-  await execute(`UPDATE admins SET role = 'account' WHERE role IN ('user', 'bidder')`);
-
-  await execute('CREATE INDEX IF NOT EXISTS idx_candidates_account ON candidates(account_id)');
-  await execute('CREATE INDEX IF NOT EXISTS idx_candidates_account_active ON candidates(account_id, is_active)');
-  await execute('CREATE INDEX IF NOT EXISTS idx_jobs_account ON jobs(account_id)');
-  await execute('CREATE INDEX IF NOT EXISTS idx_admins_account ON admins(account_id)');
-  await execute('CREATE INDEX IF NOT EXISTS idx_admins_username ON admins(username)');
-  await execute('CREATE INDEX IF NOT EXISTS idx_candidate_jobs_status_job ON candidate_jobs(status, job_id)');
-  await execute('CREATE INDEX IF NOT EXISTS idx_accounts_manager ON accounts(manager_id)');
-  await execute('CREATE INDEX IF NOT EXISTS idx_interviews_caller ON interview_processes(caller_user_id)');
-  await execute('CREATE INDEX IF NOT EXISTS idx_interviews_account ON interview_processes(account_id)');
-  await execute('CREATE INDEX IF NOT EXISTS idx_job_sites_platform ON job_sites(platform_key)');
-  await execute('CREATE INDEX IF NOT EXISTS idx_account_job_sites_account ON account_job_sites(account_id)');
-  await execute('CREATE INDEX IF NOT EXISTS idx_account_job_sites_site ON account_job_sites(job_site_id)');
 }
 
 export async function backupDb(): Promise<string> {
@@ -676,7 +357,7 @@ function runPgDump(destination: string): Promise<void> {
 }
 
 async function runLogicalBackup(destination: string): Promise<void> {
-  const tables = ['accounts', 'admins', 'candidates', 'jobs', 'candidate_jobs', 'interview_processes', 'settings', 'application_sessions', 'application_session_fields', 'candidate_saved_answers'] as const;
+  const tables = ['categories', 'users', 'job_list', 'bids', 'interviews', 'app_settings'] as const;
   const lines: string[] = [
     `-- ${APP_NAME} PostgreSQL logical backup`,
     `-- Generated: ${new Date().toISOString()}`,

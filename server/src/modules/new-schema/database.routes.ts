@@ -55,53 +55,6 @@ const TABLES = {
     searchColumns: ['interviewer', 'step', 'status', 'outcome', 'comment'],
     orderBy: 'i_id',
   },
-  accounts: {
-    label: 'Legacy accounts',
-    description: 'Legacy account/team records. Private credentials are not shown.',
-    columns: ['id', 'name', 'notes', 'is_active', 'manager_id', 'custom_gpt_url', 'created_at', 'updated_at'],
-    searchColumns: ['name', 'notes'],
-    orderBy: 'id',
-  },
-  admins: {
-    label: 'Legacy staff accounts',
-    description: 'Legacy staff account metadata. Password hashes are excluded.',
-    columns: ['id', 'username', 'role', 'account_id', 'is_active', 'created_at', 'updated_at'],
-    searchColumns: ['username', 'role'],
-    orderBy: 'id',
-  },
-  candidates: {
-    label: 'Legacy candidates',
-    description: 'Legacy candidate profiles. Saved answers and application session data are not included.',
-    columns: ['id', 'name', 'email', 'phone', 'linkedin_url', 'notes', 'color', 'stack', 'is_active', 'account_id', 'created_at', 'updated_at'],
-    searchColumns: ['name', 'email', 'phone', 'stack'],
-    orderBy: 'id',
-  },
-  jobs: {
-    label: 'Legacy jobs',
-    description: 'Legacy job postings.',
-    columns: ['id', 'title', 'company', 'url', 'source', 'created_at', 'updated_at'],
-    searchColumns: ['title', 'company', 'url', 'source'],
-    orderBy: 'id',
-  },
-  candidate_jobs: {
-    label: 'Legacy candidate applications',
-    description: 'Links between legacy candidates and job postings.',
-    columns: ['id', 'candidate_id', 'job_id', 'status', 'applied_at', 'created_at', 'updated_at'],
-    searchColumns: ['status'],
-    orderBy: 'id',
-  },
-  interview_processes: {
-    label: 'Legacy interview processes',
-    description: 'Legacy interview schedule and result records.',
-    columns: [
-      'id', 'candidate_id', 'candidate_name', 'caller_user_id', 'account_id',
-      'scheduled_date', 'attend_date', 'interview_time', 'timezone', 'position',
-      'company', 'job_url', 'resume', 'meeting_url', 'salary', 'stage',
-      'created_by_user_id', 'created_at', 'updated_at',
-    ],
-    searchColumns: ['candidate_name', 'company', 'position', 'stage'],
-    orderBy: 'id',
-  },
 } as const;
 
 type TableName = keyof typeof TABLES;

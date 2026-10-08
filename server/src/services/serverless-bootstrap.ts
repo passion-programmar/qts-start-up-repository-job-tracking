@@ -20,9 +20,6 @@ function validateServerlessEnvironment(): void {
   if (config.jwtSecret.length < 32 || config.jwtSecret === 'change-this-secret') {
     throw new Error('JWT_SECRET must be a unique secret with at least 32 characters.');
   }
-  if (!config.applicationSessionPersistDb) {
-    throw new Error('Set APPLICATION_SESSION_PERSIST_DB=true for the Vercel API deployment.');
-  }
 }
 
 async function initialize(): Promise<void> {

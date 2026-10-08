@@ -1,30 +1,28 @@
-# QTS_Startup v1.13+
+# QTS_Startup
 
-> **Current system (June 2026):** [docs/CURRENT-SYSTEM.md](docs/CURRENT-SYSTEM.md) — extension v1.13.25, one-step auto-apply, job sites, Custom GPT handoff.
+> **Current production system:** Vercel web app + Vercel API + Neon database.
+> The retired extension and legacy candidate/application workflows are not
+> supported by the current deployment. See [the current system](docs/CURRENT-SYSTEM.md).
 
-A Chrome/Edge extension with a local Node.js server for capturing job postings and tracking Account teams, candidates, and interviews with **QTS_Startup**.
+QTS_Startup is a web-based job tracking application deployed on Vercel with
+Neon PostgreSQL.
 
 > **Requirements & planning:** see [REQUIREMENTS.md](REQUIREMENTS.md) for full product, technical, and feature requirements.  
 > **Build & deploy:** see [BUILD.md](BUILD.md) for environment setup and operations.  
-> **Extension (Managers):** see [QTS-JOB-TRACKING-EXTENSION-GUIDE.md](QTS-JOB-TRACKING-EXTENSION-GUIDE.md) for install, login, and job capture workflow.
-> **Custom GPT automation:** see [QTS-JOB-TRACKING-CUSTOM-GPT-GUIDE.md](QTS-JOB-TRACKING-CUSTOM-GPT-GUIDE.md) for resume/cover letter JSON, Actions, and PDF pipeline.  
-> **Performance:** see [QTS-JOB-TRACKING-PERFORMANCE-GUIDE.md](QTS-JOB-TRACKING-PERFORMANCE-GUIDE.md) for speed optimization (Vercel, extension, API).
+> **Performance:** see [QTS-JOB-TRACKING-PERFORMANCE-GUIDE.md](QTS-JOB-TRACKING-PERFORMANCE-GUIDE.md) for Vercel and API optimization.
 
 ## Features
 
-- **Role-based web UI** — Super, Admin, Manager, Account, and Caller roles
-- **Job sites registry** — admin adds job board sources; admits accounts with default candidate
-- **Chrome extension** — one-step auto-apply, Custom GPT resume/PDF pipeline (v1.13+)
-- **PostgreSQL** — embedded PGlite for local dev, or external PostgreSQL for production
-- **Account teams** — scoped candidates and jobs managed by their assigned Manager
-- **Interview tracking** — scheduled interviews with caller assignments
+- **Role-based web UI** — Super, Admin, Manager, and Caller users
+- **Neon PostgreSQL** — persistent data for the Vercel API
+- **Job tracking** — Manager-owned jobs with category and Account-profile assignments
+- **Interview tracking** — schedules linked to bids and Caller assignments
 
 ## Requirements
 
 - Windows 10/11, macOS, or Linux
 - Node.js 20 or newer
-- Chrome, Edge, Brave, or another Chromium browser
-- PostgreSQL 14+ (optional — embedded PGlite is used by default for local dev)
+- A modern web browser
 
 ## Quick start
 
@@ -32,70 +30,27 @@ A Chrome/Edge extension with a local Node.js server for capturing job postings a
 API to Vercel and connect Neon. Once deployed, open your public Vercel URL;
 your PC does not need to run the API.
 
-**Windows local development:** double-click `start-local.bat`. `start.bat`
-opens the configured public application URL.
+After deployment, open the Vercel web app URL. `start.bat` opens the
+configured public URL; it does not start a local API or database.
 
-**macOS / Linux (local development):**
+Available roles:
 
-```bash
-chmod +x start.sh
-./start.sh
-```
+| Role    | How it is created |
+|---------|-------------------|
+| Super   | Seeded from `ADMIN_USERNAME` / `ADMIN_PASSWORD` |
+| Admin   | Created by Super |
+| Manager | Created by Admin |
+| Caller  | Created by Admin |
+| Account profile | Created by Manager; it is not a login |
 
-### Open the public application
+The configured `ADMIN_USERNAME` / `ADMIN_PASSWORD` account is seeded as
+**Super**. Change the initial password after signing in. Super creates Admins;
+Admins create Managers and Callers; Managers create Account profiles.
 
-After deployment, visit your Vercel web app URL. `start.bat` opens the
-configured public URL; it does not start a local API.
+## Extension status
 
-**Or from the project root:**
-
-```bash
-npm install
-npm start
-```
-
-This starts the local development UI and API. It is separate from the public
-Vercel deployment.
-
-- **QTS_Startup UI** on http://localhost:1027/login
-- **API server** on http://localhost:1028/api
-
-Press `Ctrl+C` in the terminal to stop both, or run `stop.bat` / `npm run stop`.
-
-Default accounts (configured in `server/.env`):
-
-| Role    | Username | Default password |
-|---------|----------|------------------|
-| Super   | super    | super (change it in Settings → Authentication) |
-| Admin   | created by Super | set by Super |
-| Manager | created by Admin | set by Admin |
-| Account | created by Manager | set by Manager |
-| Caller  | created by Admin/Super | set by creator |
-
-The configured `ADMIN_USERNAME` / `ADMIN_PASSWORD` account is seeded as **Super** (`super` / `super` by default on a fresh database). Change the default password in **Settings → Authentication** after the first login. Seed credentials initialize the account only; later changes made in the app are preserved across restarts. Super creates Admin accounts; Admin creates Managers; Managers create Account teams. Only Managers can sign into the browser extension, where they choose an assigned Account team after signing in.
-
-## Manual start (separate terminals)
-
-```bat
-cd admin-web
-npm install
-npm run dev
-
-cd ..\server
-npm install
-npm start
-```
-
-## Install the extension
-
-Full step-by-step guide: **[QTS-JOB-TRACKING-EXTENSION-GUIDE.md](QTS-JOB-TRACKING-EXTENSION-GUIDE.md)**
-
-1. Open `chrome://extensions` or `edge://extensions`.
-2. Enable **Developer mode**.
-3. Click **Load unpacked** and select the `extension` folder.
-4. Log in with your Manager username and password, then choose an assigned Account team.
-5. Add candidates under the Account team in QTS_Startup.
-6. Open a job listing in your browser and click the **QTS_Startup** extension icon.
+The previous Chrome/Edge extension depended on legacy API endpoints that have
+been retired. Do not install or use it with the current public deployment.
 
 ## Panels
 
@@ -103,83 +58,20 @@ Full step-by-step guide: **[QTS-JOB-TRACKING-EXTENSION-GUIDE.md](QTS-JOB-TRACKIN
 |---------|-------------------------|--------|
 | Super   | `/admin`                | Full system access; manages Admin accounts |
 | Admin   | `/admin`                | Manages Managers and lower-role workflows |
-| Manager | `/manager`              | Assigned Account teams, candidates, jobs, interviews |
-| Account | `/account` (legacy route) | Team jobs and candidates |
-| Caller  | `/caller`               | Add interview records, view own interviews |
+| Manager | `/manager`              | Account profiles and jobs |
+| Caller  | `/caller`               | Assigned interviews |
 
 ## Database
 
-Local development uses embedded PostgreSQL (PGlite) by default:
-
-```env
-EMBEDDED_PG=true
-```
-
-Data is stored in `server/data/pglite/`.
-
-For external PostgreSQL:
-
-```env
-EMBEDDED_PG=false
-DATABASE_URL=postgresql://postgres:postgres@localhost:5432/qts_startup
-```
-
-Start PostgreSQL with Docker:
-
-```bat
-docker compose up -d postgres
-```
-
-## Environment configuration
-
-See `server/.env.example`. Key settings:
-
-```env
-PORT=1028
-HOST=127.0.0.1
-ADMIN_WEB_URL=http://localhost:1027/login
-JWT_SECRET=replace-with-a-long-random-secret-change-this-in-production
-ADMIN_USERNAME=super
-ADMIN_PASSWORD=your-password
-```
-
-## Docker (API only)
-
-```bat
-docker compose up -d
-```
-
-Runs the API on port 1028. Run the Next.js UI separately on port 1027 for full functionality.
-
-## Windows .exe
-
-```bat
-build-exe.bat
-```
-
-Produces `release/QTS_Startup.exe` (API server). Requires PostgreSQL — set `DATABASE_URL` in a `.env` file next to the executable.
+The production deployment uses Neon PostgreSQL. Configure database and API
+secrets in Vercel; local commands do not change production data.
 
 ## Project structure
 
 ```text
 QTS_Startup/
-├── package.json        npm start / npm run stop
-├── start.bat           Run server (Windows)
-├── stop.bat            Stop server (Windows)
-├── start.sh            Run server (macOS/Linux)
-├── scripts/            setup + stop helpers
-├── admin-web/          Next.js UI (port 1027)
-├── server/             Express API (port 1028)
-├── extension/          Chrome extension
-├── docker-compose.yml
-└── build-exe.bat
-```
-
-## Useful commands
-
-```bash
-npm install
-npm start
-npm run stop
-npm run build
+- start.bat           Open the public application (Windows)
+- admin-web/          Next.js Vercel web app
+- server/             Express Vercel API
+- docs/               Deployment and system notes
 ```

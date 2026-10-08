@@ -1,7 +1,7 @@
 {
   "name": "qts-startup-server",
   "version": "1.2.0",
-  "description": "QTS_Startup API server with PostgreSQL and browser extension support",
+  "description": "QTS_Startup API for the Vercel and Neon deployment",
   "main": "dist/local-server.js",
   "bin": "dist/local-server.js",
   "engines": {
@@ -14,11 +14,7 @@
     "check": "tsc --noEmit",
     "build:exe": "npm run build && pkg . --compress GZip --output ../release/QTS_Startup.exe",
     "db:up": "docker compose -f ../docker-compose.yml up -d postgres",
-    "db:down": "docker compose -f ../docker-compose.yml down",
-    "migrate:sqlite": "node scripts/migrate-sqlite-to-pg.mjs",
-    "db:reset": "npm run build && node dist/scripts/reset-db.js",
-    "db:clear-accounts": "npm run build && node dist/scripts/clear-accounts-candidates.js",
-    "db:clear-apply-sessions": "npm run build && node dist/scripts/clear-application-sessions.js"
+    "db:down": "docker compose -f ../docker-compose.yml down"
   },
   "pkg": {
     "scripts": "dist/**/*.js",

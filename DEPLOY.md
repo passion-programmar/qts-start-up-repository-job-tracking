@@ -5,13 +5,12 @@ API runs as Vercel Functions; using the public application does not require
 `start-server.bat`, a local API, or a tunnel.
 
 ```text
-Chrome/Edge extension ──┐
-                       ├──► Vercel web app ──► Vercel API functions ──► Neon
-Admin web app ─────────┘
+Browser ──► Vercel web app ──► Vercel API functions ──► Neon
 ```
 
-The web app proxies `/api/*` requests to the API deployment. The extension uses
-the public web app URL, so it follows the same proxy.
+The web app proxies API requests to the API deployment. The deployed system
+uses the new-schema tables only; the older extension, candidates, auto-apply,
+and legacy account workflows are not part of this deployment.
 
 ## 1. Create a Neon database
 
@@ -33,7 +32,6 @@ the public web app URL, so it follows the same proxy.
    | `DATABASE_URL` | Neon pooled PostgreSQL connection string |
    | `DATABASE_SSL` | `true` |
    | `EMBEDDED_PG` | `false` |
-   | `APPLICATION_SESSION_PERSIST_DB` | `true` |
    | `JWT_SECRET` | Unique random secret with at least 32 characters |
    | `ADMIN_USERNAME` | Initial Super account name |
    | `ADMIN_PASSWORD` | Strong initial Super account password |
@@ -42,15 +40,15 @@ the public web app URL, so it follows the same proxy.
    | `HOST` | `0.0.0.0` |
 
    Only the initial Super account password is needed to seed the first login.
-   Super can then create Admin accounts, and Admins or Managers can create
-   accounts in their assigned roles and set those users' passwords through the
-   application.
+   Super creates Admin accounts; Admins create Managers and Callers; Managers
+   create Account profiles, which do not have login passwords.
 
 4. Deploy. The first API request initializes the Neon schema and seeds accounts.
 5. Test `https://YOUR-API-PROJECT.vercel.app/api/health`.
 
-The API stores application sessions, fields, and generated PDF documents in
-Neon so they remain available when requests reach different function instances.
+On first startup, the API removes the retired legacy tables and keeps the
+new-schema data tables (`categories`, `users`, `job_list`, `bids`, `interviews`,
+and `app_settings`). This is irreversible for the retired-table data.
 Use Neon's pooled connection string to keep database connections within the
 provider's limits.
 
@@ -64,18 +62,6 @@ provider's limits.
 
 The Next.js rewrite in `admin-web/next.config.ts` sends API traffic to the
 separate API project.
-
-## 4. Configure the extension
-
-Load the `extension/` folder as an unpacked extension in Chrome or Edge. Keep
-the API server URL set to the public web app origin:
-
-```text
-https://YOUR-WEB-APP.vercel.app
-```
-
-Sign in with a Manager account and select its assigned Account team. Requests
-are forwarded through the web app to the Vercel API and Neon.
 
 ## Cost and availability
 
