@@ -279,6 +279,11 @@ legacy data:
 - `/api/v2/users` provisions Super → Admin → Manager/Caller → Account
   ownership; Account profiles have no password or login.
 - `/api/v2/categories` and `/api/v2/settings` apply Super-only writes.
+- `/api/v2/jobs` lets Managers manage their own jobs and selected Account
+  profiles; Admins can read jobs owned by their Managers and Super can read all.
+- `/api/v2/bids` records automation-submitted bids for a selected Account using
+  the owning Manager's authenticated session; it rejects unassigned Accounts
+  and duplicate bids.
 - `/api/v2/interviews` scopes reads to the caller or reporting hierarchy;
   Managers schedule/edit interviews and Callers submit only the outcome on
   their assigned interviews.
