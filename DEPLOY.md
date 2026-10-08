@@ -46,9 +46,10 @@ and legacy account workflows are not part of this deployment.
 4. Deploy. The first API request initializes the Neon schema and seeds accounts.
 5. Test `https://YOUR-API-PROJECT.vercel.app/api/health`.
 
-On first startup, the API removes the retired legacy tables and keeps the
-new-schema data tables (`categories`, `users`, `job_list`, `bids`, `interviews`,
-and `app_settings`). This is irreversible for the retired-table data.
+The first API request after this release is deployed removes the retired
+legacy tables and keeps only the new-schema data tables (`categories`, `users`,
+`job_list`, `bids`, `interviews`, and `app_settings`). This permanently deletes
+the retired-table data.
 Use Neon's pooled connection string to keep database connections within the
 provider's limits.
 
