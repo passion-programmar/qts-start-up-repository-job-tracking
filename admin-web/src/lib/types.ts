@@ -177,6 +177,26 @@ export interface NewSchemaInterview {
   company: string;
 }
 
+export interface NewSchemaAnalytics {
+  period: 'day' | 'week' | 'month' | 'year';
+  bidsByPeriod: Array<{ bucket: string; count: number }>;
+  interviewsByPeriod: Array<{ bucket: string; count: number }>;
+  bidsByStatus: Array<{ status: string; count: number }>;
+  interviewsByOutcome: Array<{ outcome: string; count: number }>;
+  byManager: Array<{
+    manager_id: number;
+    manager_name: string;
+    bids: number;
+    interviews: number;
+  }>;
+  byAccount: Array<{
+    account_user_id: number;
+    account_name: string;
+    bids: number;
+    interviews: number;
+  }>;
+}
+
 export interface CandidateJobStatus {
   candidate_id: number;
   name: string;

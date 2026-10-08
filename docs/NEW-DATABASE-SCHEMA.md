@@ -287,17 +287,21 @@ legacy data:
 - `/api/v2/interviews` scopes reads to the caller or reporting hierarchy;
   Managers schedule/edit interviews and Callers submit only the outcome on
   their assigned interviews.
+- `/api/v2/analytics` provides role-scoped bid and interview counts grouped by
+  day, week, month, or year, with Manager and Account breakdowns for Admins and
+  Super users.
 
 The role-based frontend now uses the versioned APIs for login, first-login
 password changes, staff and Account management, jobs, interviews, categories,
-and personal profile settings. Callers see only assigned interviews and can
-submit outcomes; Managers can manage their jobs, Account profiles, and
-interviews; Admins and Super users have scoped staff and reporting views.
+analytics, and personal profile settings. Callers see only assigned interviews
+and can submit outcomes; Managers can manage their jobs, Account profiles,
+interviews, and scoped analytics; Admins and Super users have scoped staff and
+reporting views.
 
-Analytics charts, news, and the Super-only system-settings UI are not yet
-migrated. The `/api/v2/settings` API exists, but there is no corresponding
-frontend screen yet. Legacy pages outside the migrated role routes may still
-use legacy APIs; do not pass a new-schema identity to those endpoints, where a
-user ID could be interpreted as a legacy `admins.id`. The old tables have not
-been dropped. Before any destructive database replacement, confirm the backup
-and migration strategy.
+News and the Super-only system-settings UI are not yet migrated. The
+`/api/v2/settings` API exists, but there is no corresponding frontend screen
+yet. Legacy pages outside the migrated role routes may still use legacy APIs;
+do not pass a new-schema identity to those endpoints, where a user ID could be
+interpreted as a legacy `admins.id`. The old tables have not been dropped.
+Before any destructive database replacement, confirm the backup and migration
+strategy.

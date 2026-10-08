@@ -19,6 +19,7 @@ import newSchemaCategoriesRoutes from './modules/new-schema/categories.routes';
 import newSchemaSettingsRoutes from './modules/new-schema/settings.routes';
 import newSchemaJobsRoutes from './modules/new-schema/jobs.routes';
 import newSchemaBidsRoutes from './modules/new-schema/bids.routes';
+import newSchemaAnalyticsRoutes from './modules/new-schema/analytics.routes';
 import { errorHandler } from './middleware/error-handler';
 import { getAccountLogoPath, getLogoPath } from './config/paths';
 import { config } from './config/env';
@@ -82,6 +83,7 @@ app.use('/api/v2/categories', newSchemaCategoriesRoutes);
 app.use('/api/v2/settings', newSchemaSettingsRoutes);
 app.use('/api/v2/jobs', newSchemaJobsRoutes);
 app.use('/api/v2/bids', newSchemaBidsRoutes);
+app.use('/api/v2/analytics', newSchemaAnalyticsRoutes);
 
 app.get('/api/health', (_req, res) => {
   res.json({

@@ -17,6 +17,7 @@ type NavItem = {
 
 const NAV_ITEMS: NavItem[] = [
   { href: '/jobs', label: '💼 Jobs', page: 'jobs', modes: ['admin', 'manager'] },
+  { href: '/analytics', label: '📊 Analytics', page: 'analytics', modes: ['admin', 'manager'] },
   { href: '/accounts', label: '👤 Account Profiles', page: 'accounts', modes: ['manager'] },
   { href: '/people', label: '👥 People', page: 'people', modes: ['admin'] },
   { href: '/categories', label: '🏷️ Categories', page: 'categories', modes: ['admin'] },
@@ -28,6 +29,7 @@ const PAGE_TITLES: Record<string, string> = {
   dashboard: 'Dashboard',
   candidates: 'Candidates',
   jobs: 'Jobs',
+  analytics: 'Analytics',
   accounts: 'Custom GPT',
   database: 'Database Records',
   people: 'People',
