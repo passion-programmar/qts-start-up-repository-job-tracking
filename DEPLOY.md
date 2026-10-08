@@ -23,6 +23,9 @@ the public web app URL, so it follows the same proxy.
 
 1. Import this GitHub repository into Vercel as a new project.
 2. Set **Root Directory** to `server`.
+   The included `server/vercel.json` selects Vercel's Express preset. Local
+   database files, build output, and environment files are excluded from
+   deployment uploads.
 3. Add the following production environment variables:
 
    | Variable | Value |
