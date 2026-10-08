@@ -60,15 +60,15 @@ Extension (fill + upload)  →  Job site form
 
 | Layer | Responsibility |
 |-------|----------------|
-| **Chrome extension** | Scan form, create session, show Session ID, apply answers + upload PDFs from server paths |
-| **Node API (PC)** | Sessions, field storage, PDF render from JSON, save files locally, serve paths/blobs to extension |
+| **Chrome extension** | Scan form, create session, show Session ID, apply answers + upload PDFs from API |
+| **QTS API** | Store sessions, render PDFs from JSON, and serve answers and documents |
 | **Custom GPT** | Read context via Actions, write answers + resume/cover JSON, POST package to server |
 
 ```mermaid
 sequenceDiagram
   participant Account
   participant Extension
-  participant API as QTS API (PC)
+  participant API as QTS API (Vercel Functions)
   participant GPT as Custom GPT
   participant Site as Job site
 
@@ -79,7 +79,7 @@ sequenceDiagram
   GPT->>API: GET gpt-context / pending-fields
   API-->>GPT: JD, company, role, questions
   GPT->>API: POST gpt-package (answers + JSON docs)
-  API->>API: Render PDFs → save to disk
+  API->>API: Render PDFs → persist in Neon
   Account->>Extension: Apply GPT package
   Extension->>API: GET documents + answers
   Extension->>Site: Fill fields + upload PDF
@@ -272,12 +272,10 @@ Extension reads paths from API → fetches file bytes → injects into `input[ty
    Authorization: Bearer TOKEN
    ```
 
-4. Create documents folder (once):
-   ```bat
-   mkdir server\data\application-documents
-   ```
-
-5. **Implement PDF renderer** (already included in server) — ensure `server/data/application-documents` exists.
+4. The PDF renderer is included in the API. In the public Vercel deployment,
+   generated documents are stored in Neon so the extension can retrieve them
+   across serverless function instances. Local development writes documents
+   under `server/data/application-documents`.
 
 ---
 

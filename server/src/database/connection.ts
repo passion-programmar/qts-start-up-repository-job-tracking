@@ -482,6 +482,17 @@ async function runMigrations(): Promise<void> {
   `);
 
   await execute(`
+    CREATE TABLE IF NOT EXISTS application_session_documents (
+      session_id INTEGER NOT NULL REFERENCES application_sessions(id) ON DELETE CASCADE,
+      doc_type TEXT NOT NULL CHECK (doc_type IN ('resume', 'cover_letter')),
+      file_name TEXT NOT NULL,
+      content BYTEA NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (session_id, doc_type)
+    )
+  `);
+
+  await execute(`
     CREATE TABLE IF NOT EXISTS candidate_saved_answers (
       id SERIAL PRIMARY KEY,
       candidate_id INTEGER NOT NULL REFERENCES candidates(id) ON DELETE CASCADE,

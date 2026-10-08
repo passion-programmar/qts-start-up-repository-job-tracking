@@ -121,7 +121,7 @@ function Stop-PortListener([int]$listenPort) {
 }
 
 function Test-NeedsApiBuild {
-    $distEntry = Join-Path $ServerDir "dist/server.js"
+    $distEntry = Join-Path $ServerDir "dist/local-server.js"
     if (-not (Test-Path $distEntry)) { return $true }
 
     $featureRoute = Join-Path $ServerDir "dist/modules/application-sessions/application-sessions.routes.js"
@@ -182,7 +182,7 @@ function Start-ApiServer {
         $previousEnvFile = $env:QTS_ENV_FILE
         $env:QTS_ENV_FILE = $envCloud
         try {
-            $apiProc = Start-Process -FilePath "node" -ArgumentList "dist/server.js" -WorkingDirectory $ServerDir `
+            $apiProc = Start-Process -FilePath "node" -ArgumentList "dist/local-server.js" -WorkingDirectory $ServerDir `
                 -RedirectStandardOutput $apiLog -RedirectStandardError $apiErr -PassThru -WindowStyle Hidden
         } finally {
             if ($null -eq $previousEnvFile) {

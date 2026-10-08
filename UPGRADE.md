@@ -1,6 +1,6 @@
 # Upgrade to PostgreSQL (QTS_Startup v1.2.0)
 
-> **Current system (June 2026):** See [docs/CURRENT-SYSTEM.md](docs/CURRENT-SYSTEM.md) � extension v1.13.25+, job sites, one-step auto-apply.
+> **Current system (June 2026):** See [docs/CURRENT-SYSTEM.md](docs/CURRENT-SYSTEM.md) � extension v1.13.25+, job sites, one-step auto-apply.
 
 ## Database change
 
@@ -26,25 +26,18 @@ npm run migrate:sqlite
 
 ## Cloud deployment
 
-Set these environment variables on your host (Railway, Render, Fly.io, VPS, etc.):
+For the public Vercel API deployment, configure these environment variables in
+the Vercel project whose root directory is `server`:
 
 - `DATABASE_URL` — PostgreSQL connection string from your provider
 - `DATABASE_SSL=true` — for most managed databases
 - `JWT_SECRET` — long random secret
+- `EMBEDDED_PG=false`
+- `APPLICATION_SESSION_PERSIST_DB=true`
 - `HOST=0.0.0.0`
 - `AUTO_OPEN_BROWSER=false`
 
-Deploy with Docker:
-
-```bat
-docker compose up -d
-```
-
-Or build the server image only:
-
-```bat
-docker build -t qts-startup-server ./server
-```
+See [DEPLOY.md](./DEPLOY.md) for the complete Vercel + Neon deployment steps.
 
 ## Windows .exe
 

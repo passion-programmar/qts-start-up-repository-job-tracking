@@ -49,7 +49,7 @@ export const config = {
   adminWebUrl: process.env.ADMIN_WEB_URL || 'http://localhost:1027/login',
   /** Static Bearer secret for Custom GPT Actions (not OpenAI key, not JWT). */
   gptActionApiKey: process.env.GPT_ACTION_API_KEY || '',
-  /** When false, application sessions/fields live in server memory only (cleared after TTL). */
+  /** Persist application sessions/fields in PostgreSQL for serverless deployments. */
   applicationSessionPersistDb:
     String(process.env.APPLICATION_SESSION_PERSIST_DB || 'false').toLowerCase() === 'true',
 };

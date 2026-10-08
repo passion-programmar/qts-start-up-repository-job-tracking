@@ -235,7 +235,7 @@ cd server
 npm install
 copy .env.example .env
 npm run build
-node dist/server.js
+node dist/local-server.js
 ```
 
 **Terminal 2 — UI**
@@ -290,7 +290,7 @@ cd server
 npm ci
 npm run build
 set NODE_ENV=production
-node dist/server.js
+node dist/local-server.js
 ```
 
 ### UI

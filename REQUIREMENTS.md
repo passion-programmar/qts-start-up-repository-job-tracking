@@ -205,7 +205,7 @@ QTS_Startup/
 | Mode | Command | Includes UI | Includes API | Includes DB |
 |------|---------|-------------|--------------|-------------|
 | Local dev (Windows) | `start-server.bat` | Yes | Yes | PGlite (default) |
-| Local dev (manual) | `npm run dev` + `node dist/server.js` | Yes | Yes | PGlite |
+| Local dev (manual) | `npm run dev` + `node dist/local-server.js` | Yes | Yes | PGlite |
 | Docker full | `docker compose up -d` | **No** | Yes | Postgres |
 | Docker DB only | `docker compose up -d postgres` | — | — | Postgres |
 | Windows .exe | `build-exe.bat` → `release/QTS_Startup.exe` | **No** | Yes | External Postgres required |

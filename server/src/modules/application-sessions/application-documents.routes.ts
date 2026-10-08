@@ -1,5 +1,4 @@
 import { Router, Response } from 'express';
-import fs from 'node:fs';
 import {
   requireAuth,
   requireAdminOrAccount,
@@ -10,6 +9,10 @@ import { resolveDocumentFile } from '../../services/application-documents';
 import { execute, queryOne } from '../../database/connection';
 import { config } from '../../config/env';
 import { getMemoryApplicationSession, updateMemorySession } from '../../services/application-session-store';
+import {
+  getStoredApplicationDocument,
+  storeApplicationDocumentArtifacts,
+} from '../../services/application-document-store';
 import {
   BuildDocumentsInputSchema,
   buildApplicationDocuments,
@@ -67,8 +70,10 @@ router.get('/', async (req: AuthRequest, res: Response) => {
     return;
   }
 
-  const manifest = readDocumentManifest(sessionId);
   const metadata = readMetadata(session);
+  const manifest = config.applicationSessionPersistDb
+    ? (metadata.documentManifest as ReturnType<typeof readDocumentManifest> ?? null)
+    : readDocumentManifest(sessionId);
   const documents = metadata.documents && typeof metadata.documents === 'object'
     ? metadata.documents
     : {};
@@ -114,6 +119,9 @@ router.post('/build', async (req: AuthRequest, res: Response) => {
   }
 
   const manifest = await buildApplicationDocuments(sessionId, parsed.data);
+  if (config.applicationSessionPersistDb) {
+    await storeApplicationDocumentArtifacts(sessionId, manifest);
+  }
   const metadata = readMetadata(session);
   const nextMetadata = {
     ...metadata,
@@ -167,6 +175,28 @@ router.get('/:docType', async (req: AuthRequest, res: Response) => {
   }
 
   const metadata = readMetadata(session);
+  if (config.applicationSessionPersistDb) {
+    const normalizedDocType = docType === 'cover-letter' || docType === 'cover_letter'
+      ? 'cover_letter'
+      : docType === 'resume'
+        ? 'resume'
+        : null;
+    const document = normalizedDocType
+      ? await getStoredApplicationDocument(sessionId, normalizedDocType)
+      : null;
+    if (!document) {
+      res.status(404).json({
+        success: false,
+        message: `Document not found: ${docType}. Submit GPT package or POST /documents/build first.`,
+      });
+      return;
+    }
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="${document.file_name}"`);
+    res.send(document.content);
+    return;
+  }
+
   const resolved = resolveDocumentFile(sessionId, docType, metadata);
   if (!resolved) {
     res.status(404).json({
@@ -175,10 +205,9 @@ router.get('/:docType', async (req: AuthRequest, res: Response) => {
     });
     return;
   }
-
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `inline; filename="${resolved.fileName}"`);
-  fs.createReadStream(resolved.filePath).pipe(res);
+  res.sendFile(resolved.filePath);
 });
 
 export default router;

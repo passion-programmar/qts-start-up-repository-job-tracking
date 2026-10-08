@@ -25,6 +25,8 @@ import { errorHandler } from './middleware/error-handler';
 import { getAccountLogoPath, getLogoPath } from './config/paths';
 import { config } from './config/env';
 import { APP_NAME } from './config/branding';
+import { logger } from './utilities/logger';
+import { ensureServerlessDatabaseReady } from './services/serverless-bootstrap';
 
 const app = express();
 
@@ -65,6 +67,21 @@ app.use(cors({
 
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true }));
+
+if (process.env.VERCEL) {
+  app.use(async (_req, res, next) => {
+    try {
+      await ensureServerlessDatabaseReady();
+      next();
+    } catch (error) {
+      logger.error('Vercel API initialization failed', error);
+      res.status(503).json({
+        success: false,
+        message: 'The API is not ready. Check the Vercel API environment variables and logs.',
+      });
+    }
+  });
+}
 
 app.use('/api/auth', authRoutes);
 app.use('/api/candidates', candidateRoutes);

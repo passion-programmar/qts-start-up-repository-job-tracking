@@ -2,15 +2,15 @@
   "name": "qts-startup-server",
   "version": "1.2.0",
   "description": "QTS_Startup API server with PostgreSQL and browser extension support",
-  "main": "dist/server.js",
-  "bin": "dist/server.js",
+  "main": "dist/local-server.js",
+  "bin": "dist/local-server.js",
   "engines": {
     "node": ">=20.0.0"
   },
   "scripts": {
     "build": "tsc",
-    "start": "npm run build && node dist/server.js",
-    "dev": "npm run build && node --watch dist/server.js",
+    "start": "npm run build && node dist/local-server.js",
+    "dev": "npm run build && node --watch dist/local-server.js",
     "check": "tsc --noEmit",
     "build:exe": "npm run build && pkg . --compress GZip --output ../release/QTS_Startup.exe",
     "db:up": "docker compose -f ../docker-compose.yml up -d postgres",

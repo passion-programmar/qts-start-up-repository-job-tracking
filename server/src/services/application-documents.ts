@@ -1,9 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { getAppRoot } from '../config/paths';
 
 export function getApplicationDocumentsDir(sessionId: number): string {
-  return path.join(getAppRoot(), 'data', 'application-documents', String(sessionId));
+  const root = process.env.VERCEL
+    ? path.join(os.tmpdir(), 'qts-startup', 'application-documents')
+    : path.join(getAppRoot(), 'data', 'application-documents');
+  return path.join(root, String(sessionId));
 }
 
 export function resolveDocumentFile(

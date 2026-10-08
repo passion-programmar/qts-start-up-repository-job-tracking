@@ -89,10 +89,9 @@ Extension polls status → fills form + uploads PDFs
 |---|---------|------------|------------------|--------|
 | I-1 | Admin UI stuck on “Loading…” | API port `4000` vs UI proxy `1028` | Set `PORT=1028` in `server/.env` | Fixed |
 | I-2 | Next.js dev crash on Windows | Turbopack instability | Use `next dev --webpack` | Fixed |
-| I-3 | Vercel deploy: UI loads, login fails | UI-only deploy; API at `127.0.0.1:1028` unreachable from cloud | Run `start-server.bat` + Cloudflare tunnel; set `API_URL` on Vercel | By design |
+| I-3 | Vercel web/API deployment | Web and API are separate Vercel projects; API uses Neon | Follow [DEPLOY.md](./DEPLOY.md); the web project's `API_URL` must point to the Vercel API project | Deployment setup |
 | I-4 | `start-server.bat` appears frozen at “Updating Vercel…” | `npm` prompted `y/n` for Vercel CLI install | Non-interactive install in batch script | Fixed |
 | I-5 | Git merge conflict on push | Remote README vs local README | Resolved merge; use PAT for GitHub auth | Operational |
-| I-6 | Neon/Render DB setup confusion | Postgres vs SQLite local | Documented in setup guides | Operational |
 
 ---
 
@@ -115,7 +114,7 @@ Extension polls status → fills form + uploads PDFs
 | S-6 | GPT cannot reach API | Action URL points to localhost; tunnel down | Keep `start-server.bat` + tunnel running; use public HTTPS URL in OpenAPI | Operational |
 | S-7 | Predictable `task_8` IDs | Early design used `task_{sessionId}` only | UUID via `createPublicTaskId()`; legacy alias retained | Partially fixed — restart server + new sessions needed |
 | S-8 | `resume JSON is required` on package submit | GPT omitted resume object for upload field | GPT instructions + context `fileFields` | GPT prompt issue |
-| S-9 | Package saved but PDF missing | Renderer/filesystem failure | Check `server/data/application-documents`, logs, permissions | Operational |
+| S-9 | Package saved but PDF missing | PDF generation or persistence failure | Check API logs; local files are under `server/data/application-documents`, while the Vercel deployment stores documents in Neon | Operational |
 | S-10 | `waiting_for_gpt` stuck forever | GPT never called Actions (handoff failed) | Manual `PROCESS_TASK`; fix handoff; click Allow | Depends on handoff |
 
 **Task ID formats (current):**

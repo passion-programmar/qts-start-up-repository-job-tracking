@@ -187,21 +187,21 @@ For each active candidate:
 
 **Problem:** PC + tunnel + Vercel sync is slow and fragile.
 
-**Fix:** Deploy `server/` to Render, Railway, or Fly.io with Neon. The repo includes `render.yaml` as a starting blueprint.
+**Fix:** Deploy `server/` as a Vercel Functions project with Neon. See [DEPLOY.md](./DEPLOY.md).
 
 ```text
-Extension  →  https://your-api.onrender.com
-Admin UI   →  Vercel (API_URL = same cloud API)
-Database   →  Neon (same region as API, e.g. US East)
+Extension  →  Vercel web app → Vercel API functions
+Admin UI   →  Vercel web app → Vercel API functions
+Database   →  Neon PostgreSQL
 ```
 
-**Gain:** Extension open **3–7 s → < 1 s** in many cases. No `start-server.bat` required for daily use.
+**Gain:** Removes the PC and tunnel from the production request path. No local server is required for daily use.
 
 **Steps:**
-1. Connect GitHub repo to Render → Blueprint → `render.yaml`
-2. Set `DATABASE_URL`, `ADMIN_PASSWORD`, `JWT_SECRET` in Render dashboard
-3. Copy Render URL → Vercel env `API_URL` → redeploy admin web
-4. Update extension `DEFAULT_SERVER` or read cloud URL from config
+1. Follow [DEPLOY.md](./DEPLOY.md) to create the API and web Vercel projects
+2. Set the API project's environment variables, including Neon and persistent application sessions
+3. Set the web project's `API_URL` to the API project's public URL and redeploy
+4. Keep the extension pointed at the public web app URL
 
 ---
 
@@ -219,7 +219,7 @@ Database   →  Neon (same region as API, e.g. US East)
 
 **Problem:** Quick tunnel URL changes every `start-server.bat` restart.
 
-**Fix:** Cloudflare named tunnel with fixed hostname, or skip tunnel entirely once API is on Render.
+**Fix:** Deploy the API publicly on Vercel so production no longer depends on a tunnel.
 
 **Gain:** No `sync-vercel-api-url.bat` redeploy wait (~1–2 min) after restarts.
 
@@ -353,7 +353,7 @@ These code optimizations are already applied — restart `start-server.bat` and 
 
 ```text
 ┌─────────────────┐     ┌──────────────────────┐     ┌─────────────┐
-│ Chrome Extension│────▶│ Cloud API (Render)   │────▶│ Neon Postgres│
+│ Chrome Extension│────▶│ Vercel Web + API     │────▶│ Neon Postgres│
 └─────────────────┘     │ fixed HTTPS URL      │     └─────────────┘
                         └──────────────────────┘
 ┌─────────────────┐              ▲
@@ -363,24 +363,16 @@ These code optimizations are already applied — restart `start-server.bat` and 
 Local PC: dev only (localhost:1028) — optional start-server.bat
 ```
 
-### Render deploy (from this repo)
+### Vercel + Neon deploy
 
-1. Open [Render Dashboard](https://render.com) → **New** → **Blueprint**
-2. Connect repo: `qts-start-up-repository-job-tracking`
-3. Uses `render.yaml` — service `qts-api`, `rootDir: server`
-4. Set secrets:
-   - `DATABASE_URL` — Neon connection string
-   - `ADMIN_PASSWORD`, `MANAGER_PASSWORD`, etc.
-5. After deploy, copy service URL (e.g. `https://qts-api.onrender.com`)
-6. Vercel → Environment → `API_URL` = that URL → redeploy
-7. Extension → set `DEFAULT_SERVER` to same URL (or keep Vercel proxy)
+Follow [DEPLOY.md](./DEPLOY.md). The API and web app are separate Vercel
+projects; the web app proxies API routes to the API project.
 
 ### Region alignment
 
 | Service | Recommended region |
 |---------|-------------------|
 | Neon database | US East (or nearest to users) |
-| Render API | Same as Neon |
 | Vercel | Auto (edge for static UI) |
 
 Mismatch (e.g. API in US, DB in EU) adds **50–150 ms** per query.
@@ -411,12 +403,12 @@ Mismatch (e.g. API in US, DB in EU) adds **50–150 ms** per query.
 
 ---
 
-### Phase C — Cloud API (best long-term)
+### Phase C — Public API
 
-- [ ] Deploy `server/` to Render via `render.yaml`
-- [ ] Point Vercel `API_URL` to Render
-- [ ] Extension uses cloud API directly
-- [ ] Retire tunnel for production (keep PC for local dev)
+- [ ] Deploy `server/` to Vercel Functions with Neon
+- [ ] Point the web project's `API_URL` to the API project
+- [ ] Keep the extension pointed at the public web app URL
+- [ ] Retire the local tunnel for production (keep local tools for development)
 
 **Expected:** Extension open **< 1 s**; no `start-server.bat` for daily ops.
 
@@ -443,7 +435,7 @@ Mismatch (e.g. API in US, DB in EU) adds **50–150 ms** per query.
 │  Slow because: Extension → Vercel → Tunnel → PC → Neon    │
 │  Not because: Vercel UI or extension CSS                  │
 ├────────────────────────────────────────────────────────────┤
-│  #1 fix: Deploy API to Render + fixed API_URL               │
+│  #1 fix: Deploy API to Vercel Functions + fixed API_URL     │
 │  #2 fix: Bulk upsert on job save (N+1 loop)                 │
 │  #3 fix: Bootstrap endpoint + parallel extension calls      │
 ├────────────────────────────────────────────────────────────┤
@@ -461,7 +453,7 @@ Mismatch (e.g. API in US, DB in EU) adds **50–150 ms** per query.
 | `QTS-JOB-TRACKING-PROJECT-SETUP-GUIDE.md` | Install, deploy, tunnel, Vercel, Neon |
 | `QTS-JOB-TRACKING-PROJECT-GUIDE.md` | Accounts, roles, workflows |
 | `QTS-JOB-TRACKING-EXTENSION-GUIDE.md` | Extension install and capture |
-| `render.yaml` | Render Blueprint for cloud API |
+| `DEPLOY.md` | Public Vercel Functions + Neon setup |
 | `BUILD.md` | Developer build reference |
 
 ---

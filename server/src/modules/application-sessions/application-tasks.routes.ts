@@ -20,6 +20,7 @@ import {
   GptApplicationPackageSchema,
   buildApplicationDocuments,
 } from '../document-builder';
+import { storeApplicationDocumentArtifacts } from '../../services/application-document-store';
 import {
   parseLegacySessionId,
   isPublicTaskId,
@@ -388,6 +389,9 @@ router.post('/:taskId/package', async (req: AuthRequest, res: Response) => {
       resume: packageData.resume,
       coverLetter: packageData.coverLetter,
     });
+    if (config.applicationSessionPersistDb) {
+      await storeApplicationDocumentArtifacts(sessionId, documentManifest);
+    }
     documents = documentManifest.paths;
   }
 

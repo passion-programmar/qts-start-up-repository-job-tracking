@@ -28,11 +28,12 @@ A Chrome/Edge extension with a local Node.js server for capturing job postings a
 
 ## Quick start
 
-**Windows:** double-click `start.bat` to use the public Vercel frontend with
-the local Neon-backed API and Cloudflare tunnel. See
-[Public Vercel frontend with a local API and Neon](#public-vercel-frontend-with-a-local-api-and-neon)
-for the one-time setup. To run the local development UI instead, double-click
-`start-local.bat`.
+**Public deployment:** follow [DEPLOY.md](DEPLOY.md) to deploy the web app and
+API to Vercel and connect Neon. Once deployed, open your public Vercel URL;
+your PC does not need to run the API.
+
+**Windows local development:** double-click `start-local.bat`. `start.bat`
+opens the configured public application URL.
 
 **macOS / Linux (local development):**
 
@@ -41,29 +42,10 @@ chmod +x start.sh
 ./start.sh
 ```
 
-### Public Vercel frontend with a local API and Neon
+### Open the public application
 
-For the public Vercel UI to use an API running on this PC, the API must stay
-reachable through a Cloudflare tunnel. This project automates the tunnel,
-updates Vercel's production `API_URL`, redeploys, and opens the public login.
-
-One-time setup on Windows:
-
-1. Copy `server\.env.cloud.example` to `server\.env.cloud`, then set your real
-   Neon `DATABASE_URL` and strong account/JWT secrets. Keep
-   `EMBEDDED_PG=false` and `DATABASE_SSL=true`. Do not commit this file.
-2. From the project root, run
-   `.\node_modules\.bin\vercel.cmd login`.
-3. In `admin-web`, run
-   `..\node_modules\.bin\vercel.cmd link` and link the existing
-   `qts-job-tracking` Vercel project.
-
-For each session, double-click `start-server.bat` and leave its window open.
-It verifies the local API and public tunnel, syncs and redeploys Vercel, checks
-`https://qts-job-tracking.vercel.app/api/health`, and opens the public login.
-The temporary tunnel URL changes when the tunnel restarts, so the sync and
-redeploy happen on each start. The Vercel API is unavailable while the local
-server/tunnel is stopped.
+After deployment, visit your Vercel web app URL. `start.bat` opens the
+configured public URL; it does not start a local API.
 
 **Or from the project root:**
 
@@ -72,7 +54,8 @@ npm install
 npm start
 ```
 
-This starts the local UI and API. If the API is already healthy on port 1028, `npm start` reuses it and starts only the UI.
+This starts the local development UI and API. It is separate from the public
+Vercel deployment.
 
 - **QTS_Startup UI** on http://localhost:1027/login
 - **API server** on http://localhost:1028/api
