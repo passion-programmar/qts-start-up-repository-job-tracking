@@ -18,12 +18,20 @@ export default function LoginPage() {
   useEffect(() => {
     const token = getToken();
     if (!token) {
-      setChecking(false);
+      void Promise.resolve().then(() => setChecking(false));
       return;
     }
     (async () => {
-      const r = await api<{ success: boolean; role?: UserRole }>('GET', '/api/auth/me');
+      const r = await api<{
+        success: boolean;
+        role?: UserRole;
+        mustChangePassword?: boolean;
+      }>('GET', '/api/v2/auth/me');
       if (r.success && r.role) {
+        if (r.mustChangePassword) {
+          router.replace('/change-password');
+          return;
+        }
         router.replace(roleHome(r.role));
         return;
       }
@@ -44,7 +52,8 @@ export default function LoginPage() {
       token?: string;
       role?: UserRole;
       message?: string;
-    }>('POST', '/api/auth/login', { username: username.trim(), password });
+      mustChangePassword?: boolean;
+    }>('POST', '/api/v2/auth/login', { username: username.trim(), password });
 
     if (!r.success || !r.token) {
       setError(r.message || 'Login failed.');
@@ -54,7 +63,7 @@ export default function LoginPage() {
 
     setToken(r.token);
     sessionStorage.removeItem(REDIRECT_GUARD_KEY);
-    router.replace(roleHome(r.role || 'account'));
+    router.replace(r.mustChangePassword ? '/change-password' : roleHome(r.role || 'account'));
   }
 
   if (checking) {

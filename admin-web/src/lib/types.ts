@@ -5,7 +5,9 @@ export interface AuthUser {
   id: number;
   username: string;
   role: UserRole;
+  name?: string;
   accountId?: number | null;
+  mustChangePassword?: boolean;
 }
 
 export interface Account {
@@ -118,6 +120,61 @@ export interface Job {
   updated_at?: string;
   applied_count?: number;
   candidateStatuses?: CandidateJobStatus[];
+}
+
+export interface NewSchemaJob {
+  id: number;
+  manager_id: number;
+  url: string;
+  company: string;
+  title: string;
+  category_ids: number[];
+  selected_account_u_ids: number[];
+  status: 'processing' | 'todo' | 'did' | 'failed';
+  get_date: string;
+  bid_count: number;
+}
+
+export interface NewSchemaAccountProfile {
+  u_id: number;
+  name: string;
+  email: string;
+  category_id: number;
+}
+
+export interface NewSchemaCategory {
+  category_id: number;
+  category_title: string;
+}
+
+export interface NewSchemaBid {
+  b_id: number;
+  account_user_id: number;
+  account_name: string;
+  job_id: number;
+  job_title: string;
+  company: string;
+  url: string;
+  resume_path: string;
+  applied_date: string;
+}
+
+export interface NewSchemaInterview {
+  i_id: number;
+  b_id: number;
+  interview_time: string;
+  interview_date: string;
+  caller_user_id: number;
+  caller_name: string;
+  interviewer: string;
+  step: 'intro' | 'tech-1' | 'tech-2' | 'final';
+  status: 'todo' | 'did' | 'failed' | 'respond_waiting';
+  outcome: 'good' | 'bad' | 'normal' | null;
+  comment: string | null;
+  account_user_id: number;
+  account_name: string;
+  job_title: string;
+  company: string;
 }
 
 export interface CandidateJobStatus {

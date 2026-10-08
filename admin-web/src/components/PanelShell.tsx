@@ -4,9 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth, roleLabel } from '@/components/AuthProvider';
-import { useAdminUiMode } from '@/components/AdminUiModeProvider';
 import { api } from '@/lib/api';
-import { adminUiModeLabel, getAdminNavItems } from '@/lib/admin-ui-mode';
 import { panelLogoUrl } from '@/lib/branding';
 import type { PanelMode } from '@/lib/types';
 
@@ -18,13 +16,12 @@ type NavItem = {
 };
 
 const NAV_ITEMS: NavItem[] = [
-  { href: '', label: '📊 Dashboard', page: 'dashboard', modes: ['admin', 'manager', 'account'] },
-  { href: '/candidates', label: '👥 Candidates', page: 'candidates', modes: ['account'] },
-  { href: '/jobs', label: '💼 Jobs', page: 'jobs', modes: ['admin', 'manager', 'account'] },
-  { href: '/accounts', label: '🏢 Accounts', page: 'accounts', modes: ['manager'] },
+  { href: '/jobs', label: '💼 Jobs', page: 'jobs', modes: ['admin', 'manager'] },
+  { href: '/accounts', label: '👤 Account Profiles', page: 'accounts', modes: ['manager'] },
   { href: '/people', label: '👥 People', page: 'people', modes: ['admin'] },
+  { href: '/categories', label: '🏷️ Categories', page: 'categories', modes: ['admin'] },
   { href: '/interviews', label: '📅 Interviews', page: 'interviews', modes: ['admin', 'manager', 'caller'] },
-  { href: '/settings', label: '⚙️ Settings', page: 'settings', modes: ['admin'] },
+  { href: '/settings', label: '⚙️ My Profile', page: 'settings', modes: ['admin', 'manager', 'caller'] },
 ];
 
 const PAGE_TITLES: Record<string, string> = {
@@ -34,6 +31,7 @@ const PAGE_TITLES: Record<string, string> = {
   accounts: 'Custom GPT',
   database: 'Database Records',
   people: 'People',
+  categories: 'Categories',
   interviews: 'Interview Process',
   settings: 'Settings',
 };
@@ -55,19 +53,12 @@ export function PanelShell({
 }) {
   const pathname = usePathname();
   const { user, canWrite, logout } = useAuth();
-  const { adminUiMode } = useAdminUiMode();
   const [online, setOnline] = useState(true);
   const [navOpen, setNavOpen] = useState(false);
 
   const navItems = useMemo(() => {
-    if (mode === 'admin') {
-      const items = getAdminNavItems(adminUiMode);
-      return user?.role === 'super'
-        ? items
-        : items.filter((item) => item.page !== 'accounts' && item.page !== 'database' && item.page !== 'settings');
-    }
     return NAV_ITEMS.filter((item) => item.modes.includes(mode));
-  }, [mode, adminUiMode, user?.role]);
+  }, [mode]);
 
   const page = resolvePage(pathname, basePath);
   const title = page === 'accounts' && mode === 'manager'
@@ -77,6 +68,8 @@ export function PanelShell({
   const closeNav = useCallback(() => setNavOpen(false), []);
 
   useEffect(() => {
+    // Keep the mobile navigation synchronized with client-side route changes.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     closeNav();
   }, [pathname, closeNav]);
 
@@ -176,7 +169,7 @@ export function PanelShell({
           </button>
         </div>
       </aside>
-      <main className="main" data-admin-ui-mode={mode === 'admin' ? adminUiMode : undefined}>
+      <main className="main">
         {!canWrite && mode === 'manager' && (
           <div className="read-only-banner">
             Manager mode — team management and analytics. Full platform settings require admin.
@@ -187,9 +180,9 @@ export function PanelShell({
             Account mode — you can add jobs. Candidates are managed by your manager.
           </div>
         )}
-        {!canWrite && mode === 'caller' && (
+        {mode === 'caller' && (
           <div className="read-only-banner">
-            Caller mode — you can add interview records. Edit and delete require admin.
+            Caller mode — view assigned interviews and submit outcomes only.
           </div>
         )}
         <div className="topbar">
@@ -206,9 +199,6 @@ export function PanelShell({
             <h1>{title}</h1>
           </div>
           <div className="topbar-status">
-            {mode === 'admin' && (
-              <span className="mode-pill">{adminUiModeLabel(adminUiMode)}</span>
-            )}
             <span className={`dot ${online ? 'dot-green' : 'dot-red'}`} />
             {online ? 'Connected' : 'Offline'}
           </div>

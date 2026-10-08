@@ -1,5 +1,5 @@
-import { DatabaseRecordsView } from '@/components/DatabaseRecordsView';
+import { redirect } from 'next/navigation';
 
 export default function AdminDatabasePage() {
-  return <DatabaseRecordsView />;
+  redirect('/admin/jobs');
 }

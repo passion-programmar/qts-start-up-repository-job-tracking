@@ -1,5 +1,5 @@
-import { DashboardView } from '@/components/DashboardView';
+import { redirect } from 'next/navigation';
 
 export default function ManagerDashboardPage() {
-  return <DashboardView />;
+  redirect('/manager/jobs');
 }

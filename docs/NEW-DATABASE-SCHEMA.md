@@ -288,9 +288,16 @@ legacy data:
   Managers schedule/edit interviews and Callers submit only the outcome on
   their assigned interviews.
 
-The frontend and remaining jobs/bids APIs have not yet been migrated to the
-versioned API. Do not switch the frontend to `/api/v2/auth` until its protected
-data routes also use the new-schema identity; otherwise legacy endpoints could
-interpret a new-schema user ID as a legacy `admins.id`. The old tables have
-not been dropped. Before any destructive database replacement, confirm the
-backup and migration strategy.
+The role-based frontend now uses the versioned APIs for login, first-login
+password changes, staff and Account management, jobs, interviews, categories,
+and personal profile settings. Callers see only assigned interviews and can
+submit outcomes; Managers can manage their jobs, Account profiles, and
+interviews; Admins and Super users have scoped staff and reporting views.
+
+Analytics charts, news, and the Super-only system-settings UI are not yet
+migrated. The `/api/v2/settings` API exists, but there is no corresponding
+frontend screen yet. Legacy pages outside the migrated role routes may still
+use legacy APIs; do not pass a new-schema identity to those endpoints, where a
+user ID could be interpreted as a legacy `admins.id`. The old tables have not
+been dropped. Before any destructive database replacement, confirm the backup
+and migration strategy.

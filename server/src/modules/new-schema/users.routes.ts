@@ -105,6 +105,22 @@ router.get('/', async (req: NewSchemaAuthRequest, res: Response) => {
   res.json({ success: true, users });
 });
 
+router.get('/callers', async (req: NewSchemaAuthRequest, res: Response) => {
+  const actor = req.newSchemaUser!;
+  if (actor.role !== 'manager' || !actor.parentUserId) {
+    res.status(403).json({ success: false, message: 'Only Managers can list their assigned Callers.' });
+    return;
+  }
+  const callers = await queryAll(
+    `SELECT u_id, username, name, role
+     FROM users
+     WHERE role = 'caller' AND parent_user_id = $1 AND blocked_date IS NULL
+     ORDER BY name ASC`,
+    [actor.parentUserId]
+  );
+  res.json({ success: true, callers });
+});
+
 router.get('/accounts', async (req: NewSchemaAuthRequest, res: Response) => {
   const actor = req.newSchemaUser!;
   if (actor.role !== 'super' && actor.role !== 'admin' && actor.role !== 'manager') {

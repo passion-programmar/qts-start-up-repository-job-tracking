@@ -1,5 +1,5 @@
-import { ManagerAccountsView } from '@/components/ManagerAccountsView';
+import { NewSchemaAccountsView } from '@/components/NewSchemaAccountsView';
 
 export default function ManagerAccountsPage() {
-  return <ManagerAccountsView />;
+  return <NewSchemaAccountsView />;
 }

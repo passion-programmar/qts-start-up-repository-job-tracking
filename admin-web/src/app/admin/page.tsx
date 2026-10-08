@@ -1,5 +1,5 @@
-import { AdminDashboardRouter } from '@/components/AdminDashboardRouter';
+import { redirect } from 'next/navigation';
 
 export default function AdminDashboardPage() {
-  return <AdminDashboardRouter />;
+  redirect('/admin/jobs');
 }

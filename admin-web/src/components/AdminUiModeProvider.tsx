@@ -4,15 +4,11 @@ import {
   createContext,
   useCallback,
   useContext,
-  useEffect,
   useMemo,
   useState,
 } from 'react';
-import { api } from '@/lib/api';
 import {
-  ADMIN_UI_MODE_SETTING_KEY,
   DEFAULT_ADMIN_UI_MODE,
-  normalizeAdminUiMode,
   type AdminUiMode,
 } from '@/lib/admin-ui-mode';
 
@@ -27,18 +23,9 @@ const AdminUiModeContext = createContext<AdminUiModeContextValue | null>(null);
 
 export function AdminUiModeProvider({ children }: { children: React.ReactNode }) {
   const [adminUiMode, setAdminUiModeState] = useState<AdminUiMode>(DEFAULT_ADMIN_UI_MODE);
-  const [loading, setLoading] = useState(true);
+  const [loading] = useState(false);
 
-  const refreshAdminUiMode = useCallback(async () => {
-    const r = await api<{ success: boolean; settings?: Record<string, string> }>('GET', '/api/settings');
-    const next = normalizeAdminUiMode(r.settings?.[ADMIN_UI_MODE_SETTING_KEY]);
-    setAdminUiModeState(next);
-    setLoading(false);
-  }, []);
-
-  useEffect(() => {
-    void refreshAdminUiMode();
-  }, [refreshAdminUiMode]);
+  const refreshAdminUiMode = useCallback(async () => {}, []);
 
   const setAdminUiMode = useCallback((mode: AdminUiMode) => {
     setAdminUiModeState(mode);

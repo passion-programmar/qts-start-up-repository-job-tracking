@@ -9,10 +9,10 @@ import {
   useState,
 } from 'react';
 import { useRouter } from 'next/navigation';
-import { api, clearToken, setToken, getToken } from '@/lib/api';
+import { api, clearToken, getToken } from '@/lib/api';
 import type { AuthUser, PanelMode, UserRole } from '@/lib/types';
 import { panelModeForRole, roleHome, roleLabel } from '@/lib/utils';
-import { APP_NAME, REDIRECT_GUARD_KEY } from '@/lib/branding';
+import { REDIRECT_GUARD_KEY } from '@/lib/branding';
 
 interface AuthContextValue {
   user: AuthUser | null;
@@ -22,7 +22,7 @@ interface AuthContextValue {
   canAddJobs: boolean;
   canAddCandidates: boolean;
   canAddInterviews: boolean;
-  updateUser: (updates: Partial<Pick<AuthUser, 'username'>>) => void;
+  updateUser: (updates: Partial<Pick<AuthUser, 'username' | 'name' | 'mustChangePassword'>>) => void;
   logout: () => Promise<void>;
 }
 
@@ -64,11 +64,13 @@ export function AuthProvider({
     const r = await api<{
       success: boolean;
       username?: string;
+      name?: string;
       id?: number;
       role?: string;
       accountId?: number | null;
+      mustChangePassword?: boolean;
       message?: string;
-    }>('GET', '/api/auth/me');
+    }>('GET', '/api/v2/auth/me');
 
     if (!r.success || !r.username) {
       clearToken();
@@ -78,6 +80,12 @@ export function AuthProvider({
     }
 
     const role = normalizeRole(r.role);
+    if (role === 'account') {
+      clearToken();
+      setLoading(false);
+      router.replace('/login');
+      return;
+    }
     const expectedMode = panelModeForRole(role);
 
     if (expectedMode !== mode) {
@@ -99,19 +107,24 @@ export function AuthProvider({
     setUser({
       id: r.id!,
       username: r.username,
+      name: r.name,
       role,
       accountId: r.accountId ?? null,
+      mustChangePassword: r.mustChangePassword ?? false,
     });
     setLoading(false);
+    if (r.mustChangePassword) router.replace('/change-password');
   }, [mode, router]);
 
   useEffect(() => {
+    // Session lookup updates auth state after the provider mounts.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadSession();
   }, [loadSession]);
 
   const logout = useCallback(async () => {
     try {
-      await api('POST', '/api/auth/logout');
+      await api('POST', '/api/v2/auth/logout');
     } finally {
       clearToken();
       setUser(null);
@@ -119,7 +132,7 @@ export function AuthProvider({
     }
   }, [router]);
 
-  const updateUser = useCallback((updates: Partial<Pick<AuthUser, 'username'>>) => {
+  const updateUser = useCallback((updates: Partial<Pick<AuthUser, 'username' | 'name' | 'mustChangePassword'>>) => {
     setUser((current) => current ? { ...current, ...updates } : current);
   }, []);
 
@@ -134,6 +147,10 @@ export function AuthProvider({
     [user, loading, canWrite, canManageTeam, canAddJobs, canAddCandidates, canAddInterviews, updateUser, logout]
   );
 
+  useEffect(() => {
+    if (user?.mustChangePassword) router.replace('/change-password');
+  }, [user?.mustChangePassword, router]);
+
   if (loading) {
     return (
       <div className="auth-screen">
@@ -144,7 +161,7 @@ export function AuthProvider({
     );
   }
 
-  if (!user) return null;
+  if (!user || user.mustChangePassword) return null;
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

@@ -24,7 +24,7 @@ export function roleHome(role: UserRole | string): string {
   if (role === 'admin' || role === 'super') return '/admin';
   if (role === 'manager') return '/manager';
   if (role === 'caller') return '/caller';
-  return '/account';
+  return '/login';
 }
 
 export function panelModeForRole(role: UserRole | string): PanelMode {

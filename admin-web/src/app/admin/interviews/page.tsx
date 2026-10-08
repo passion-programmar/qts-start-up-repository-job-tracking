@@ -1,5 +1,5 @@
-import { InterviewsView } from '@/components/InterviewsView';
+import { NewSchemaInterviewsView } from '@/components/NewSchemaInterviewsView';
 
 export default function AdminInterviewsPage() {
-  return <InterviewsView />;
+  return <NewSchemaInterviewsView />;
 }

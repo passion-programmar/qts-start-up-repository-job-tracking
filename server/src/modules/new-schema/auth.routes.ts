@@ -110,6 +110,10 @@ router.get('/me', requireNewSchemaAuth, (req: NewSchemaAuthRequest, res: Respons
   });
 });
 
+router.post('/logout', requireNewSchemaAuth, (_req: NewSchemaAuthRequest, res: Response) => {
+  res.json({ success: true, message: 'Logged out.' });
+});
+
 router.put('/change-password', requireNewSchemaAuth, async (req: NewSchemaAuthRequest, res: Response) => {
   const parsed = ChangePasswordSchema.safeParse(req.body);
   if (!parsed.success) {

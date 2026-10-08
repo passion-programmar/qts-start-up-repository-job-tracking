@@ -1,7 +1,5 @@
-'use client';
-
-import { AdminAccountsView } from '@/components/AdminAccountsView';
+import { redirect } from 'next/navigation';
 
 export default function AdminAccountsPage() {
-  return <AdminAccountsView />;
+  redirect('/admin/jobs');
 }

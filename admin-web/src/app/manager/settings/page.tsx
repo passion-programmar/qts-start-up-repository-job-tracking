@@ -1,5 +1,5 @@
 import { NewSchemaProfileSettings } from '@/components/NewSchemaProfileSettings';
 
-export default function AdminSettingsPage() {
+export default function ManagerSettingsPage() {
   return <NewSchemaProfileSettings />;
 }

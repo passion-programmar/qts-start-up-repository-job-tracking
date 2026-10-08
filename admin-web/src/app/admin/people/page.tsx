@@ -1,7 +1,7 @@
 'use client';
 
-import { ManagersView } from '@/components/ManagersView';
+import { NewSchemaUsersView } from '@/components/NewSchemaUsersView';
 
 export default function AdminPeoplePage() {
-  return <ManagersView />;
+  return <NewSchemaUsersView />;
 }
