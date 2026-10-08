@@ -4,12 +4,11 @@ import { execute, queryAll, queryOne } from '../../database/connection';
 import {
   NewSchemaAuthRequest,
   requireNewSchemaAuth,
-  requireNewSchemaPasswordChanged,
 } from '../../middleware/new-schema-auth';
 import { logger } from '../../utilities/logger';
 
 const router = Router();
-router.use(requireNewSchemaAuth, requireNewSchemaPasswordChanged);
+router.use(requireNewSchemaAuth);
 
 const InterviewSchema = z.object({
   bidId: z.number().int().positive(),

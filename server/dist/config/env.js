@@ -7,7 +7,11 @@ exports.config = void 0;
 const dotenv_1 = __importDefault(require("dotenv"));
 const node_path_1 = __importDefault(require("node:path"));
 const paths_1 = require("./paths");
-dotenv_1.default.config({ path: node_path_1.default.join((0, paths_1.getAppRoot)(), '.env') });
+dotenv_1.default.config({
+    path: process.env.QTS_ENV_FILE
+        ? node_path_1.default.resolve(process.env.QTS_ENV_FILE)
+        : node_path_1.default.join((0, paths_1.getAppRoot)(), '.env'),
+});
 function buildDatabaseUrl() {
     if (process.env.DATABASE_URL) {
         return process.env.DATABASE_URL;
@@ -27,7 +31,7 @@ exports.config = {
     jwtSecret: process.env.JWT_SECRET || 'change-this-secret',
     jwtExpiry: process.env.JWT_EXPIRY || '24h',
     adminUsername: process.env.ADMIN_USERNAME || 'super',
-    adminPassword: process.env.ADMIN_PASSWORD || '',
+    adminPassword: process.env.ADMIN_PASSWORD || 'super',
     managerUsername: process.env.MANAGER_USERNAME || 'manager',
     managerPassword: process.env.MANAGER_PASSWORD || 'user',
     accountUsername: process.env.ACCOUNT_USERNAME || 'account',

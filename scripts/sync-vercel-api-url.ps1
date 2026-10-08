@@ -34,8 +34,16 @@ function Sync-VercelFromTunnelFile {
     $urlFile = Join-Path $Root "tunnel-url.txt"
     $adminWeb = Join-Path $Root "admin-web"
 
+    if (-not (Test-Path (Join-Path $adminWeb ".vercel\project.json"))) {
+        throw "Vercel project is not linked. Run .\node_modules\.bin\vercel.cmd login, then from admin-web run ..\node_modules\.bin\vercel.cmd link and select qts-job-tracking."
+    }
+
     if (-not (Test-Path $urlFile)) {
         throw "Missing tunnel-url.txt - run start-server.bat first"
+    }
+
+    if ((Invoke-VercelCli $Root $adminWeb @("whoami")) -ne 0) {
+        throw "Vercel CLI is not logged in. Run .\node_modules\.bin\vercel.cmd login, then retry."
     }
 
     $tunnelUrl = (Get-Content $urlFile | Where-Object { $_ -match '^Public API URL:' } | ForEach-Object {
@@ -43,6 +51,9 @@ function Sync-VercelFromTunnelFile {
     }) | Select-Object -First 1
 
     if (-not $tunnelUrl) { throw "Could not read tunnel URL from tunnel-url.txt" }
+    if ($tunnelUrl -notmatch '^https://[a-z0-9-]+\.trycloudflare\.com$') {
+        throw "The saved public API URL is not a valid Cloudflare quick-tunnel URL."
+    }
 
     Write-Host "Tunnel URL: $tunnelUrl"
     Write-Host "Updating Vercel API_URL..."
@@ -54,9 +65,27 @@ function Sync-VercelFromTunnelFile {
     $deployExit = Invoke-VercelCli $Root $adminWeb @("deploy", "--prod", "--yes")
     if ($deployExit -ne 0) { throw "Vercel deploy failed (exit $deployExit)" }
 
+    Write-Host "Checking the Vercel API proxy..."
+    $deadline = (Get-Date).AddSeconds(120)
+    $healthy = $false
+    while ((Get-Date) -lt $deadline) {
+        try {
+            $health = Invoke-RestMethod -Uri "$($VercelAppUrl.TrimEnd('/'))/api/health" -TimeoutSec 10
+            if ($health.success -eq $true) {
+                $healthy = $true
+                break
+            }
+        } catch {
+        }
+        Start-Sleep -Seconds 5
+    }
+    if (-not $healthy) {
+        throw "Vercel deployment completed, but $VercelAppUrl/api/health did not become healthy. Check the deployment and keep the local API/tunnel running."
+    }
+
     Write-Host ""
     Write-Host "Vercel sync OK: $VercelAppUrl" -ForegroundColor Green
-    Write-Host "Test: $VercelAppUrl/api/health"
+    Write-Host "Vercel API proxy health check passed."
 }
 
 if ($MyInvocation.InvocationName -ne '.') {

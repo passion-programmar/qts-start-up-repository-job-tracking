@@ -4,13 +4,12 @@ import { execute, queryAll, queryOne } from '../../database/connection';
 import {
   NewSchemaAuthRequest,
   requireNewSchemaAuth,
-  requireNewSchemaPasswordChanged,
 } from '../../middleware/new-schema-auth';
 import { normalizeUrl } from '../../utilities/normalize-url';
 import { logger } from '../../utilities/logger';
 
 const router = Router();
-router.use(requireNewSchemaAuth, requireNewSchemaPasswordChanged);
+router.use(requireNewSchemaAuth);
 
 const JobSchema = z.object({
   url: z.string().url().max(2000),

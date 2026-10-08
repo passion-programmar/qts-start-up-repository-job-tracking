@@ -27,13 +27,16 @@ if not errorlevel 1 (
   echo.
   if exist tunnel-url.txt type tunnel-url.txt
   echo.
-  echo  Keep this window open OR leave the other server window open.
+  echo  Checking the Vercel API tunnel...
+  powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\sync-vercel-api-url.ps1"
+  if errorlevel 1 (
+    set EXITCODE=1
+    goto failed
+  )
   echo.
-  echo  If login fails with 502 or 530, run:
-  echo    1. stop-server.bat
-  echo    2. start-server.bat
-  echo    3. sync-vercel-api-url.bat
+  echo  Keep this window OR the other server window open.
   echo.
+  start "" "https://qts-job-tracking.vercel.app/login"
   goto end
 )
 

@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useAuth } from '@/components/AuthProvider';
+import { PasswordField } from '@/components/PasswordField';
 import { api, setToken } from '@/lib/api';
 
 export function NewSchemaProfileSettings() {
@@ -103,7 +104,7 @@ export function NewSchemaProfileSettings() {
           {message && <div className={`alert ${error ? 'alert-error' : 'alert-success'}`}>{message}</div>}
           <div className="form-group"><label htmlFor="profile-name">Name</label><input id="profile-name" required maxLength={200} value={name} onChange={(event) => setName(event.target.value)} /></div>
           <div className="form-group"><label htmlFor="profile-username">Username</label><input id="profile-username" required maxLength={100} value={username} onChange={(event) => setUsername(event.target.value)} /></div>
-          <div className="form-group"><label htmlFor="profile-current-password">Current password</label><input id="profile-current-password" type="password" required autoComplete="current-password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} /></div>
+          <div className="form-group"><label htmlFor="profile-current-password">Current password</label><PasswordField id="profile-current-password" required autoComplete="current-password" value={currentPassword} onChange={setCurrentPassword} /></div>
           <button className="btn btn-primary" type="submit">Save Profile</button>
         </form>
       ) : (
@@ -111,9 +112,9 @@ export function NewSchemaProfileSettings() {
           <div className="card-title">Authentication</div>
           <p className="text-muted">Change your password while signed in. Your current password is required.</p>
           {authMessage && <div className={`alert ${authError ? 'alert-error' : 'alert-success'}`}>{authMessage}</div>}
-          <div className="form-group"><label htmlFor="auth-current-password">Current password</label><input id="auth-current-password" type="password" required autoComplete="current-password" value={authCurrentPassword} onChange={(event) => setAuthCurrentPassword(event.target.value)} /></div>
-          <div className="form-group"><label htmlFor="auth-new-password">New password (minimum 4 characters)</label><input id="auth-new-password" type="password" required minLength={4} maxLength={200} autoComplete="new-password" value={authNewPassword} onChange={(event) => setAuthNewPassword(event.target.value)} /></div>
-          <div className="form-group"><label htmlFor="auth-confirm-password">Confirm new password</label><input id="auth-confirm-password" type="password" required minLength={4} maxLength={200} autoComplete="new-password" value={authConfirmPassword} onChange={(event) => setAuthConfirmPassword(event.target.value)} /></div>
+          <div className="form-group"><label htmlFor="auth-current-password">Current password</label><PasswordField id="auth-current-password" required autoComplete="current-password" value={authCurrentPassword} onChange={setAuthCurrentPassword} /></div>
+          <div className="form-group"><label htmlFor="auth-new-password">New password (minimum 4 characters)</label><PasswordField id="auth-new-password" required minLength={4} maxLength={200} autoComplete="new-password" value={authNewPassword} onChange={setAuthNewPassword} /></div>
+          <div className="form-group"><label htmlFor="auth-confirm-password">Confirm new password</label><PasswordField id="auth-confirm-password" required minLength={4} maxLength={200} autoComplete="new-password" value={authConfirmPassword} onChange={setAuthConfirmPassword} /></div>
           <button className="btn btn-primary" type="submit">Change Password</button>
         </form>
       )}

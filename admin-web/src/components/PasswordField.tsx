@@ -8,12 +8,20 @@ export function PasswordField({
   placeholder,
   id,
   readOnly = false,
+  required,
+  minLength,
+  maxLength,
+  autoComplete,
 }: {
   value: string;
   onChange?: (value: string) => void;
   placeholder?: string;
   id?: string;
   readOnly?: boolean;
+  required?: boolean;
+  minLength?: number;
+  maxLength?: number;
+  autoComplete?: string;
 }) {
   const [visible, setVisible] = useState(false);
 
@@ -21,10 +29,15 @@ export function PasswordField({
     <div className="password-field">
       <input
         id={id}
+        key={visible ? 'visible' : 'hidden'}
         type={visible ? 'text' : 'password'}
         value={value}
         readOnly={readOnly}
         placeholder={placeholder}
+        required={required}
+        minLength={minLength}
+        maxLength={maxLength}
+        autoComplete={autoComplete}
         onChange={readOnly ? undefined : (e) => onChange?.(e.target.value)}
       />
       <button

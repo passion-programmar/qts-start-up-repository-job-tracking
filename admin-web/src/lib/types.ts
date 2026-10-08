@@ -7,7 +7,6 @@ export interface AuthUser {
   role: UserRole;
   name?: string;
   accountId?: number | null;
-  mustChangePassword?: boolean;
 }
 
 export interface Account {

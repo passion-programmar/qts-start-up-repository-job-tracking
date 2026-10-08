@@ -25,8 +25,8 @@ async function ensureUser(username, password, role, accountId = null) {
         const needsRoleUpdate = existing.role !== role;
         const needsAccountUpdate = existing.account_id !== accountId;
         const passwordMatches = await bcryptjs_1.default.compare(password, existing.password_hash);
-        const needsPasswordUpdate = !passwordMatches;
-        const needsEncryptedBackfill = !existing.password_encrypted;
+        const needsPasswordUpdate = needsHashMigration && !passwordMatches;
+        const needsEncryptedBackfill = !existing.password_encrypted && passwordMatches;
         if (needsHashMigration || needsRoleUpdate || needsAccountUpdate || needsPasswordUpdate || needsEncryptedBackfill) {
             const nextHash = needsHashMigration || needsPasswordUpdate
                 ? passwordHash
@@ -56,15 +56,36 @@ async function ensureDefaultSettings() {
     }
 }
 async function seedAdminOnly() {
-    if (env_1.config.adminUsername === 'super') {
-        const configuredSuper = await (0, connection_1.queryOne)('SELECT id FROM admins WHERE username = $1', [env_1.config.adminUsername]);
-        if (!configuredSuper) {
+    const existingSuper = await (0, connection_1.queryOne)(`SELECT id, username FROM admins WHERE role = 'super' ORDER BY id ASC LIMIT 1`);
+    if (existingSuper) {
+        if (env_1.config.adminUsername === 'super' && existingSuper.username === 'admin') {
             await (0, connection_1.execute)(`UPDATE admins SET username = $1, updated_at = NOW()
-         WHERE username = $2 AND role = 'super'`, [env_1.config.adminUsername, 'admin']);
+         WHERE username = $2 AND role = 'super'`, ['super', 'admin']);
+            existingSuper.username = 'super';
         }
+        await ensureUser(existingSuper.username, env_1.config.adminPassword, 'super', null);
     }
-    await ensureUser(env_1.config.adminUsername, env_1.config.adminPassword, 'super', null);
+    else {
+        await ensureUser(env_1.config.adminUsername, env_1.config.adminPassword, 'super', null);
+    }
+    await ensureNewSchemaSuper();
     await ensureDefaultSettings();
+}
+async function ensureNewSchemaSuper() {
+    const existingSuper = await (0, connection_1.queryOne)(`SELECT u_id FROM users WHERE role = 'super' ORDER BY u_id ASC LIMIT 1`);
+    if (existingSuper)
+        return;
+    const existingUsername = await (0, connection_1.queryOne)('SELECT u_id FROM users WHERE username = $1', [env_1.config.adminUsername]);
+    if (existingUsername) {
+        throw new Error(`Cannot seed the new-schema Super account: username "${env_1.config.adminUsername}" is already used by a non-Super User.`);
+    }
+    if (!env_1.config.adminPassword) {
+        throw new Error('ADMIN_PASSWORD is required to seed the new-schema Super account.');
+    }
+    const passwordHash = await bcryptjs_1.default.hash(env_1.config.adminPassword, BCRYPT_ROUNDS);
+    await (0, connection_1.execute)(`INSERT INTO users (username, name, role, password_hash, parent_user_id)
+     VALUES ($1, $1, 'super', $2, NULL)`, [env_1.config.adminUsername, passwordHash]);
+    logger_1.logger.info('New-schema Super account created', { username: env_1.config.adminUsername });
 }
 async function seedAdmin() {
     await seedAdminOnly();

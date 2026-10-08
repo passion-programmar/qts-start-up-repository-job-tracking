@@ -30,7 +30,6 @@ function createToken(user: {
   u_id: number;
   username: string;
   role: string;
-  must_change_password: boolean;
 }): string {
   return jwt.sign(
     {
@@ -38,7 +37,6 @@ function createToken(user: {
       id: user.u_id,
       username: user.username,
       role: user.role,
-      mustChangePassword: user.must_change_password,
     },
     config.jwtSecret,
     { expiresIn: config.jwtExpiry } as jwt.SignOptions
@@ -57,7 +55,6 @@ router.post('/login', async (req: Request, res: Response) => {
     username: string;
     role: string;
     password_hash: string | null;
-    must_change_password: boolean;
     blocked: boolean;
   }>(
     `WITH RECURSIVE user_tree AS (
@@ -69,7 +66,7 @@ router.post('/login', async (req: Request, res: Response) => {
        FROM users parent
        JOIN user_tree child ON child.parent_user_id = parent.u_id
      )
-     SELECT u.u_id, u.username, u.role, u.password_hash, u.must_change_password,
+     SELECT u.u_id, u.username, u.role, u.password_hash,
             EXISTS (SELECT 1 FROM user_tree WHERE blocked_date IS NOT NULL) AS blocked
      FROM users u
      WHERE u.username = $1`,
@@ -93,7 +90,6 @@ router.post('/login', async (req: Request, res: Response) => {
     id: user.u_id,
     username: user.username,
     role: user.role,
-    mustChangePassword: user.must_change_password,
   });
 });
 
@@ -106,7 +102,6 @@ router.get('/me', requireNewSchemaAuth, (req: NewSchemaAuthRequest, res: Respons
     name: user.name,
     role: user.role,
     parentUserId: user.parentUserId,
-    mustChangePassword: user.mustChangePassword,
   });
 });
 
@@ -155,14 +150,6 @@ router.put('/me', requireNewSchemaAuth, async (req: NewSchemaAuthRequest, res: R
   const parsed = UpdateProfileSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ success: false, message: 'Enter your current password, username, and display name. New passwords must have at least 4 characters.' });
-    return;
-  }
-  if (req.newSchemaUser?.mustChangePassword && !parsed.data.newPassword) {
-    res.status(403).json({
-      success: false,
-      mustChangePassword: true,
-      message: 'Set a new password before updating your profile.',
-    });
     return;
   }
   const user = await queryOne<{

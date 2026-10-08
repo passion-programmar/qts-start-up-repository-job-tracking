@@ -4,11 +4,10 @@ import { queryAll } from '../../database/connection';
 import {
   NewSchemaAuthRequest,
   requireNewSchemaAuth,
-  requireNewSchemaPasswordChanged,
 } from '../../middleware/new-schema-auth';
 
 const router = Router();
-router.use(requireNewSchemaAuth, requireNewSchemaPasswordChanged);
+router.use(requireNewSchemaAuth);
 
 const PeriodSchema = z.enum(['day', 'week', 'month', 'year']);
 const PERIODS = {

@@ -12,7 +12,6 @@ export interface NewSchemaAuthRequest extends AuthRequest {
     name: string;
     role: UserRole;
     parentUserId: number | null;
-    mustChangePassword: boolean;
   };
 }
 
@@ -43,7 +42,6 @@ export async function requireNewSchemaAuth(
       name: string;
       role: UserRole;
       parent_user_id: number | null;
-      must_change_password: boolean;
       blocked: boolean;
     }>(
       `WITH RECURSIVE user_tree AS (
@@ -56,7 +54,6 @@ export async function requireNewSchemaAuth(
          JOIN user_tree child ON child.parent_user_id = parent.u_id
        )
        SELECT u.u_id, u.username, u.name, u.role, u.parent_user_id,
-              u.must_change_password,
               EXISTS (SELECT 1 FROM user_tree WHERE blocked_date IS NOT NULL) AS blocked
        FROM users u
        WHERE u.u_id = $1`,
@@ -77,7 +74,6 @@ export async function requireNewSchemaAuth(
       name: user.name,
       role: user.role,
       parentUserId: user.parent_user_id,
-      mustChangePassword: user.must_change_password,
     };
     next();
   } catch (error) {
@@ -87,20 +83,4 @@ export async function requireNewSchemaAuth(
     }
     next(error);
   }
-}
-
-export function requireNewSchemaPasswordChanged(
-  req: NewSchemaAuthRequest,
-  res: Response,
-  next: NextFunction
-): void {
-  if (req.newSchemaUser?.mustChangePassword) {
-    res.status(403).json({
-      success: false,
-      mustChangePassword: true,
-      message: 'Change your temporary password before continuing.',
-    });
-    return;
-  }
-  next();
 }

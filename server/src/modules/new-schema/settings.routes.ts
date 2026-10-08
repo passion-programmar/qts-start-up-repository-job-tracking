@@ -4,11 +4,10 @@ import { execute, queryAll } from '../../database/connection';
 import {
   NewSchemaAuthRequest,
   requireNewSchemaAuth,
-  requireNewSchemaPasswordChanged,
 } from '../../middleware/new-schema-auth';
 
 const router = Router();
-router.use(requireNewSchemaAuth, requireNewSchemaPasswordChanged);
+router.use(requireNewSchemaAuth);
 
 function requireSuper(req: NewSchemaAuthRequest, res: Response): boolean {
   if (req.newSchemaUser?.role === 'super') return true;

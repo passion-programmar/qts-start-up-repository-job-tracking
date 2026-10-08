@@ -25,13 +25,8 @@ export default function LoginPage() {
       const r = await api<{
         success: boolean;
         role?: UserRole;
-        mustChangePassword?: boolean;
       }>('GET', '/api/v2/auth/me');
       if (r.success && r.role) {
-        if (r.mustChangePassword) {
-          router.replace('/change-password');
-          return;
-        }
         router.replace(roleHome(r.role));
         return;
       }
@@ -52,7 +47,6 @@ export default function LoginPage() {
       token?: string;
       role?: UserRole;
       message?: string;
-      mustChangePassword?: boolean;
     }>('POST', '/api/v2/auth/login', { username: username.trim(), password });
 
     if (!r.success || !r.token) {
@@ -63,7 +57,7 @@ export default function LoginPage() {
 
     setToken(r.token);
     sessionStorage.removeItem(REDIRECT_GUARD_KEY);
-    router.replace(r.mustChangePassword ? '/change-password' : roleHome(r.role || 'account'));
+    router.replace(roleHome(r.role || 'account'));
   }
 
   if (checking) {

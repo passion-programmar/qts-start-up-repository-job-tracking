@@ -22,7 +22,7 @@ interface AuthContextValue {
   canAddJobs: boolean;
   canAddCandidates: boolean;
   canAddInterviews: boolean;
-  updateUser: (updates: Partial<Pick<AuthUser, 'username' | 'name' | 'mustChangePassword'>>) => void;
+  updateUser: (updates: Partial<Pick<AuthUser, 'username' | 'name'>>) => void;
   logout: () => Promise<void>;
 }
 
@@ -68,7 +68,6 @@ export function AuthProvider({
       id?: number;
       role?: string;
       accountId?: number | null;
-      mustChangePassword?: boolean;
       message?: string;
     }>('GET', '/api/v2/auth/me');
 
@@ -110,10 +109,8 @@ export function AuthProvider({
       name: r.name,
       role,
       accountId: r.accountId ?? null,
-      mustChangePassword: r.mustChangePassword ?? false,
     });
     setLoading(false);
-    if (r.mustChangePassword) router.replace('/change-password');
   }, [mode, router]);
 
   useEffect(() => {
@@ -132,7 +129,7 @@ export function AuthProvider({
     }
   }, [router]);
 
-  const updateUser = useCallback((updates: Partial<Pick<AuthUser, 'username' | 'name' | 'mustChangePassword'>>) => {
+  const updateUser = useCallback((updates: Partial<Pick<AuthUser, 'username' | 'name'>>) => {
     setUser((current) => current ? { ...current, ...updates } : current);
   }, []);
 
@@ -147,10 +144,6 @@ export function AuthProvider({
     [user, loading, canWrite, canManageTeam, canAddJobs, canAddCandidates, canAddInterviews, updateUser, logout]
   );
 
-  useEffect(() => {
-    if (user?.mustChangePassword) router.replace('/change-password');
-  }, [user?.mustChangePassword, router]);
-
   if (loading) {
     return (
       <div className="auth-screen">
@@ -161,7 +154,7 @@ export function AuthProvider({
     );
   }
 
-  if (!user || user.mustChangePassword) return null;
+  if (!user) return null;
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

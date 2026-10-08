@@ -16,6 +16,15 @@ const application_sessions_routes_1 = __importDefault(require("./modules/applica
 const application_tasks_routes_1 = __importDefault(require("./modules/application-sessions/application-tasks.routes"));
 const admin_records_routes_1 = __importDefault(require("./modules/admin-records/admin-records.routes"));
 const job_sites_routes_1 = __importDefault(require("./modules/job-sites/job-sites.routes"));
+const auth_routes_2 = __importDefault(require("./modules/new-schema/auth.routes"));
+const users_routes_2 = __importDefault(require("./modules/new-schema/users.routes"));
+const interviews_routes_2 = __importDefault(require("./modules/new-schema/interviews.routes"));
+const categories_routes_1 = __importDefault(require("./modules/new-schema/categories.routes"));
+const settings_routes_2 = __importDefault(require("./modules/new-schema/settings.routes"));
+const jobs_routes_2 = __importDefault(require("./modules/new-schema/jobs.routes"));
+const bids_routes_1 = __importDefault(require("./modules/new-schema/bids.routes"));
+const analytics_routes_1 = __importDefault(require("./modules/new-schema/analytics.routes"));
+const database_routes_1 = __importDefault(require("./modules/new-schema/database.routes"));
 const error_handler_1 = require("./middleware/error-handler");
 const paths_1 = require("./config/paths");
 const env_1 = require("./config/env");
@@ -65,6 +74,15 @@ app.use('/api/application-sessions', application_sessions_routes_1.default);
 app.use('/api/application-tasks', application_tasks_routes_1.default);
 app.use('/api/admin-records', admin_records_routes_1.default);
 app.use('/api/job-sites', job_sites_routes_1.default);
+app.use('/api/v2/auth', auth_routes_2.default);
+app.use('/api/v2/users', users_routes_2.default);
+app.use('/api/v2/interviews', interviews_routes_2.default);
+app.use('/api/v2/categories', categories_routes_1.default);
+app.use('/api/v2/settings', settings_routes_2.default);
+app.use('/api/v2/jobs', jobs_routes_2.default);
+app.use('/api/v2/bids', bids_routes_1.default);
+app.use('/api/v2/analytics', analytics_routes_1.default);
+app.use('/api/v2/database', database_routes_1.default);
 app.get('/api/health', (_req, res) => {
     res.json({
         success: true,

@@ -2,7 +2,11 @@ import dotenv from 'dotenv';
 import path from 'node:path';
 import { getAppRoot } from './paths';
 
-dotenv.config({ path: path.join(getAppRoot(), '.env') });
+dotenv.config({
+  path: process.env.QTS_ENV_FILE
+    ? path.resolve(process.env.QTS_ENV_FILE)
+    : path.join(getAppRoot(), '.env'),
+});
 
 function buildDatabaseUrl(): string {
   if (process.env.DATABASE_URL) {

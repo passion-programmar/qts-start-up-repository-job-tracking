@@ -96,7 +96,7 @@ export function NewSchemaUsersView() {
       setError(result.message || 'Could not reset password.');
       return;
     }
-    setMessage(`Temporary password set for ${target.name}. They must change it at next sign-in.`);
+    setMessage(`Temporary password set for ${target.name}.`);
     setError(null);
     await load();
   }

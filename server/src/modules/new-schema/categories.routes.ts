@@ -4,11 +4,10 @@ import { execute, queryAll, queryOne } from '../../database/connection';
 import {
   NewSchemaAuthRequest,
   requireNewSchemaAuth,
-  requireNewSchemaPasswordChanged,
 } from '../../middleware/new-schema-auth';
 
 const router = Router();
-router.use(requireNewSchemaAuth, requireNewSchemaPasswordChanged);
+router.use(requireNewSchemaAuth);
 
 const CategorySchema = z.object({
   categoryTitle: z.string().trim().min(1).max(200),

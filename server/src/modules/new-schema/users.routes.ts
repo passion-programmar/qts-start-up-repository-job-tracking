@@ -6,13 +6,12 @@ import { execute, queryAll, queryOne } from '../../database/connection';
 import {
   NewSchemaAuthRequest,
   requireNewSchemaAuth,
-  requireNewSchemaPasswordChanged,
 } from '../../middleware/new-schema-auth';
 import type { UserRole } from '../../lib/roles';
 import { logger } from '../../utilities/logger';
 
 const router = Router();
-router.use(requireNewSchemaAuth, requireNewSchemaPasswordChanged);
+router.use(requireNewSchemaAuth);
 
 const staffCreateSchema = z.object({
   username: z.string().trim().min(1).max(100),
@@ -202,7 +201,7 @@ router.post('/', async (req: NewSchemaAuthRequest, res: Response) => {
   const passwordHash = await bcrypt.hash(data.password, 12);
   const row = await queryOne<{ u_id: number }>(
     `INSERT INTO users (username, name, role, password_hash, must_change_password, parent_user_id)
-     VALUES ($1, $2, $3, $4, TRUE, $5)
+     VALUES ($1, $2, $3, $4, FALSE, $5)
      RETURNING u_id`,
     [data.username, data.username, data.role, passwordHash, actor.id]
   );
@@ -299,7 +298,7 @@ router.put('/:id', async (req: NewSchemaAuthRequest, res: Response) => {
   if (data.temporaryPassword) {
     assignments.push(`password_hash = $${values.length + 1}`);
     values.push(await bcrypt.hash(data.temporaryPassword, 12));
-    assignments.push('must_change_password = TRUE');
+    assignments.push('must_change_password = FALSE');
   }
   values.push(userId);
   await execute(`UPDATE users SET ${assignments.join(', ')} WHERE u_id = $${values.length}`, values);

@@ -13,8 +13,11 @@ $ServerDir = Join-Path $Root "server"
 $BinDir = Join-Path $PSScriptRoot "bin"
 $Cloudflared = Join-Path $BinDir "cloudflared.exe"
 $UrlFile = Join-Path $Root "tunnel-url.txt"
+$LockFile = Join-Path $Root ".cloud-tunnel.lock"
 $LogsDir = Join-Path $Root "logs"
 $Port = 1028
+$apiProc = $null
+$tunnel = $null
 
 function Initialize-LogDirectory {
     New-Item -ItemType Directory -Force -Path $LogsDir | Out-Null
@@ -69,6 +72,45 @@ function Test-FullServerRunning {
     if (-not $tunnelProc) { return $false }
     return (Test-ApiHealth)
 }
+
+function Get-EnvValue([string]$content, [string]$name) {
+    foreach ($line in $content -split "`r?`n") {
+        if ($line -match "^\s*$([regex]::Escape($name))\s*=\s*(.*?)\s*$") {
+            return $Matches[1].Trim().Trim('"').Trim("'")
+        }
+    }
+    return $null
+}
+
+function Assert-CloudDatabaseConfig {
+    $envCloud = Join-Path $ServerDir ".env.cloud"
+    if (-not (Test-Path $envCloud)) {
+        throw "Missing server/.env.cloud. Copy server/.env.cloud.example to server/.env.cloud, enter your Neon DATABASE_URL and secrets, then run start-server.bat again."
+    }
+
+    $content = Get-Content $envCloud -Raw
+    $embedded = Get-EnvValue $content "EMBEDDED_PG"
+    $databaseUrl = Get-EnvValue $content "DATABASE_URL"
+    $databaseSsl = Get-EnvValue $content "DATABASE_SSL"
+    if ($embedded -ne "false") {
+        throw "server/.env.cloud must set EMBEDDED_PG=false to use Neon."
+    }
+    if (-not $databaseUrl -or $databaseUrl -match 'xxxx|replace-with|your-|example') {
+        throw "Set DATABASE_URL in server/.env.cloud to your real Neon PostgreSQL connection string."
+    }
+    try {
+        $databaseUri = [uri]$databaseUrl
+    } catch {
+        throw "DATABASE_URL in server/.env.cloud is not a valid PostgreSQL URL."
+    }
+    if ($databaseUri.Scheme -notin @("postgres", "postgresql") -or -not $databaseUri.Host.EndsWith(".neon.tech", [StringComparison]::OrdinalIgnoreCase)) {
+        throw "DATABASE_URL in server/.env.cloud must point to your Neon PostgreSQL host."
+    }
+    if ($databaseSsl -ne "true") {
+        throw "Set DATABASE_SSL=true in server/.env.cloud for the Neon connection."
+    }
+}
+
 function Stop-PortListener([int]$listenPort) {
     $conn = Get-NetTCPConnection -LocalPort $listenPort -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($conn) {
@@ -106,17 +148,7 @@ function Test-NeedsApiBuild {
 
 function Start-ApiServer {
     $envCloud = Join-Path $ServerDir ".env.cloud"
-    $envFile = Join-Path $ServerDir ".env"
-    if (Test-Path $envCloud) {
-        Write-Host "Using server/.env.cloud (Neon/production)"
-        Copy-Item $envCloud $envFile -Force
-        $envContent = Get-Content $envFile -Raw
-        if ($envContent -notmatch '(?m)^ADMIN_WEB_URL=') {
-            Add-Content $envFile "`nADMIN_WEB_URL=$VercelAppUrl/login"
-        }
-    } else {
-        Write-Host "Using server/.env (no .env.cloud - embedded DB or local config)"
-    }
+    Write-Host "Using server/.env.cloud (Neon)"
 
     Push-Location $ServerDir
     $prevEap = $ErrorActionPreference
@@ -147,8 +179,18 @@ function Start-ApiServer {
         $apiLog = New-LogPath "api-cloud"
         $apiErr = New-LogPath "api-cloud.err"
         Write-Host "API logs: $apiLog"
-        $apiProc = Start-Process -FilePath "node" -ArgumentList "dist/server.js" -WorkingDirectory $ServerDir `
-            -RedirectStandardOutput $apiLog -RedirectStandardError $apiErr -PassThru -WindowStyle Hidden
+        $previousEnvFile = $env:QTS_ENV_FILE
+        $env:QTS_ENV_FILE = $envCloud
+        try {
+            $apiProc = Start-Process -FilePath "node" -ArgumentList "dist/server.js" -WorkingDirectory $ServerDir `
+                -RedirectStandardOutput $apiLog -RedirectStandardError $apiErr -PassThru -WindowStyle Hidden
+        } finally {
+            if ($null -eq $previousEnvFile) {
+                Remove-Item Env:QTS_ENV_FILE -ErrorAction SilentlyContinue
+            } else {
+                $env:QTS_ENV_FILE = $previousEnvFile
+            }
+        }
 
         $deadline = (Get-Date).AddSeconds(90)
         while ((Get-Date) -lt $deadline) {
@@ -194,13 +236,37 @@ function Start-Tunnel([string]$cfPath, [int]$listenPort) {
     }
 
     if (-not $publicUrl) {
+        if (-not $tunnelProc.HasExited) {
+            Stop-Process -Id $tunnelProc.Id -Force -ErrorAction SilentlyContinue
+        }
         throw "Tunnel URL not found. See $tunnelOut and $tunnelErr"
+    }
+
+    $healthUrl = "$publicUrl/api/health"
+    $healthDeadline = (Get-Date).AddSeconds(45)
+    $healthy = $false
+    while ((Get-Date) -lt $healthDeadline) {
+        try {
+            $health = Invoke-RestMethod -Uri $healthUrl -TimeoutSec 5
+            if ($health.success -eq $true) {
+                $healthy = $true
+                break
+            }
+        } catch {
+            Start-Sleep -Seconds 3
+        }
+    }
+    if (-not $healthy) {
+        if (-not $tunnelProc.HasExited) {
+            Stop-Process -Id $tunnelProc.Id -Force -ErrorAction SilentlyContinue
+        }
+        throw "Cloudflare tunnel started, but its API health check failed at $healthUrl"
     }
 
     return @{ Url = $publicUrl; Process = $tunnelProc; Log = $tunnelOut }
 }
 
-function Sync-VercelApiUrl([string]$tunnelUrl, [string]$vercelAppUrl) {
+function Sync-VercelApiUrl([string]$vercelAppUrl) {
     $prevEap = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
@@ -211,6 +277,19 @@ function Sync-VercelApiUrl([string]$tunnelUrl, [string]$vercelAppUrl) {
         Sync-VercelFromTunnelFile -Root $Root -VercelAppUrl $vercelAppUrl
     } finally {
         $ErrorActionPreference = $prevEap
+    }
+}
+
+function Assert-VercelReady {
+    $projectFile = Join-Path $Root "admin-web\.vercel\project.json"
+    if (-not (Test-Path $projectFile)) {
+        throw "Vercel project is not linked. Run .\node_modules\.bin\vercel.cmd login, then from admin-web run ..\node_modules\.bin\vercel.cmd link and select qts-job-tracking."
+    }
+
+    $syncScript = Join-Path $PSScriptRoot "sync-vercel-api-url.ps1"
+    . $syncScript
+    if ((Invoke-VercelCli $Root (Join-Path $Root "admin-web") @("whoami")) -ne 0) {
+        throw "Vercel CLI is not logged in. Run .\node_modules\.bin\vercel.cmd login, then start-server.bat again."
     }
 }
 
@@ -272,6 +351,9 @@ Write-Host ""
 Write-Host "=== QTS Cloudflare Tunnel ===" -ForegroundColor Cyan
 Write-Host ""
 
+Assert-CloudDatabaseConfig
+if ($SyncVercel) { Assert-VercelReady }
+
 $cf = Get-CloudflaredPath
 if (-not $cf) {
     try {
@@ -285,12 +367,15 @@ if (-not $cf) {
 }
 if (-not $cf) { throw "cloudflared not found. Install from https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/" }
 
-$lockFile = Join-Path $Root ".cloud-tunnel.lock"
+$lockFile = $LockFile
 $running = Get-RunningServer
 if ($running -and $running.ApiProc -and $running.TunnelProc) {
     Write-Host ""
     Write-Host "Server already running. Keeping it alive in this window." -ForegroundColor Yellow
     if (Test-Path $UrlFile) { Write-Host ""; Get-Content $UrlFile }
+    if ($SyncVercel) {
+        Sync-VercelApiUrl -vercelAppUrl $VercelAppUrl
+    }
     Show-ReadyBanner $VercelAppUrl
     if ($OpenBrowser) { Start-Process "$VercelAppUrl/login" }
     Watch-Server -apiProc $running.ApiProc -tunnelProc $running.TunnelProc -lockFile $lockFile
@@ -324,7 +409,7 @@ if ($SyncVercel) {
     for ($attempt = 1; $attempt -le 2; $attempt++) {
         try {
             if ($attempt -gt 1) { Write-Host "Retrying Vercel sync (attempt $attempt)..." -ForegroundColor Yellow }
-            Sync-VercelApiUrl -tunnelUrl $tunnel.Url -vercelAppUrl $VercelAppUrl
+            Sync-VercelApiUrl -vercelAppUrl $VercelAppUrl
             $vercelOk = $true
             break
         } catch {
@@ -333,8 +418,7 @@ if ($SyncVercel) {
     }
     if (-not $vercelOk) {
         Write-Host ""
-        Write-Host "LOGIN WILL FAIL until you run: sync-vercel-api-url.bat" -ForegroundColor Red
-        Write-Host "Keep this window open, then double-click sync-vercel-api-url.bat" -ForegroundColor Yellow
+        throw "Vercel could not be synced to the tunnel. Check Vercel login/link and deployment output, then retry start-server.bat."
     }
 }
 
@@ -351,6 +435,18 @@ Write-Host ""
 Watch-Server -apiProc $apiProc -tunnelProc $tunnel.Process -lockFile $lockFile
 
 } catch {
+    if ($tunnel -and $tunnel.Process -and -not $tunnel.Process.HasExited) {
+        Stop-Process -Id $tunnel.Process.Id -Force -ErrorAction SilentlyContinue
+    }
+    if ($apiProc -and -not $apiProc.HasExited) {
+        Stop-Process -Id $apiProc.Id -Force -ErrorAction SilentlyContinue
+    }
+    if (Test-Path $lockFile) {
+        Remove-Item $lockFile -Force -ErrorAction SilentlyContinue
+    }
+    if ($tunnel -and (Test-Path $UrlFile)) {
+        Remove-Item $UrlFile -Force -ErrorAction SilentlyContinue
+    }
     Write-Host ""
     Write-Host "ERROR: $($_.Exception.Message)" -ForegroundColor Red
     Write-Host "See logs\start-server-last.log for full details." -ForegroundColor Yellow
