@@ -100,7 +100,7 @@ export function NewSchemaAnalyticsView() {
       {error && <div className="alert alert-error">{error}</div>}
       {loading ? <div className="card text-muted">Loading analytics…</div> : data && (
         <>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16 }}>
+          <div className="analytics-responsive-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16 }}>
             <BarList
               title="Bids over time"
               rows={data.bidsByPeriod.map((row) => ({ label: row.bucket, count: row.count }))}
@@ -123,7 +123,7 @@ export function NewSchemaAnalyticsView() {
             />
           </div>
           {!isManager && (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 16, marginTop: 16 }}>
+            <div className="analytics-responsive-grid analytics-responsive-grid--tables" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 16, marginTop: 16 }}>
               <div className="card">
                 <div className="card-title">Results by Manager</div>
                 <div className="table-scroll"><table>

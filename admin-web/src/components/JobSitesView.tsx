@@ -286,35 +286,37 @@ export function JobSitesView() {
         onClose={() => setModal(null)}
         footer={<button className="btn btn-ghost" type="button" onClick={() => setModal(null)}>Close</button>}
       >
-        <table>
-          <thead>
-            <tr>
-              <th>Account</th>
-              <th>Default candidate</th>
-              <th>Admitted</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {admissions.map((a) => (
-              <tr key={a.id}>
-                <td>{a.account_name}</td>
-                <td>{a.default_candidate_name || '—'}</td>
-                <td className="text-muted">{formatDate(a.admitted_at)}</td>
-                <td className="text-right">
-                  {a.is_active && (
-                    <button className="btn btn-danger btn-sm" type="button" onClick={() => { void revokeAdmission(a.account_id); }}>
-                      Revoke
-                    </button>
-                  )}
-                </td>
+        <div className="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Account</th>
+                <th>Default candidate</th>
+                <th>Admitted</th>
+                <th />
               </tr>
-            ))}
-            {!admissions.length && (
-              <tr><td colSpan={4} className="text-muted">No accounts admitted yet.</td></tr>
-            )}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {admissions.map((a) => (
+                <tr key={a.id}>
+                  <td>{a.account_name}</td>
+                  <td>{a.default_candidate_name || '—'}</td>
+                  <td className="text-muted">{formatDate(a.admitted_at)}</td>
+                  <td className="text-right">
+                    {a.is_active && (
+                      <button className="btn btn-danger btn-sm" type="button" onClick={() => { void revokeAdmission(a.account_id); }}>
+                        Revoke
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+              {!admissions.length && (
+                <tr><td colSpan={4} className="text-muted">No accounts admitted yet.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </Modal>
     </>
   );
