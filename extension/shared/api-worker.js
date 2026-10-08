@@ -7,10 +7,9 @@ async function workerReadAuth() {
   const auth = qtsRoot.__qtsAccountAuth;  const token = auth?.getWorkerAuthToken
     ? await auth.getWorkerAuthToken()
     : (await chrome.storage.local.get(['authToken', 'authExpiresAt'])).authToken || '';
-  const stored = await chrome.storage.local.get(['serverUrl']);
   return {
     token,
-    serverUrl: String(stored.serverUrl || WORKER_DEFAULT_SERVER).replace(/\/$/, ''),
+    serverUrl: WORKER_DEFAULT_SERVER,
   };
 }
 
