@@ -213,6 +213,110 @@ async function runMigrations(): Promise<void> {
   await migrateLegacyAccountSchema();
 
   await execute(`
+    CREATE TABLE IF NOT EXISTS categories (
+      category_id SERIAL PRIMARY KEY,
+      category_title TEXT NOT NULL UNIQUE,
+      created_date TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await execute(`
+    CREATE TABLE IF NOT EXISTS users (
+      u_id SERIAL PRIMARY KEY,
+      username TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL,
+      role TEXT NOT NULL CHECK (role IN ('super', 'admin', 'manager', 'caller', 'account')),
+      password_hash TEXT,
+      must_change_password BOOLEAN NOT NULL DEFAULT FALSE,
+      parent_user_id INTEGER REFERENCES users(u_id) ON DELETE RESTRICT,
+      email TEXT,
+      address TEXT,
+      sex TEXT,
+      birthday DATE,
+      phone TEXT,
+      country TEXT,
+      city TEXT,
+      blocked_date TIMESTAMPTZ,
+      category_id INTEGER REFERENCES categories(category_id) ON DELETE RESTRICT,
+      CHECK (
+        (role = 'super' AND parent_user_id IS NULL) OR
+        (role <> 'super' AND parent_user_id IS NOT NULL)
+      ),
+      CHECK (
+        (role = 'account' AND password_hash IS NULL AND category_id IS NOT NULL
+          AND email IS NOT NULL AND address IS NOT NULL AND sex IS NOT NULL
+          AND birthday IS NOT NULL AND phone IS NOT NULL AND country IS NOT NULL AND city IS NOT NULL) OR
+        (role <> 'account' AND password_hash IS NOT NULL AND category_id IS NULL)
+      )
+    )
+  `);
+
+  await execute(`
+    CREATE TABLE IF NOT EXISTS job_list (
+      j_id SERIAL PRIMARY KEY,
+      u_id INTEGER NOT NULL REFERENCES users(u_id) ON DELETE RESTRICT,
+      url TEXT NOT NULL UNIQUE,
+      company TEXT NOT NULL,
+      title TEXT NOT NULL,
+      category_ids INTEGER[] NOT NULL DEFAULT ARRAY[]::INTEGER[],
+      selected_account_u_ids INTEGER[] NOT NULL DEFAULT ARRAY[]::INTEGER[],
+      status TEXT NOT NULL DEFAULT 'todo'
+        CHECK (status IN ('processing', 'todo', 'did', 'failed')),
+      get_date TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await execute(`
+    CREATE TABLE IF NOT EXISTS bids (
+      b_id SERIAL PRIMARY KEY,
+      u_id INTEGER NOT NULL REFERENCES users(u_id) ON DELETE RESTRICT,
+      j_id INTEGER NOT NULL REFERENCES job_list(j_id) ON DELETE RESTRICT,
+      resume_path TEXT NOT NULL,
+      applied_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (u_id, j_id)
+    )
+  `);
+
+  await execute(`
+    CREATE TABLE IF NOT EXISTS interviews (
+      i_id SERIAL PRIMARY KEY,
+      b_id INTEGER NOT NULL REFERENCES bids(b_id) ON DELETE CASCADE,
+      interview_time TIME NOT NULL,
+      interview_date DATE NOT NULL,
+      caller_user_id INTEGER NOT NULL REFERENCES users(u_id) ON DELETE RESTRICT,
+      interviewer TEXT NOT NULL,
+      step TEXT NOT NULL CHECK (step IN ('intro', 'tech-1', 'tech-2', 'final')),
+      status TEXT NOT NULL DEFAULT 'todo'
+        CHECK (status IN ('todo', 'did', 'failed', 'respond_waiting')),
+      outcome TEXT CHECK (outcome IN ('good', 'bad', 'normal')),
+      created_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      comment TEXT
+    )
+  `);
+
+  await execute(`
+    CREATE TABLE IF NOT EXISTS app_settings (
+      setting_name TEXT PRIMARY KEY,
+      setting_value TEXT NOT NULL,
+      updated_by INTEGER REFERENCES users(u_id) ON DELETE SET NULL,
+      created_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_date TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await execute('CREATE INDEX IF NOT EXISTS idx_users_parent ON users(parent_user_id)');
+  await execute('CREATE INDEX IF NOT EXISTS idx_users_role_parent ON users(role, parent_user_id)');
+  await execute('CREATE INDEX IF NOT EXISTS idx_users_category ON users(category_id)');
+  await execute('CREATE INDEX IF NOT EXISTS idx_job_list_manager ON job_list(u_id)');
+  await execute('CREATE INDEX IF NOT EXISTS idx_job_list_categories ON job_list USING GIN(category_ids)');
+  await execute('CREATE INDEX IF NOT EXISTS idx_job_list_selected_accounts ON job_list USING GIN(selected_account_u_ids)');
+  await execute('CREATE INDEX IF NOT EXISTS idx_bids_user ON bids(u_id)');
+  await execute('CREATE INDEX IF NOT EXISTS idx_bids_job ON bids(j_id)');
+  await execute('CREATE INDEX IF NOT EXISTS idx_interviews_bid ON interviews(b_id)');
+  await execute('CREATE INDEX IF NOT EXISTS idx_interviews_caller ON interviews(caller_user_id)');
+  await execute('CREATE INDEX IF NOT EXISTS idx_interviews_outcome_date ON interviews(outcome, interview_date)');
+
+  await execute(`
     CREATE TABLE IF NOT EXISTS admins (
       id SERIAL PRIMARY KEY,
       username TEXT NOT NULL UNIQUE,
@@ -441,6 +545,9 @@ async function columnExists(table: string, column: string): Promise<boolean> {
 }
 
 async function migrateSchema(): Promise<void> {
+  if (await tableExists('users') && !(await columnExists('users', 'must_change_password'))) {
+    await execute(`ALTER TABLE users ADD COLUMN must_change_password BOOLEAN NOT NULL DEFAULT FALSE`);
+  }
   if (!(await columnExists('admins', 'role'))) {
     await execute(`ALTER TABLE admins ADD COLUMN role TEXT NOT NULL DEFAULT 'admin'`);
   }
@@ -473,6 +580,9 @@ async function migrateSchema(): Promise<void> {
   }
   if (!(await columnExists('admins', 'is_active'))) {
     await execute(`ALTER TABLE admins ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT TRUE`);
+  }
+  if (!(await columnExists('interviews', 'outcome'))) {
+    await execute(`ALTER TABLE interviews ADD COLUMN outcome TEXT CHECK (outcome IN ('good', 'bad', 'normal'))`);
   }
   if (!(await columnExists('application_session_fields', 'document_slot'))) {
     await execute(`ALTER TABLE application_session_fields ADD COLUMN document_slot TEXT`);

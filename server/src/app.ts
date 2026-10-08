@@ -12,6 +12,11 @@ import applicationSessionsRoutes from './modules/application-sessions/applicatio
 import applicationTasksRoutes from './modules/application-sessions/application-tasks.routes';
 import adminRecordsRoutes from './modules/admin-records/admin-records.routes';
 import jobSitesRoutes from './modules/job-sites/job-sites.routes';
+import newSchemaAuthRoutes from './modules/new-schema/auth.routes';
+import newSchemaUsersRoutes from './modules/new-schema/users.routes';
+import newSchemaInterviewsRoutes from './modules/new-schema/interviews.routes';
+import newSchemaCategoriesRoutes from './modules/new-schema/categories.routes';
+import newSchemaSettingsRoutes from './modules/new-schema/settings.routes';
 import { errorHandler } from './middleware/error-handler';
 import { getAccountLogoPath, getLogoPath } from './config/paths';
 import { config } from './config/env';
@@ -68,6 +73,11 @@ app.use('/api/application-sessions', applicationSessionsRoutes);
 app.use('/api/application-tasks', applicationTasksRoutes);
 app.use('/api/admin-records', adminRecordsRoutes);
 app.use('/api/job-sites', jobSitesRoutes);
+app.use('/api/v2/auth', newSchemaAuthRoutes);
+app.use('/api/v2/users', newSchemaUsersRoutes);
+app.use('/api/v2/interviews', newSchemaInterviewsRoutes);
+app.use('/api/v2/categories', newSchemaCategoriesRoutes);
+app.use('/api/v2/settings', newSchemaSettingsRoutes);
 
 app.get('/api/health', (_req, res) => {
   res.json({
