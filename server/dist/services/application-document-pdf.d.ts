@@ -38,7 +38,9 @@ export type CoverLetterDocumentInput = {
     signatureName?: string;
 };
 export declare function renderResumePdf(resume: ResumeDocumentInput, outputPath: string): Promise<void>;
+export declare function renderResumePdfBuffer(resume: ResumeDocumentInput): Promise<Buffer>;
 export declare function renderCoverLetterPdf(coverLetter: CoverLetterDocumentInput, outputPath: string): Promise<void>;
+export declare function renderCoverLetterPdfBuffer(coverLetter: CoverLetterDocumentInput): Promise<Buffer>;
 export declare function safePdfFileName(base: string): string;
 export {};
 //# sourceMappingURL=application-document-pdf.d.ts.map

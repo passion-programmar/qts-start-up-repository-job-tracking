@@ -512,12 +512,12 @@ router.delete('/:id', async (req: NewSchemaAuthRequest, res: Response) => {
     return;
   }
   if (target.role === 'account') {
-    const attempts = await queryOne<{ count: number }>(
-      'SELECT COUNT(*)::int AS count FROM application_attempts WHERE account_user_id = $1',
+    const assignedJobs = await queryOne<{ count: number }>(
+      'SELECT COUNT(*)::int AS count FROM job_account_assignments WHERE account_user_id = $1',
       [userId]
     );
-    if (Number(attempts?.count ?? 0) > 0) {
-      res.status(409).json({ success: false, message: 'This Account has application history and cannot be deleted.' });
+    if (Number(assignedJobs?.count ?? 0) > 0) {
+      res.status(409).json({ success: false, message: 'Remove this Account from its todo job rows before deleting it. Non-todo job rows are retained as history.' });
       return;
     }
     const bids = await queryOne<{ count: number }>(

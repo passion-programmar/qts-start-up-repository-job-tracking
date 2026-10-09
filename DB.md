@@ -39,14 +39,22 @@ CREATE TABLE users (
 CREATE TABLE job_list (
   j_id SERIAL PRIMARY KEY,
   u_id INTEGER NOT NULL REFERENCES users(u_id) ON DELETE RESTRICT,
-  url TEXT NOT NULL UNIQUE,
+  url TEXT NOT NULL,
   company TEXT NOT NULL,
   title TEXT NOT NULL,
   category_ids INTEGER[] NOT NULL DEFAULT ARRAY[]::INTEGER[],
-  selected_account_u_ids INTEGER[] NOT NULL DEFAULT ARRAY[]::INTEGER[],
   status TEXT NOT NULL DEFAULT 'todo'
     CHECK (status IN ('processing', 'todo', 'did', 'failed')),
   get_date TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE job_account_assignments (
+  job_account_assignment_id SERIAL PRIMARY KEY,
+  j_id INTEGER NOT NULL REFERENCES job_list(j_id) ON DELETE CASCADE,
+  account_user_id INTEGER NOT NULL REFERENCES users(u_id) ON DELETE CASCADE,
+  position INTEGER NOT NULL CHECK (position > 0),
+  UNIQUE (j_id, account_user_id),
+  UNIQUE (j_id, position)
 );
 
 CREATE TABLE bids (
@@ -93,8 +101,9 @@ CREATE INDEX idx_users_role_parent ON users(role, parent_user_id);
 CREATE INDEX idx_users_category ON users(category_id);
 CREATE INDEX idx_job_list_manager ON job_list(u_id);
 CREATE INDEX idx_job_list_categories ON job_list USING GIN(category_ids);
-CREATE INDEX idx_job_list_selected_accounts
-  ON job_list USING GIN(selected_account_u_ids);
+CREATE INDEX idx_job_list_manager_url ON job_list(u_id, url);
+CREATE INDEX idx_job_account_assignments_account
+  ON job_account_assignments(account_user_id, j_id);
 CREATE INDEX idx_bids_user ON bids(u_id);
 CREATE INDEX idx_bids_job ON bids(j_id);
 CREATE INDEX idx_bids_manager ON bids(manager_user_id);

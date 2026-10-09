@@ -6,9 +6,10 @@ model for the planned server and frontend rebuild.
 
 The active new schema creates `users`, `bids`, `interviews`, `job_list`,
 `categories`, `app_settings`, `prompts`, Manager application-answer tables,
-Account application profiles, and Job–Account application attempts. Startup
-removes the retired legacy tables after migrations complete. The current
-public application uses the new schema.
+Account application profiles, and Account-specific job rows. Each job row is
+assigned to one Account and its status tracks the application lifecycle.
+Startup removes the retired legacy tables after migrations complete. The
+current public application uses the new schema.
 
 ## Relationship overview
 
@@ -117,7 +118,8 @@ initially based on category matching and then adjustable by the Manager.
 |---|---|---|
 | `j_id` | Integer | Primary key, generated automatically |
 | `u_id` | Integer | Required foreign key to `users.u_id`; intended to identify the Manager who added the job |
-| `url` | Text | Required and unique |
+| `url` | Text | Required; may repeat for separate Account rows |
+| `application_type` | Text | Required; inferred from the URL and used to select a compatible application handler |
 | `company` | Text | Required |
 | `title` | Text | Required |
 | `category_ids` | Integer array | Required; category IDs associated with the job; defaults to an empty array |
@@ -129,8 +131,9 @@ the referenced User has the Manager role.
 
 ### `job_account_assignments`
 
-Stores one relationship row for each Account assigned to a job. A job remains
-one row in `job_list` even when it has multiple assigned Accounts.
+Stores the Account relationship for each Account-specific job row. Each
+`job_list` row has exactly one assignment; the Manager-facing API groups rows
+with the same URL when displaying or editing a multi-Account job.
 
 | Column | Type | Rules and purpose |
 |---|---|---|
@@ -139,10 +142,9 @@ one row in `job_list` even when it has multiple assigned Accounts.
 | `account_user_id` | Integer | Required foreign key to `users.u_id`; assignments are removed with their Account |
 | `position` | Integer | Required positive value that preserves the Manager's Account selection order |
 
-The `(j_id, account_user_id)` pair and `(j_id, position)` are each unique.
-Application attempts are tracked separately for each job/Account pair. The
-Manager Jobs table displays each job once and lists its assigned Accounts with
-their individual attempt statuses.
+The `(j_id, account_user_id)` pair and `(j_id, position)` are each unique. The
+job row's status is the application state, and the Manager Jobs table displays
+each Account-specific row and its current status.
 
 ### `bids`
 
@@ -239,10 +241,8 @@ Manager-defined reusable employer questions, answers, and topics.
 Managers can edit their own data; Super can manage any Manager's data.
 Dependent rows are deleted if their Manager is deleted. The global
 `application_submission_mode` setting is seeded as `manual`. The browser
-extension consumes it for supported Workable application forms: Manual fills
-and waits for Manager review, while Auto submits only when all required answers
-are known. CAPTCHA is never bypassed; uncertain outcomes remain in
-`needs_review` and are not retried.
+extension consumes it for supported Workable application forms. CAPTCHA is
+never bypassed; uncertain form fields remain for manual review.
 
 ### Account application profiles
 
@@ -252,20 +252,22 @@ structured work-experience records. Resume uploads are limited to PDF files up
 to 4 MB. Resume content is stored in PostgreSQL so it persists across Vercel
 deployments.
 
-### Job–Account application attempts
+### Account-specific job rows
 
-`application_attempts` tracks one attempt per Job and Account, with statuses
-`in_progress`, `needs_review`, `submitted`, or `failed`, plus a failure reason,
-optional Manager note, and timestamps. Attempts are unique per Job–Account
-pair and terminal failures cannot be restarted. Successful submissions also
-create the corresponding `bids` row. Attempt history remains available on the
-Manager Bid Status page when an Account is later unassigned from the job.
-When a Manager deletes a job-list entry, its application attempts are cleared
-so the active list can be refreshed; related Bids and interviews are retained.
-When Super deletes a job from the database browser, its application attempts
-and Bids are permanently deleted from the live database, and interviews linked
-to those Bids are deleted by the database cascade. Restore a database backup
-to recover Super-deleted records.
+Every Manager/job URL/Account combination has one `job_list` row and one
+`job_account_assignments` row. The `job_list.status` value is the application
+source of truth: `todo` → `processing` → `did` on confirmed submission, or
+`failed` when an application fails. `application_type` identifies the site
+handler; Workable is the first supported type, and unsupported types stay
+queued until a compatible handler is available. Claiming a row is transactional.
+The GPT task references the Account-specific `job_list.j_id` directly; there is
+no separate application-attempt record.
+
+When a Manager updates the selected Accounts for a saved URL, newly selected
+Accounts receive `todo` rows. Unchecked `todo` rows are deleted. Unchecked rows
+in any other status are retained and reported to the Manager. Manager and
+Super job deletion is scoped to an individual Account-specific row, and its
+associated Bids/interviews follow the corresponding deletion policy.
 
 ## Relationship details
 
@@ -273,7 +275,9 @@ to recover Super-deleted records.
   non-Super User has one parent.
 - **Categories → Users:** one Category can be assigned to many Account
   profiles; each Account profile has exactly one Category.
-- **Users (Manager) → Job List:** one Manager can create many jobs.
+- **Users (Manager) → Job List:** one Manager can create many
+  Account-specific job rows. A URL may have separate rows for different
+  Accounts, but not duplicate rows for the same Account.
 - **Job List → Bids:** one job can have bids from many Account profiles.
 - **Users (Account) → Bids:** one Account profile can submit bids for many
   jobs, but only once per job.
@@ -287,23 +291,25 @@ to recover Super-deleted records.
 ## Job assignments and categories
 
 Account assignments use `job_account_assignments` rather than an Account ID
-array on `job_list`. This preserves one canonical job row and one
-foreign-key-constrained relationship row per assigned Account. Assignment
-order is stored in `position`, and deleting a job or Account removes its
-assignment rows through the foreign keys.
+array on `job_list`. Each job row has exactly one assigned Account, referenced
+by a foreign-key-constrained relationship row. The `position` column remains
+for compatibility with earlier assignments.
 
 The API continues accepting `selectedAccountUserIds` as a list when a Manager
 saves or edits a job. It validates ownership and category matching, then
-inserts one assignment row per Account in a transaction. The
-`selected_account_u_ids` property in job API responses is derived from those
-relationship rows for compatibility; it is no longer a database column.
+creates or synchronizes one job row and one assignment row per selected
+Account in a transaction. The `selected_account_u_ids` property in grouped
+job-check responses is derived from those relationship rows for compatibility;
+it is no longer a database column.
 
 `category_ids` remains an integer array. Server code validates that every
 category exists and that selected Accounts match the job categories unless
 the Manager intentionally overrides the initial category-based selection.
 On startup, the schema migration copies existing Account IDs and their order
-from `job_list.selected_account_u_ids` into `job_account_assignments`, then
-drops the legacy Account-ID array column.
+from `job_list.selected_account_u_ids` into `job_account_assignments`, splits
+legacy multi-Account jobs into Account-specific job rows, moves matching Bid
+and GPT task references, then removes the old attempt table and
+`selected_account_u_ids` column.
 
 ## Useful queries
 
@@ -360,10 +366,13 @@ legacy data:
 - `/api/v2/categories` and `/api/v2/settings` apply Super-only writes.
 - `/api/v2/jobs` lets Managers manage their own jobs and selected Account
   profiles; Admins can read jobs owned by their Managers and Super can read all.
-- `/api/v2/application-attempts` claims a Manager's next eligible `todo`
-  Workable job/Account pair from `job_list`, stores its attempt state, and
-  creates a Bid only when the Manager's extension reports a confirmed
-  submission. The attempt update and Bid insert are transactional.
+- `/api/v2/jobs/claim-next` accepts the extension's supported application types
+  and atomically claims the next matching `todo` Account-specific row, setting
+  it to `processing`. A confirmed
+  submission sets the row to `did` and creates its Bid; failure sets it to
+  `failed`.
+- `/api/v2/gpt-application-tasks/jobs/:jobId` creates or resumes the GPT task
+  directly from the processing job row and its one assigned Account.
 - `/api/v2/manager-application-profile` is Manager-only and reads or writes
   only the authenticated Manager's reusable application answers. Super users
   cannot select another Manager's profile.
@@ -386,10 +395,12 @@ analytics, and personal profile settings. Callers see only assigned interviews
 and can submit outcomes; Managers can manage their jobs, Account profiles,
 interviews, and scoped analytics; Admins and Super users have scoped staff and
 reporting views.
-For the extension's Manager workflow, Get JD saves to `/api/v2/jobs`, and Apply
-claims only from `/api/v2/application-attempts` using `job_list`; it does not
-use the legacy candidate or application-session records. Workable is currently
-the supported site for this automated application flow.
+For the extension's Manager workflow, Get JD saves Account-specific rows to
+`/api/v2/jobs`, and Apply claims a `todo` row using `/api/v2/jobs/claim-next`;
+it does not use application-attempt or legacy candidate/session records.
+Workable is the first supported site-specific handler for this automated
+application flow. Other application types can be added without changing the
+Account-specific job-row/status model.
 
 News and the Super-only system-settings UI are not yet migrated. The
 `/api/v2/settings` API exists, but there is no corresponding frontend screen

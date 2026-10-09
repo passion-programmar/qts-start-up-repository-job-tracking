@@ -7,6 +7,7 @@ let managerTeams = [];
 let managerJobAccounts = [];
 let jobCategories = [];
 let selectedJobAccountIds = new Set();
+let existingJobAccountIds = new Set();
 let hasManuallyChangedJobAccounts = false;
 let jobAssignmentOptionsPromise = null;
 let candidateStatuses = {};
@@ -848,7 +849,7 @@ async function handleGetJdUrlStatus(tabId, url) {
   if (status.job.status === 'failed') {
     await showPageNotice(
       tabId,
-      'The previous attempt did not succeed. You can try applying again.',
+      'This application did not succeed. You can try applying again.',
       'warn'
     );
   }
@@ -1448,6 +1449,7 @@ async function switchSourceTab(tabId) {
   window.history.replaceState(null, '', url.toString());
   document.getElementById('main-alert').innerHTML = '';
   existingJobId = null;
+  existingJobAccountIds.clear();
   jobSavedInBackend = false;
   selectedJobAccountIds.clear();
   hasManuallyChangedJobAccounts = false;
@@ -1932,10 +1934,9 @@ async function findSavedJobByUrls(urls, { cacheOnly = false, skipCache = false, 
 
 async function fetchJobByUrl(url) {
   try {
-    const response = await window.api.getJobs();
+    const response = await window.api.checkJobUrl(url);
     if (!response.success) throw new Error(response.message || 'Could not check the Job List.');
-    const targetKey = normalizeJobUrl(url);
-    return (response.jobs || []).find((job) => normalizeJobUrl(job.url) === targetKey) || null;
+    return response.job || null;
   } catch (e) {
     console.warn('fetchJobByUrl error:', e);
     throw e;
@@ -2000,11 +2001,12 @@ function populateForm(data) {
 function loadExistingJob(job, { silent = false } = {}) {
   existingJobId = job.id;
   jobSavedInBackend = true;
-  selectedJobAccountIds = new Set(
+  existingJobAccountIds = new Set(
     (job.selected_account_u_ids || job.selectedAccountUserIds || [])
       .map(Number)
       .filter((id) => Number.isSafeInteger(id) && id > 0)
   );
+  selectedJobAccountIds = new Set(existingJobAccountIds);
   document.getElementById('f-title').value = job.title || '';
   document.getElementById('f-company').value = job.company || '';
   document.getElementById('f-url').value = job.url || '';
@@ -3590,25 +3592,55 @@ async function doSave() {
   };
 
   const saveBtn = document.getElementById('btn-save');
-  const wasUpdate = !!existingJobId;
+  let wasUpdate = !!existingJobId;
   const refreshBtn = document.getElementById('btn-refresh');
 
   showLoading(wasUpdate ? 'Updating job…' : 'Saving job…');
   try {
     saveBtn.disabled = true;
     if (refreshBtn) refreshBtn.disabled = true;
+    if (!wasUpdate) {
+      const checked = await window.api.checkJobUrl(url);
+      if (!checked.success) throw new Error(checked.message || 'Could not check whether this job is already saved.');
+      if (checked.job) {
+        const selectedBeforeLookup = new Set(assignments.selectedAccountUserIds);
+        loadExistingJob(checked.job, { silent: true });
+        selectedJobAccountIds = selectedBeforeLookup;
+        const newAccountCount = [...selectedBeforeLookup]
+          .filter((accountId) => !existingJobAccountIds.has(accountId)).length;
+        wasUpdate = true;
+        if (newAccountCount > 0 && !window.confirm(
+          `This job is already in your list. Add it for ${newAccountCount} additional Account${newAccountCount === 1 ? '' : 's'}?`
+        )) {
+          return;
+        }
+      }
+    } else {
+      const newAccountCount = assignments.selectedAccountUserIds
+        .filter((accountId) => !existingJobAccountIds.has(accountId)).length;
+      if (newAccountCount > 0 && !window.confirm(
+        `This job is already in your list. Add it for ${newAccountCount} additional Account${newAccountCount === 1 ? '' : 's'}?`
+      )) {
+        return;
+      }
+    }
     const r = wasUpdate
       ? await window.api.updateJob(existingJobId, payload)
       : await window.api.createJob(payload);
 
     if (r.success) {
-      showAlert('main-alert', wasUpdate ? 'Job updated!' : 'Job saved!', 'success');
+      showAlert(
+        'main-alert',
+        r.message || (wasUpdate ? 'Job and Account rows updated!' : 'Job saved for selected Accounts!'),
+        r.message ? 'warn' : 'success'
+      );
       if (r.job) {
         existingJobId = r.job.id;
         jobSavedInBackend = true;
-        selectedJobAccountIds = new Set(
+        existingJobAccountIds = new Set(
           (r.job.selected_account_u_ids || assignments.selectedAccountUserIds).map(Number)
         );
+        selectedJobAccountIds = new Set(existingJobAccountIds);
         renderJobAccountGroups();
         currentSource = r.job.source || currentSource;
         updateJobSummary();
@@ -3635,6 +3667,7 @@ async function doRefresh() {
   if (saveBtn) saveBtn.disabled = true;
   try {
     existingJobId = null;
+    existingJobAccountIds.clear();
     jobSavedInBackend = false;
     candidateStatuses = {};
     candidateAppliedAt = {};

@@ -3,8 +3,8 @@ info:
   title: QTS Job Application API (Custom GPT Actions)
   version: 2.0.0
   description: |
-    The QTS extension creates a task for a Manager's active Workable application attempt
-    and sends `PROCESS_TASK: task_<uuid>` to that Manager's assigned Custom GPT.
+    The QTS extension creates a task for a Manager's processing Account-specific
+    Workable job row and sends `PROCESS_TASK: task_<uuid>` to that Manager's assigned Custom GPT.
     For each page, call getTaskContext, answer only from the supplied candidate/profile
     facts, and call submitTaskPackage. Mark any unsupported or unclear fields as
     unresolvedFields; do not invent candidate facts. Generate resume or cover-letter

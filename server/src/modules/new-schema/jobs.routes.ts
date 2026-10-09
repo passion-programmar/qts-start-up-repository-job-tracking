@@ -1,6 +1,6 @@
 import { Router, Response } from 'express';
 import { z } from 'zod';
-import { execute, queryAll, queryOne, withTransaction } from '../../database/connection';
+import { DbQueryable, execute, queryAll, queryOne, withTransaction } from '../../database/connection';
 import {
   NewSchemaAuthRequest,
   requireNewSchemaAuth,
@@ -19,6 +19,14 @@ const JobSchema = z.object({
   selectedAccountUserIds: z.array(z.number().int().positive()).optional().default([]),
   status: z.enum(['processing', 'todo', 'did', 'failed']).optional(),
 });
+
+function applicationTypeForUrl(value: string): string {
+  const url = new URL(value);
+  const hostname = url.hostname.toLowerCase().replace(/^www[.]/, '');
+  return hostname.endsWith('.workable.com') && /\/j\/[^/]+/i.test(url.pathname)
+    ? 'workable'
+    : hostname;
+}
 
 function jobScope(user: NonNullable<NewSchemaAuthRequest['newSchemaUser']>, index = 1): {
   clause: string;
@@ -77,7 +85,7 @@ async function validateJobAssignments(
 }
 
 function jobProjection(): string {
-  return `SELECT j.j_id AS id, j.u_id AS manager_id, j.url, j.company, j.title,
+  return `SELECT j.j_id AS id, j.u_id AS manager_id, j.url, j.application_type, j.company, j.title,
                  j.category_ids,
                  COALESCE((
                    SELECT array_agg(assignment.account_user_id ORDER BY assignment.position)
@@ -88,18 +96,95 @@ function jobProjection(): string {
                    SELECT json_agg(json_build_object(
                      'account_user_id', assignment.account_user_id,
                      'name', account.name,
-                     'status', COALESCE(attempt.status, 'not_started')
+                     'status', j.status
                    ) ORDER BY assignment.position)
                    FROM job_account_assignments assignment
                    JOIN users account ON account.u_id = assignment.account_user_id
-                   LEFT JOIN application_attempts attempt
-                     ON attempt.j_id = assignment.j_id
-                    AND attempt.account_user_id = assignment.account_user_id
                    WHERE assignment.j_id = j.j_id
                  ), '[]'::json) AS selected_accounts,
                  j.status, j.get_date,
                  (SELECT COUNT(*)::int FROM bids b WHERE b.j_id = j.j_id) AS bid_count
           FROM job_list j`;
+}
+
+async function synchronizeAccountJobRows(
+  tx: DbQueryable,
+  managerId: number,
+  url: string,
+  applicationType: string,
+  company: string,
+  title: string,
+  categoryIds: number[],
+  selectedAccountIds: number[]
+): Promise<{ rows: Array<{ j_id: number; account_user_id: number }>; blockedRemovalCount: number }> {
+  await tx.query('SELECT pg_advisory_xact_lock($1, hashtext($2))', [managerId, url]);
+  await tx.query(
+    `DELETE FROM job_list job
+     WHERE job.u_id = $1 AND job.url = $2 AND job.status = 'todo'
+       AND NOT EXISTS (
+         SELECT 1 FROM job_account_assignments assignment
+         WHERE assignment.j_id = job.j_id
+       )`,
+    [managerId, url]
+  );
+  const existingResult = await tx.query(
+    `SELECT job.j_id, job.status, assignment.account_user_id
+     FROM job_list job
+     JOIN job_account_assignments assignment ON assignment.j_id = job.j_id
+     WHERE job.u_id = $1 AND job.url = $2
+     ORDER BY assignment.position, job.j_id
+     FOR UPDATE OF job`,
+    [managerId, url]
+  );
+  const existingRows = existingResult.rows as Array<{
+    j_id: number;
+    status: 'processing' | 'todo' | 'did' | 'failed';
+    account_user_id: number;
+  }>;
+  const existingByAccount = new Map(existingRows.map((row) => [Number(row.account_user_id), row]));
+  const selectedIds = new Set(selectedAccountIds);
+  const rows: Array<{ j_id: number; account_user_id: number }> = [];
+  let blockedRemovalCount = 0;
+
+  for (const row of existingRows) {
+    const accountId = Number(row.account_user_id);
+    if (selectedIds.has(accountId)) continue;
+    if (row.status !== 'todo') {
+      blockedRemovalCount += 1;
+      rows.push({ j_id: Number(row.j_id), account_user_id: accountId });
+      continue;
+    }
+    await tx.query('DELETE FROM job_list WHERE j_id = $1 AND u_id = $2', [row.j_id, managerId]);
+  }
+
+  for (const accountId of selectedAccountIds) {
+    const existing = existingByAccount.get(accountId);
+    if (existing) {
+      await tx.query(
+        `UPDATE job_list SET application_type = $1, company = $2, title = $3, category_ids = $4::int[]
+         WHERE j_id = $5 AND u_id = $6`,
+        [applicationType, company, title, categoryIds, existing.j_id, managerId]
+      );
+      rows.push({ j_id: Number(existing.j_id), account_user_id: accountId });
+      continue;
+    }
+
+    const inserted = await tx.query(
+      `INSERT INTO job_list (u_id, url, application_type, company, title, category_ids, status)
+       VALUES ($1, $2, $3, $4, $5, $6::int[], 'todo')
+       RETURNING j_id`,
+      [managerId, url, applicationType, company, title, categoryIds]
+    );
+    const jobId = Number((inserted.rows[0] as { j_id: number }).j_id);
+    await tx.query(
+      `INSERT INTO job_account_assignments (j_id, account_user_id, position)
+       VALUES ($1, $2, 1)`,
+      [jobId, accountId]
+    );
+    rows.push({ j_id: jobId, account_user_id: accountId });
+  }
+
+  return { rows, blockedRemovalCount };
 }
 
 router.get('/', async (req: NewSchemaAuthRequest, res: Response) => {
@@ -138,14 +223,191 @@ router.get('/check-url', async (req: NewSchemaAuthRequest, res: Response) => {
   }
 
   const url = normalizeUrl(parsedUrl.data);
-  const [job, bid] = await Promise.all([
-    queryOne(`${jobProjection()} WHERE j.u_id = $1 AND j.url = $2`, [user.id, url]),
-    queryOne<{ b_id: number }>(
-      'SELECT b_id FROM bids WHERE manager_user_id = $1 AND job_url = $2 LIMIT 1',
+  const [jobs, applied] = await Promise.all([
+    queryAll(`${jobProjection()} WHERE j.u_id = $1 AND j.url = $2 ORDER BY j.j_id`, [user.id, url]),
+    queryOne<{ already_applied: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1 FROM bids bid
+         WHERE bid.manager_user_id = $1 AND bid.job_url = $2
+           AND NOT EXISTS (
+             SELECT 1 FROM job_list job
+             WHERE job.u_id = $1 AND job.url = $2
+               AND job.status IN ('todo', 'processing')
+           )
+       ) AS already_applied`,
       [user.id, url]
     ),
   ]);
-  res.json({ success: true, alreadyApplied: Boolean(bid), job: job || null });
+  const grouped = jobs.length
+    ? {
+      ...jobs[0],
+      selected_account_u_ids: [...new Set(jobs.flatMap((job) =>
+        Array.isArray(job.selected_account_u_ids) ? job.selected_account_u_ids.map(Number) : []
+      ))],
+      selected_accounts: jobs.flatMap((job) =>
+        Array.isArray(job.selected_accounts) ? job.selected_accounts : []
+      ),
+      job_ids: jobs.map((job) => Number(job.id)),
+    }
+    : null;
+  res.json({ success: true, alreadyApplied: Boolean(applied?.already_applied), job: grouped });
+});
+
+router.post('/claim-next', async (req: NewSchemaAuthRequest, res: Response) => {
+  const user = req.newSchemaUser!;
+  if (user.role !== 'manager') {
+    res.status(403).json({ success: false, message: 'Only Managers can start jobs from their job list.' });
+    return;
+  }
+  const parsedBody = z.object({
+    url: z.string().url().max(2000).optional(),
+    supportedTypes: z.array(z.string().regex(/^[a-z0-9.-]{1,253}$/i)).min(1).max(20),
+  }).safeParse(req.body || {});
+  if (!parsedBody.success) {
+    res.status(400).json({ success: false, message: 'Provide supported application types and an optional current job URL.' });
+    return;
+  }
+  const requestedUrl = parsedBody.data.url ? normalizeUrl(parsedBody.data.url) : null;
+  const supportedTypes = parsedBody.data.supportedTypes;
+  const claim = await withTransaction(async (tx) => {
+    const candidate = await tx.query(
+      `SELECT job.j_id, job.title, job.company, job.url, job.application_type, job.status,
+              assignment.account_user_id, account.name AS account_name
+       FROM job_list job
+       JOIN job_account_assignments assignment ON assignment.j_id = job.j_id
+       JOIN users account ON account.u_id = assignment.account_user_id
+         AND account.role = 'account' AND account.parent_user_id = job.u_id
+         AND account.blocked_date IS NULL
+       WHERE job.u_id = $1 AND job.status = 'todo'
+         AND job.application_type = ANY($2::text[])
+         AND ($3::text IS NULL OR job.url = $3)
+       ORDER BY CASE WHEN $3::text IS NOT NULL AND job.url = $3 THEN 0 ELSE 1 END,
+                job.get_date DESC, job.j_id DESC
+       LIMIT 1
+       FOR UPDATE OF job SKIP LOCKED`,
+      [user.id, supportedTypes, requestedUrl]
+    );
+    const row = candidate.rows[0] as {
+      j_id: number;
+      title: string;
+      company: string;
+      url: string;
+      application_type: string;
+      account_user_id: number;
+      account_name: string;
+    } | undefined;
+    if (!row) return null;
+    const changed = await tx.query(
+      `UPDATE job_list SET status = 'processing'
+       WHERE j_id = $1 AND u_id = $2 AND status = 'todo'
+       RETURNING j_id`,
+      [row.j_id, user.id]
+    );
+    if (!changed.rows.length) return null;
+    return {
+      job: {
+        id: Number(row.j_id),
+        title: row.title,
+        company: row.company,
+        url: row.url,
+        applicationType: row.application_type,
+      },
+      account: { id: Number(row.account_user_id), name: row.account_name },
+    };
+  });
+  res.json({ success: true, claimed: Boolean(claim), ...(claim || {}) });
+});
+
+router.get('/statuses', async (req: NewSchemaAuthRequest, res: Response) => {
+  if (req.newSchemaUser?.role !== 'manager') {
+    res.status(403).json({ success: false, message: 'Only Managers can view application statuses.' });
+    return;
+  }
+  const rows = await queryAll(
+    `SELECT job.j_id AS job_id, job.title AS job_title, job.company, job.url,
+            job.application_type,
+            job.status, job.get_date, assignment.account_user_id,
+            account.name AS account_name
+     FROM job_list job
+     JOIN job_account_assignments assignment ON assignment.j_id = job.j_id
+     JOIN users account ON account.u_id = assignment.account_user_id
+     WHERE job.u_id = $1
+     ORDER BY job.get_date DESC, job.j_id DESC`,
+    [req.newSchemaUser.id]
+  );
+  res.json({ success: true, jobs: rows });
+});
+
+router.get('/:id/application-context', async (req: NewSchemaAuthRequest, res: Response) => {
+  if (req.newSchemaUser?.role !== 'manager') {
+    res.status(403).json({ success: false, message: 'Only Managers can load application context.' });
+    return;
+  }
+  const jobId = Number.parseInt(req.params.id, 10);
+  if (!Number.isSafeInteger(jobId) || jobId <= 0) {
+    res.status(400).json({ success: false, message: 'Provide a valid job row ID.' });
+    return;
+  }
+  const managerId = req.newSchemaUser.id;
+  const [job, account, applicationProfile, salaryAnswers, customAnswers, setting] = await Promise.all([
+    queryOne(
+      `SELECT job.j_id, job.title, job.company, job.url, job.application_type, job.status,
+              assignment.account_user_id
+       FROM job_list job
+       JOIN job_account_assignments assignment ON assignment.j_id = job.j_id
+       WHERE job.j_id = $1 AND job.u_id = $2 AND job.status = 'processing'`,
+      [jobId, managerId]
+    ),
+    queryOne(
+      `SELECT account.u_id AS account_user_id, account.name,
+              account.email, account.phone, account.address, account.city,
+              account.country, account.sex, account.birthday,
+              profile.first_name, profile.last_name, profile.resume_file_name,
+              (profile.resume_content IS NOT NULL) AS has_resume,
+              profile.education, profile.work_experience
+       FROM job_account_assignments assignment
+       JOIN users account ON account.u_id = assignment.account_user_id
+         AND account.role = 'account' AND account.parent_user_id = $2
+         AND account.blocked_date IS NULL
+       LEFT JOIN account_application_profiles profile ON profile.account_user_id = account.u_id
+       WHERE assignment.j_id = $1`,
+      [jobId, managerId]
+    ),
+    queryOne(
+      `SELECT u.managed_country, p.authorized_to_work, p.authorization_status,
+              p.sponsorship_required, p.authorization_expires_on,
+              p.relocation_willing, p.relocation_details,
+              p.notice_period_value, p.notice_period_unit, p.notice_period_text
+       FROM users u
+       LEFT JOIN manager_application_profiles p ON p.manager_user_id = u.u_id
+       WHERE u.u_id = $1 AND u.role = 'manager'`,
+      [managerId]
+    ),
+    queryAll(
+      `SELECT currency, minimum_amount, maximum_amount, pay_period, answer_text
+       FROM manager_salary_answers WHERE manager_user_id = $1 ORDER BY salary_answer_id`,
+      [managerId]
+    ),
+    queryAll(
+      `SELECT topic, question, answer
+       FROM manager_custom_application_answers WHERE manager_user_id = $1 ORDER BY custom_answer_id`,
+      [managerId]
+    ),
+    queryOne<{ setting_value: string }>(
+      "SELECT setting_value FROM app_settings WHERE setting_name = 'application_submission_mode'"
+    ),
+  ]);
+  if (!job || !account) {
+    res.status(404).json({ success: false, message: 'Processing job row or assigned Account not found.' });
+    return;
+  }
+  res.json({
+    success: true,
+    job,
+    account,
+    managerAnswers: { ...applicationProfile, salaryAnswers, customAnswers },
+    submissionMode: setting?.setting_value === 'auto' ? 'auto' : 'manual',
+  });
 });
 
 router.get('/:id', async (req: NewSchemaAuthRequest, res: Response) => {
@@ -169,6 +431,80 @@ router.get('/:id', async (req: NewSchemaAuthRequest, res: Response) => {
   res.json({ success: true, job });
 });
 
+router.patch('/:id/status', async (req: NewSchemaAuthRequest, res: Response) => {
+  if (req.newSchemaUser?.role !== 'manager') {
+    res.status(403).json({ success: false, message: 'Only Managers can update application status.' });
+    return;
+  }
+  const jobId = Number.parseInt(req.params.id, 10);
+  const parsed = z.object({ status: z.enum(['did', 'failed']) }).safeParse(req.body);
+  if (!Number.isSafeInteger(jobId) || jobId <= 0 || !parsed.success) {
+    res.status(400).json({ success: false, message: 'Provide a valid terminal job status.' });
+    return;
+  }
+
+  const managerId = req.newSchemaUser.id;
+  const updated = await withTransaction(async (tx) => {
+    const jobResult = await tx.query(
+      `SELECT job.j_id, job.u_id, job.title, job.company, job.url, job.status,
+              assignment.account_user_id
+       FROM job_list job
+       JOIN job_account_assignments assignment ON assignment.j_id = job.j_id
+       WHERE job.j_id = $1 AND job.u_id = $2
+       FOR UPDATE OF job`,
+      [jobId, managerId]
+    );
+    const job = jobResult.rows[0] as {
+      j_id: number; u_id: number; title: string; company: string; url: string;
+      status: string; account_user_id: number;
+    } | undefined;
+    if (!job) return { notFound: true as const };
+    if (job.status === parsed.data.status) {
+      return { notFound: false as const, status: parsed.data.status };
+    }
+    if (job.status !== 'processing') return { conflict: true as const, status: job.status };
+    await tx.query(
+      `UPDATE job_list SET status = $1 WHERE j_id = $2 AND u_id = $3`,
+      [parsed.data.status, jobId, managerId]
+    );
+    if (parsed.data.status === 'did') {
+      await tx.query(
+        `INSERT INTO bids (
+           u_id, j_id, manager_user_id, job_title, company, job_url, job_status, resume_path
+         ) VALUES ($1, $2, $3, $4, $5, $6, 'did', $7)
+         ON CONFLICT (u_id, j_id) DO NOTHING`,
+        [
+          job.account_user_id, job.j_id, managerId, job.title, job.company,
+          job.url, `account-profile:${job.account_user_id}`,
+        ]
+      );
+    }
+    await tx.query(
+      `UPDATE gpt_application_tasks
+       SET status = $2,
+           task_context = jsonb_build_object('jobContext', COALESCE(task_context->'jobContext', '{}'::jsonb)),
+           resume_text = NULL, resume_text_expires_at = NULL,
+           last_activity_at = NOW(), updated_at = NOW()
+       WHERE job_id = $1 AND status <> 'failed'`,
+      [jobId, parsed.data.status === 'failed' ? 'failed' : 'completed']
+    );
+    return { notFound: false as const, status: parsed.data.status };
+  });
+  if (updated.notFound) {
+    res.status(404).json({ success: false, message: 'Account-specific job row not found.' });
+    return;
+  }
+  if ('conflict' in updated) {
+    res.status(409).json({
+      success: false,
+      message: `This job row is ${updated.status}; only processing rows can be closed.`,
+      status: updated.status,
+    });
+    return;
+  }
+  res.json({ success: true, status: updated.status });
+});
+
 router.post('/', async (req: NewSchemaAuthRequest, res: Response) => {
   const user = req.newSchemaUser!;
   if (user.role !== 'manager') {
@@ -181,6 +517,10 @@ router.post('/', async (req: NewSchemaAuthRequest, res: Response) => {
     return;
   }
   const data = parsed.data;
+  if (!data.selectedAccountUserIds.length) {
+    res.status(400).json({ success: false, message: 'Select at least one Account for this job.' });
+    return;
+  }
   const assignmentError = await validateJobAssignments(
     user.id,
     data.categoryIds,
@@ -191,35 +531,37 @@ router.post('/', async (req: NewSchemaAuthRequest, res: Response) => {
     return;
   }
   const url = normalizeUrl(data.url);
-  const duplicate = await queryOne<{ j_id: number }>(
-    'SELECT j_id FROM job_list WHERE url = $1',
-    [url]
+  const applicationType = applicationTypeForUrl(url);
+  const result = await withTransaction((tx) =>
+    synchronizeAccountJobRows(
+      tx, user.id, url, applicationType, data.company, data.title, data.categoryIds, data.selectedAccountUserIds
+    )
   );
-  if (duplicate) {
-    res.status(409).json({ success: false, message: 'That job URL has already been added.' });
-    return;
-  }
-  const jobId = await withTransaction(async (tx) => {
-    const inserted = await tx.query(
-      `INSERT INTO job_list (u_id, url, company, title, category_ids, status)
-       VALUES ($1, $2, $3, $4, $5::int[], $6)
-       RETURNING j_id`,
-      [user.id, url, data.company, data.title, data.categoryIds, data.status ?? 'todo']
-    );
-    const created = inserted.rows[0] as { j_id: number } | undefined;
-    if (!created) throw new Error('Job could not be created.');
-    for (const [position, accountId] of data.selectedAccountUserIds.entries()) {
-      await tx.query(
-        `INSERT INTO job_account_assignments (j_id, account_user_id, position)
-         VALUES ($1, $2, $3)`,
-        [created.j_id, accountId, position + 1]
-      );
+  const jobs = await queryAll(
+    `${jobProjection()} WHERE j.j_id = ANY($1::int[]) ORDER BY j.j_id`,
+    [result.rows.map((row) => row.j_id)]
+  );
+  const groupedJob = jobs.length
+    ? {
+      ...jobs[0],
+      selected_account_u_ids: jobs.flatMap((job) =>
+        Array.isArray(job.selected_account_u_ids) ? job.selected_account_u_ids : []
+      ),
+      selected_accounts: jobs.flatMap((job) =>
+        Array.isArray(job.selected_accounts) ? job.selected_accounts : []
+      ),
+      job_ids: jobs.map((job) => Number(job.id)),
     }
-    return created.j_id;
+    : null;
+  const message = result.blockedRemovalCount
+    ? `${result.blockedRemovalCount} Account row(s) were kept because their status is not todo.`
+    : undefined;
+  logger.info('New-schema Account-specific job rows synchronized', {
+    managerId: user.id,
+    url,
+    rowCount: jobs.length,
   });
-  const job = await queryOne(`${jobProjection()} WHERE j.j_id = $1`, [jobId]);
-  logger.info('New-schema job created', { id: jobId, managerId: user.id });
-  res.status(201).json({ success: true, job });
+  res.status(201).json({ success: true, job: groupedJob, jobs, message });
 });
 
 router.put('/:id', async (req: NewSchemaAuthRequest, res: Response) => {
@@ -235,6 +577,10 @@ router.put('/:id', async (req: NewSchemaAuthRequest, res: Response) => {
     return;
   }
   const data = parsed.data;
+  if (!data.selectedAccountUserIds.length) {
+    res.status(400).json({ success: false, message: 'Select at least one Account for this job.' });
+    return;
+  }
   const assignmentError = await validateJobAssignments(
     user.id,
     data.categoryIds,
@@ -245,47 +591,79 @@ router.put('/:id', async (req: NewSchemaAuthRequest, res: Response) => {
     return;
   }
   const url = normalizeUrl(data.url);
-  const duplicate = await queryOne<{ j_id: number }>(
-    'SELECT j_id FROM job_list WHERE url = $1 AND j_id <> $2',
-    [url, id]
+  const applicationType = applicationTypeForUrl(url);
+  const source = await queryOne<{ url: string }>(
+    'SELECT url FROM job_list WHERE j_id = $1 AND u_id = $2',
+    [id, user.id]
   );
-  if (duplicate) {
-    res.status(409).json({ success: false, message: 'That job URL has already been added.' });
-    return;
-  }
-  const updated = await withTransaction(async (client) => {
-    const locked = await client.query(
-      'SELECT j_id FROM job_list WHERE j_id = $1 AND u_id = $2 FOR UPDATE',
-      [id, user.id]
-    );
-    if (!locked.rows.length) return false;
-    await client.query(
-      `UPDATE job_list SET url = $1, company = $2, title = $3, category_ids = $4::int[],
-         status = COALESCE($5, status)
-       WHERE j_id = $6 AND u_id = $7`,
-      [url, data.company, data.title, data.categoryIds, data.status ?? null, id, user.id]
-    );
-    await client.query('DELETE FROM job_account_assignments WHERE j_id = $1', [id]);
-    for (const [position, accountId] of data.selectedAccountUserIds.entries()) {
-      await client.query(
-        `INSERT INTO job_account_assignments (j_id, account_user_id, position)
-         VALUES ($1, $2, $3)`,
-        [id, accountId, position + 1]
-      );
-    }
-    await client.query(
-      `UPDATE bids SET job_status = COALESCE($1, job_status)
-       WHERE j_id = $2 AND manager_user_id = $3`,
-      [data.status ?? null, id, user.id]
-    );
-    return true;
-  });
-  if (!updated) {
+  if (!source) {
     res.status(404).json({ success: false, message: 'Job not found in your list.' });
     return;
   }
-  const job = await queryOne(`${jobProjection()} WHERE j.j_id = $1`, [id]);
-  res.json({ success: true, job });
+  const result = await withTransaction(async (tx) => {
+    const locked = await tx.query(
+      'SELECT j_id FROM job_list WHERE j_id = $1 AND u_id = $2 FOR UPDATE',
+      [id, user.id]
+    );
+    if (!locked.rows.length) return null;
+    const targetConflicts = await tx.query(
+      `SELECT assignment.account_user_id
+       FROM job_list job
+       JOIN job_account_assignments assignment ON assignment.j_id = job.j_id
+       WHERE job.u_id = $1 AND job.url = $2
+         AND NOT (job.url = $3)`,
+      [user.id, url, source.url]
+    );
+    if ((targetConflicts.rows as Array<{ account_user_id: number }>).some((row) =>
+      data.selectedAccountUserIds.includes(Number(row.account_user_id))
+    )) {
+      return { conflict: true as const };
+    }
+    const synchronized = await synchronizeAccountJobRows(
+      tx, user.id, source.url, applicationType, data.company, data.title, data.categoryIds, data.selectedAccountUserIds
+    );
+    if (source.url !== url) {
+      for (const row of synchronized.rows) {
+        await tx.query(
+          `UPDATE job_list SET url = $1, application_type = $2, company = $3, title = $4, category_ids = $5::int[]
+           WHERE j_id = $6 AND u_id = $7`,
+          [url, applicationType, data.company, data.title, data.categoryIds, row.j_id, user.id]
+        );
+      }
+    }
+    return { synchronized, rows: synchronized.rows.map((row) => row.j_id) };
+  });
+  if (!result) {
+    res.status(404).json({ success: false, message: 'Job not found in your list.' });
+    return;
+  }
+  if ('conflict' in result) {
+    res.status(409).json({
+      success: false,
+      message: 'One or more selected Accounts already have this job URL.',
+    });
+    return;
+  }
+  const jobs = await queryAll(
+    `${jobProjection()} WHERE j.j_id = ANY($1::int[]) ORDER BY j.j_id`,
+    [result.rows]
+  );
+  const groupedJob = jobs.length
+    ? {
+      ...jobs[0],
+      selected_account_u_ids: jobs.flatMap((job) =>
+        Array.isArray(job.selected_account_u_ids) ? job.selected_account_u_ids : []
+      ),
+      selected_accounts: jobs.flatMap((job) =>
+        Array.isArray(job.selected_accounts) ? job.selected_accounts : []
+      ),
+      job_ids: jobs.map((job) => Number(job.id)),
+    }
+    : null;
+  const message = result.synchronized.blockedRemovalCount
+    ? `${result.synchronized.blockedRemovalCount} Account row(s) were kept because their status is not todo.`
+    : undefined;
+  res.json({ success: true, job: groupedJob, jobs, message });
 });
 
 router.delete('/:id', async (req: NewSchemaAuthRequest, res: Response) => {
@@ -301,26 +679,30 @@ router.delete('/:id', async (req: NewSchemaAuthRequest, res: Response) => {
   }
   const deleted = await withTransaction(async (tx) => {
     const existing = await tx.query(
-      'SELECT j_id FROM job_list WHERE j_id = $1 AND u_id = $2 FOR UPDATE',
+      'SELECT j_id, status FROM job_list WHERE j_id = $1 AND u_id = $2 FOR UPDATE',
       [id, user.id]
     );
     if (!existing.rows.length) return null;
-
-    const attempts = await tx.query(
-      'DELETE FROM application_attempts WHERE j_id = $1 RETURNING attempt_id',
-      [id]
-    );
+    const row = existing.rows[0] as { status: string };
+    if (row.status !== 'todo') return { blocked: true as const };
     await tx.query('DELETE FROM job_list WHERE j_id = $1 AND u_id = $2', [id, user.id]);
-    return attempts.rowCount ?? attempts.rows.length;
+    return { blocked: false as const };
   });
 
   if (deleted === null) {
     res.status(404).json({ success: false, message: 'Job not found in your list.' });
     return;
   }
+  if (deleted.blocked) {
+    res.status(409).json({
+      success: false,
+      message: 'This Account row cannot be removed because its status is not todo.',
+    });
+    return;
+  }
   res.json({
     success: true,
-    message: `Job removed from your active job list. ${deleted} application attempt(s) cleared; Bids and interview history retained.`,
+    message: 'Account-specific job row removed from your active job list.',
   });
 });
 

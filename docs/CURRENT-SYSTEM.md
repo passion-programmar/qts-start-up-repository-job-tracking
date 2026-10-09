@@ -27,7 +27,6 @@ The API retains only the new-schema tables:
 - `manager_salary_answers`
 - `manager_custom_application_answers`
 - `account_application_profiles`
-- `application_attempts`
 - `gpt_application_tasks`
 - `gpt_application_task_documents`
 - `custom_gpts`
@@ -42,11 +41,10 @@ tables listed above are kept. Legacy tables are not recreated by migrations.
 - Super creates Admin users; Admins create Managers and Callers; Managers
   create Account profiles.
 - Managers create and manage job listings, assigning categories and Account
-  profiles. A job is stored once in `job_list`; each assigned Account has a
-  separate ordered row in `job_account_assignments`.
-- Managers can delete old job listings from their active list even when there
-  is application history. The associated retry-blocking attempt rows are cleared;
-  Bids and linked interview records remain as history.
+  profiles. Each selected Account receives its own `job_list` row and
+  `job_account_assignments` row for the same URL.
+- Unchecking an Account removes only its `todo` job row. Non-`todo` rows are
+  retained and reported to the Manager so application history is not erased.
 - Bids and interviews use the active new-schema data model.
 - Users sign in to the web app at the deployed Vercel URL.
 - Each Manager manages only their own reusable application answers on the
@@ -59,39 +57,37 @@ tables listed above are kept. Legacy tables are not recreated by migrations.
   the GPT URL is not shown in the Manager page or extension. The extension
   blocks its GPT Apply actions when no GPT is assigned and tells the Manager
   to contact an Admin.
-- The extension popup's Apply action opens the assigned Custom GPT, then
-  atomically claims the next available `todo` job/Account pair for that
-  Manager from `job_list` and opens the saved Workable job URL. Jobs are
-  ordered by the job-list order; Accounts follow their configured assignment
-  order. An `in_progress` claim can be reclaimed after ten minutes without an
-  attempt update. Get JD creates and updates jobs in this same Manager-owned
-  list; Manager Apply does not use the legacy candidate/application-session
-  pipeline.
-- The GPT-assisted Manager Apply workflow processes assigned Accounts
-  sequentially on Workable. It creates a site-neutral GPT task for each
-  application attempt, captures the job description and each application page,
+- The extension popup's Apply action selects an available application handler,
+  then atomically claims one compatible `todo` Account-specific job row,
+  changes its status to `processing`, and opens the saved job URL. A confirmed application
+  changes that row to `did`; an application failure changes it to `failed`
+  and the extension continues with the next `todo` row.
+- Workable is the first site-specific application handler. Each job row stores
+  its application type, and the queue claims only types supported by an
+  installed handler; additional site handlers can be added independently.
+- The GPT-assisted Workable Apply workflow processes Account-specific job rows
+  sequentially. It creates a site-neutral GPT task keyed by the
+  job row, captures the job description and each application page,
   and sends the task to the Manager's assigned Custom GPT. The GPT can answer
   only from supplied Account and Manager facts; uncertain, consent, legal, and
   security-verification fields require manual review. Requested resumes and
   cover letters are stored with the application as generated PDFs. Safe
   Next/Continue steps may proceed automatically, but the final job-site Submit
   action always remains manual. Copied candidate/resume context is cleared when
-  an attempt ends or after 30 days of inactivity. Other job sites are not yet
-  supported by this Manager Apply pipeline.
-- A Bid is created only when Workable confirms submission, in the same
-  transaction that closes the attempt. An unclear submission result remains in
-  Needs review and is not retried.
-- The Manager Bid Status page shows each assigned Account's status and keeps
-  past attempt history visible if an Account is later unassigned from a job.
-- The existing Manager → Jobs table shows each job once and lists its assigned
-  Accounts with each Account's individual application-attempt status.
+  an application ends or after 30 days of inactivity. Other job sites are not
+  yet supported by an application handler.
+- A Bid is created when an application handler confirms submission and the row
+  is changed to `did`. A row that is not `todo` cannot be removed by unchecking
+  its Account.
+- The Manager Bid Status and Jobs pages display each Account-specific job row
+  and its `todo`, `processing`, `did`, or `failed` status.
 
 ## Retired workflows
 
 The extension's Manager login uses the new-schema API. The retired
 candidate/application-session and direct legacy GPT application/PDF workflows
-are not part of the active Manager → Apply pipeline. Workable is its first
-supported job-site connector.
+are not part of the active Manager → Apply pipeline. Workable is the first
+supported site-specific connector.
 
 ## Deployment
 

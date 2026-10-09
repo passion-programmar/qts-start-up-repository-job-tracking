@@ -754,7 +754,6 @@ export declare const GptApplicationPackageSchema: z.ZodObject<{
         targetCompany?: string | undefined;
         summary?: string | undefined;
     } | undefined;
-    notes?: string | undefined;
     coverLetter?: {
         candidate: {
             email: string;
@@ -774,6 +773,7 @@ export declare const GptApplicationPackageSchema: z.ZodObject<{
         answer: string;
         stableFieldId: string;
     }[] | undefined;
+    notes?: string | undefined;
 }, {
     resume?: {
         candidate: {
@@ -797,7 +797,6 @@ export declare const GptApplicationPackageSchema: z.ZodObject<{
         targetCompany?: string | undefined;
         summary?: string | undefined;
     } | undefined;
-    notes?: string | undefined;
     coverLetter?: {
         candidate: {
             email: string;
@@ -821,6 +820,7 @@ export declare const GptApplicationPackageSchema: z.ZodObject<{
         answer: string;
         stableFieldId: string;
     }[] | undefined;
+    notes?: string | undefined;
 }>;
 export type ResumeDocument = z.infer<typeof ResumeDocumentSchema>;
 export type CoverLetterDocument = z.infer<typeof CoverLetterDocumentSchema>;

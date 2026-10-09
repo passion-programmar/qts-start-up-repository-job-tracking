@@ -55,16 +55,17 @@ const TABLES = {
     },
     job_list: {
         label: 'Jobs (new schema)',
-        description: 'Manager-owned job listings; Account assignments are stored separately.',
+        description: 'Manager-owned job rows with the detected application type; Account assignments are stored separately.',
         columns: [
-            'j_id', 'u_id', 'url', 'company', 'title', 'category_ids', 'status', 'get_date',
+            'j_id', 'u_id', 'url', 'application_type', 'company', 'title', 'category_ids', 'status', 'get_date',
         ],
-        searchColumns: ['url', 'company', 'title', 'status'],
+        searchColumns: ['url', 'application_type', 'company', 'title', 'status'],
         orderBy: 'j_id',
         primaryKey: 'j_id',
         fields: {
             u_id: { type: 'integer', required: true },
             url: { type: 'url', required: true, maxLength: 2000 },
+            application_type: { type: 'text', required: true, maxLength: 253 },
             company: { type: 'text', required: true, maxLength: 300 },
             title: { type: 'text', required: true, maxLength: 300 },
             category_ids: { type: 'integer-array' },
@@ -76,7 +77,7 @@ const TABLES = {
         label: 'Job–Account assignments',
         description: 'Ordered Account assignments for each Manager-owned job.',
         columns: ['job_account_assignment_id', 'j_id', 'account_user_id', 'position'],
-        searchColumns: [],
+        searchColumns: ['j_id', 'account_user_id'],
         orderBy: 'job_account_assignment_id',
         primaryKey: 'job_account_assignment_id',
         fields: {
@@ -550,11 +551,9 @@ router.delete('/tables/:table/:id', async (req, res, next) => {
                 const lockedJob = await tx.query('SELECT j_id FROM job_list WHERE j_id = $1 FOR UPDATE', [recordId]);
                 if (!lockedJob.rows.length)
                     return null;
-                const attempts = await tx.query('DELETE FROM application_attempts WHERE j_id = $1 RETURNING attempt_id', [recordId]);
                 const bids = await tx.query('DELETE FROM bids WHERE j_id = $1 RETURNING b_id', [recordId]);
                 await tx.query('DELETE FROM job_list WHERE j_id = $1', [recordId]);
                 return {
-                    attemptsDeleted: attempts.rowCount ?? attempts.rows.length,
                     bidsDeleted: bids.rowCount ?? bids.rows.length,
                 };
             });
@@ -564,7 +563,7 @@ router.delete('/tables/:table/:id', async (req, res, next) => {
             }
             res.json({
                 success: true,
-                message: `Job deleted from live database with ${deleted.attemptsDeleted} application attempt(s) and ${deleted.bidsDeleted} Bid record(s). Related interview records were deleted with their Bids.`,
+                message: `Account-specific job row deleted with ${deleted.bidsDeleted} Bid record(s). Related interview records were deleted with their Bids.`,
                 ...deleted,
             });
             return;

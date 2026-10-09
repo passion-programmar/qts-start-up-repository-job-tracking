@@ -60,7 +60,7 @@ const taskPackageSchema = z.object({
 
 type TaskRow = {
   task_id: string;
-  attempt_id: number;
+  job_id: number;
   manager_user_id: number;
   status: string;
   page_number: number;
@@ -98,11 +98,11 @@ function requireGptActionKey(req: Request, res: Response, next: NextFunction): v
 
 async function loadTask(taskId: string): Promise<TaskRow | null> {
   return queryOne<TaskRow>(
-    `SELECT task.task_id, task.attempt_id, attempt.manager_user_id, task.status,
+    `SELECT task.task_id, task.job_id, job.u_id AS manager_user_id, task.status,
             task.page_number, task.task_context, task.package, task.answers, task.resume_text,
             task.resume_text_expires_at
      FROM gpt_application_tasks task
-     JOIN application_attempts attempt ON attempt.attempt_id = task.attempt_id
+     JOIN job_list job ON job.j_id = task.job_id
      WHERE task.task_id = $1`,
     [taskId]
   );
@@ -134,12 +134,12 @@ function taskContextParts(context: Record<string, unknown>) {
   };
 }
 
-router.post('/attempts/:attemptId', requireNewSchemaAuth, async (req: NewSchemaAuthRequest, res: Response) => {
+router.post('/jobs/:jobId', requireNewSchemaAuth, async (req: NewSchemaAuthRequest, res: Response) => {
   if (!isManager(req, res)) return;
   if (!actionKeyConfigured(res)) return;
-  const attemptId = Number.parseInt(req.params.attemptId, 10);
-  if (!Number.isSafeInteger(attemptId) || attemptId <= 0) {
-    res.status(400).json({ success: false, message: 'Provide a valid application attempt ID.' });
+  const jobId = Number.parseInt(req.params.jobId, 10);
+  if (!Number.isSafeInteger(jobId) || jobId <= 0) {
+    res.status(400).json({ success: false, message: 'Provide a valid Account-specific job row ID.' });
     return;
   }
   const createOptions = createTaskSchema.safeParse(req.body || {});
@@ -149,8 +149,8 @@ router.post('/attempts/:attemptId', requireNewSchemaAuth, async (req: NewSchemaA
   }
 
   const context = await queryOne<Record<string, unknown>>(
-    `SELECT attempt.attempt_id, attempt.manager_user_id, attempt.status,
-            job.j_id, job.title AS job_title, job.company, job.url,
+    `SELECT job.j_id, job.u_id AS manager_user_id, job.status, job.application_type,
+            job.title AS job_title, job.company, job.url,
             account.u_id AS account_id, account.name AS account_name,
             account.email, account.phone, account.address, account.city,
             account.country, account.sex, account.birthday,
@@ -161,17 +161,17 @@ router.post('/attempts/:attemptId', requireNewSchemaAuth, async (req: NewSchemaA
             manager_profile.authorization_expires_on, manager_profile.relocation_willing,
             manager_profile.relocation_details, manager_profile.notice_period_value,
             manager_profile.notice_period_unit, manager_profile.notice_period_text
-     FROM application_attempts attempt
-     JOIN job_list job ON job.j_id = attempt.j_id
-     JOIN users account ON account.u_id = attempt.account_user_id AND account.role = 'account'
+     FROM job_list job
+     JOIN job_account_assignments assignment ON assignment.j_id = job.j_id
+     JOIN users account ON account.u_id = assignment.account_user_id AND account.role = 'account'
      LEFT JOIN account_application_profiles profile ON profile.account_user_id = account.u_id
-     JOIN users manager ON manager.u_id = attempt.manager_user_id AND manager.role = 'manager'
+     JOIN users manager ON manager.u_id = job.u_id AND manager.role = 'manager'
      LEFT JOIN manager_application_profiles manager_profile ON manager_profile.manager_user_id = manager.u_id
-     WHERE attempt.attempt_id = $1 AND attempt.manager_user_id = $2`,
-    [attemptId, req.newSchemaUser!.id]
+     WHERE job.j_id = $1 AND job.u_id = $2 AND job.status = 'processing'`,
+    [jobId, req.newSchemaUser!.id]
   );
-  if (!context || !['in_progress', 'needs_review'].includes(String(context.status))) {
-    res.status(404).json({ success: false, message: 'Active application attempt not found.' });
+  if (!context) {
+    res.status(404).json({ success: false, message: 'Processing Account-specific job row not found.' });
     return;
   }
 
@@ -207,7 +207,7 @@ router.post('/attempts/:attemptId', requireNewSchemaAuth, async (req: NewSchemaA
       jobTitle: context.job_title,
       company: context.company,
       jobUrl: context.url,
-      platform: createOptions.data.sourcePlatform || new URL(String(context.url)).hostname.toLowerCase(),
+      platform: createOptions.data.sourcePlatform || String(context.application_type),
       ...(createOptions.data.jobDescription
         ? { jobDescription: createOptions.data.jobDescription }
         : {}),
@@ -246,18 +246,18 @@ router.post('/attempts/:attemptId', requireNewSchemaAuth, async (req: NewSchemaA
   const expiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
   const inserted = await queryOne<{ task_id: string; status: string }>(
     `INSERT INTO gpt_application_tasks (
-       task_id, attempt_id, task_context, resume_text, resume_text_expires_at
+       task_id, job_id, task_context, resume_text, resume_text_expires_at
      ) VALUES ($1, $2, $3::jsonb, $4, $5)
-     ON CONFLICT (attempt_id) DO NOTHING
+     ON CONFLICT (job_id) DO NOTHING
      RETURNING task_id, status`,
-    [taskId, attemptId, JSON.stringify(taskContext), resumeText || null, resumeText ? expiry : null]
+    [taskId, jobId, JSON.stringify(taskContext), resumeText || null, resumeText ? expiry : null]
   );
   const existing = inserted || await queryOne<{ task_id: string; status: string }>(
-    `SELECT task_id, status FROM gpt_application_tasks WHERE attempt_id = $1`,
-    [attemptId]
+    `SELECT task_id, status FROM gpt_application_tasks WHERE job_id = $1`,
+    [jobId]
   );
   if (!existing) {
-    res.status(500).json({ success: false, message: 'Could not create the GPT application task.' });
+    res.status(500).json({ success: false, message: 'Could not create the GPT application task for this job row.' });
     return;
   }
   if (!inserted) {
@@ -607,15 +607,17 @@ router.post('/:taskId/finish', requireNewSchemaAuth, async (req: NewSchemaAuthRe
          task_context = jsonb_build_object('jobContext', COALESCE(task_context->'jobContext', '{}'::jsonb)),
          resume_text = NULL, resume_text_expires_at = NULL,
          last_activity_at = NOW(), updated_at = NOW()
-     FROM application_attempts attempt
      WHERE gpt_application_tasks.task_id = $1
        AND gpt_application_tasks.status <> 'failed'
-       AND attempt.attempt_id = gpt_application_tasks.attempt_id
-       AND attempt.status IN ('submitted', 'failed')`,
-    [task.task_id]
+       AND EXISTS (
+         SELECT 1 FROM job_list job
+         WHERE job.j_id = gpt_application_tasks.job_id
+           AND job.u_id = $2 AND job.status IN ('did', 'failed')
+       )`,
+    [task.task_id, req.newSchemaUser!.id]
   );
   if (!result.rowCount) {
-    res.status(409).json({ success: false, message: 'Finish the application attempt before closing its GPT task.' });
+    res.status(409).json({ success: false, message: 'Finish the Account-specific job row before closing its GPT task.' });
     return;
   }
   res.json({ success: true, taskId: task.task_id, status: 'completed' });

@@ -6,13 +6,16 @@ import { useAuth } from '@/components/AuthProvider';
 import { formatDate } from '@/lib/utils';
 import type { NewSchemaBid, NewSchemaJob } from '@/lib/types';
 
-const ATTEMPT_STATUS_LABELS: Record<NewSchemaJob['selected_accounts'][number]['status'], string> = {
-  not_started: 'Not started',
-  in_progress: 'In progress',
-  needs_review: 'Needs review',
-  submitted: 'Submitted',
+const JOB_STATUS_LABELS: Record<NewSchemaJob['status'], string> = {
+  todo: 'To do',
+  processing: 'Processing',
+  did: 'Applied',
   failed: 'Failed',
 };
+
+function applicationTypeLabel(type: string): string {
+  return type === 'workable' ? 'Workable' : type;
+}
 
 export function NewSchemaJobsView() {
   const { user } = useAuth();
@@ -87,7 +90,7 @@ export function NewSchemaJobsView() {
   async function removeJob(job: NewSchemaJob) {
     if (deletingJobId !== null) return;
     const confirmed = window.confirm(
-      `Remove "${job.title}" from your active job list? Its application attempts will be cleared so its Accounts can be retried if the job is added again. Submitted Bids and their interview history will be kept.`
+      `Remove "${job.title}" for ${job.selected_accounts?.[0]?.name || 'this Account'} from your active job list?`
     );
     if (!confirmed) return;
 
@@ -125,7 +128,7 @@ export function NewSchemaJobsView() {
         <div className="card">
           <h2>My job list</h2>
           <p className="text-muted">
-            Remove completed or old listings from the active list. Bids and interview history are retained.
+            Each Account has its own job row. Only To do rows can be removed; processed rows are retained.
           </p>
           {loading ? <div className="text-muted">Loading…</div> : (
             <div className="table-scroll">
@@ -133,9 +136,10 @@ export function NewSchemaJobsView() {
                 <thead>
                   <tr>
                     <th>Job</th>
+                    <th>Application type</th>
                     <th>Company</th>
                     <th>Status</th>
-                    <th>Accounts</th>
+                    <th>Account</th>
                     <th>Bids</th>
                     <th>Added</th>
                     <th>Actions</th>
@@ -145,26 +149,17 @@ export function NewSchemaJobsView() {
                   {visibleJobs.map((job) => (
                     <tr key={job.id}>
                       <td><a href={job.url} target="_blank" rel="noreferrer">{job.title}</a></td>
+                      <td>{applicationTypeLabel(job.application_type)}</td>
                       <td>{job.company}</td>
-                      <td>{job.status}</td>
-                      <td>
-                        {job.selected_accounts?.length ? (
-                          <ul style={{ margin: 0, paddingLeft: 18 }}>
-                            {job.selected_accounts.map((account) => (
-                              <li key={account.account_user_id}>
-                                {account.name} — {ATTEMPT_STATUS_LABELS[account.status] || account.status}
-                              </li>
-                            ))}
-                          </ul>
-                        ) : 'No Accounts assigned'}
-                      </td>
+                      <td>{JOB_STATUS_LABELS[job.status]}</td>
+                      <td>{job.selected_accounts?.[0]?.name || 'No Account assigned'}</td>
                       <td>{job.bid_count}</td>
                       <td>{formatDate(job.get_date)}</td>
                       <td>
                         <button
                           className="btn btn-danger btn-sm"
                           type="button"
-                          disabled={deletingJobId !== null}
+                          disabled={deletingJobId !== null || job.status !== 'todo'}
                           onClick={() => { void removeJob(job); }}
                         >
                           {deletingJobId === job.id ? 'Removing…' : 'Delete'}
@@ -173,7 +168,7 @@ export function NewSchemaJobsView() {
                     </tr>
                   ))}
                   {!visibleJobs.length && (
-                    <tr><td colSpan={7} className="text-muted">No active jobs found.</td></tr>
+                    <tr><td colSpan={8} className="text-muted">No active Account-specific job rows found.</td></tr>
                   )}
                 </tbody>
               </table>

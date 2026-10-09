@@ -1293,23 +1293,75 @@ async function setJobQueueBadge(tabId, text, color) {
   }
 }
 
-async function startManagerJobQueue(sourceTabId) {
+function isWorkableJobUrl(value) {
+  try {
+    const url = new URL(value);
+    return ['http:', 'https:'].includes(url.protocol)
+      && url.hostname.toLowerCase().endsWith('.workable.com')
+      && /\/j\/[^/]+/i.test(url.pathname);
+  } catch {
+    return false;
+  }
+}
+
+const JOB_APPLICATION_HANDLERS = {
+  workable: {
+    matchesUrl: isWorkableJobUrl,
+    runtime: () => self.__qtsWorkableApplication,
+    unavailableReason() {
+      if (!self.__qtsCustomGpt?.CUSTOM_GPT_URL) {
+        return 'No Custom GPT is assigned to your Manager account. Contact your Admin.';
+      }
+      if (!self.__qtsGptWorkerHandoff?.ensurePinnedGptTab) {
+        return 'QTS extension workflow helpers are unavailable.';
+      }
+      return null;
+    },
+    async prepare() {
+      await self.__qtsGptWorkerHandoff.ensurePinnedGptTab({
+        storageKey: GPT_TAB_STORAGE_KEY,
+        focus: true,
+        preparePage: true,
+        pinInBrowser: true,
+      });
+    },
+  },
+};
+
+async function startManagerJobQueue(sourceTabId, { preferCurrentUrl = true } = {}) {
   const worker = self.__qtsGptWorkerHandoff;
   const api = self.__qtsApiWorker;
-  if (!worker?.ensurePinnedGptTab || !api?.workerApiRequest) {
+  if (!api?.workerApiRequest) {
     throw new Error('QTS extension workflow helpers are unavailable.');
   }
-  if (!self.__qtsCustomGpt?.CUSTOM_GPT_URL) {
-    throw new Error('No Custom GPT is assigned to your Manager account. Contact your Admin.');
+  const supportedHandlers = Object.entries(JOB_APPLICATION_HANDLERS)
+    .filter(([, handler]) => !handler.unavailableReason());
+  if (!supportedHandlers.length) {
+    const reason = Object.values(JOB_APPLICATION_HANDLERS)
+      .map((handler) => handler.unavailableReason())
+      .find(Boolean);
+    throw new Error(reason || 'No job application handlers are available.');
   }
 
   const sourceTab = await getTab(sourceTabId);
   if (!sourceTab?.id) throw new Error('Could not find the tab that started Apply.');
 
   await setJobQueueBadge(sourceTabId, '...', '#2563eb');
-  await showPageDetectAlert(sourceTabId, 'QTS Apply: finding your next assigned Workable job…', 'info');
+  await showPageDetectAlert(sourceTabId, 'QTS Apply: finding your next supported job…', 'info');
 
-  const claim = await api.workerApiRequest('POST', '/api/v2/application-attempts/claim-next');
+  const sourceUrl = sourceTab.url || '';
+  const currentPageHandler = preferCurrentUrl
+    ? supportedHandlers.find(([, handler]) => handler.matchesUrl(sourceUrl))
+    : null;
+  const currentJobUrl = currentPageHandler ? sourceUrl : null;
+  const claim = await api.workerApiRequest(
+    'POST',
+    '/api/v2/jobs/claim-next',
+    {
+      supportedTypes: supportedHandlers.map(([type]) => type),
+      ...(currentJobUrl ? { url: currentJobUrl } : {}),
+    }
+  );
   if (!claim.success) {
     throw new Error(claim.message || 'Could not get the next job from your job list.');
   }
@@ -1318,50 +1370,88 @@ async function startManagerJobQueue(sourceTabId) {
     await focusBrowserWindowForTab(sourceTabId);
     await chrome.tabs.update(sourceTabId, { active: true });
     await setJobQueueBadge(sourceTabId, '', '#2563eb');
-    await showPageDetectAlert(sourceTabId, 'No available Workable To do jobs with unclaimed Accounts were found.', 'info', 8000);
+    await showPageDetectAlert(sourceTabId, 'No supported job rows with status todo are available.', 'info', 8000);
     return { ok: true, claimed: false };
   }
 
-  await worker.ensurePinnedGptTab({
-    storageKey: GPT_TAB_STORAGE_KEY,
-    focus: true,
-    preparePage: true,
-    pinInBrowser: true,
-  });
-
-  const jobUrl = new URL(claim.job.url);
-  if (!['http:', 'https:'].includes(jobUrl.protocol)) {
-    throw new Error('The selected job does not have a valid web URL.');
+  const applicationType = claim.job?.applicationType;
+  const applicationHandler = JOB_APPLICATION_HANDLERS[applicationType];
+  if (!applicationHandler || !supportedHandlers.some(([type]) => type === applicationType)) {
+    throw new Error('The claimed job type does not have an available application handler.');
   }
-
+  const applicationRuntime = applicationHandler.runtime();
   let jobTabId = sourceTabId;
-  const workable = self.__qtsWorkableApplication;
-  if (!workable?.registerClaim) {
-    throw new Error('Workable application support is not available in this extension version.');
-  }
-  await workable.registerClaim(jobTabId, claim);
+  let claimRegistered = false;
   try {
-    await chrome.tabs.update(jobTabId, { url: jobUrl.href, active: true });
+    if (!applicationRuntime?.registerClaim) {
+      throw new Error(`The ${applicationType} application handler is unavailable.`);
+    }
+    const jobUrl = new URL(claim.job.url);
+    if (!['http:', 'https:'].includes(jobUrl.protocol)) {
+      throw new Error('The selected job does not have a valid web URL.');
+    }
+    await applicationHandler.prepare(worker, claim);
+    await applicationRuntime.registerClaim(jobTabId, claim);
+    claimRegistered = true;
+
+    try {
+      await chrome.tabs.update(jobTabId, { url: jobUrl.href, active: true });
+    } catch (error) {
+      console.warn('[QTS Apply] Could not reuse the source tab; opening a new job tab:', error);
+      const createdTab = await chrome.tabs.create({ url: 'about:blank', active: true });
+      if (!createdTab?.id) throw new Error('Could not open the selected job URL.');
+      await applicationRuntime.discardClaim(jobTabId);
+      jobTabId = createdTab.id;
+      await applicationRuntime.registerClaim(jobTabId, claim);
+      await chrome.tabs.update(jobTabId, { url: jobUrl.href, active: true });
+    }
   } catch (error) {
-    console.warn('[QTS Apply] Could not reuse the source tab; opening a new job tab:', error);
-    const createdTab = await chrome.tabs.create({ url: 'about:blank', active: true });
-    if (!createdTab?.id) throw new Error('Could not open the selected job URL.');
-    await workable.discardClaim(jobTabId);
-    jobTabId = createdTab.id;
-    await workable.registerClaim(jobTabId, claim);
-    await chrome.tabs.update(jobTabId, { url: jobUrl.href, active: true });
+    if (claimRegistered && applicationRuntime?.discardClaim) {
+      try {
+        await applicationRuntime.discardClaim(jobTabId);
+      } catch (discardError) {
+        console.error('[QTS Apply] Could not release the failed job row:', discardError);
+      }
+    } else {
+      const jobId = Number(claim.job?.id);
+      if (Number.isSafeInteger(jobId) && jobId > 0) {
+        const failed = await api.workerApiRequest(
+          'PATCH',
+          `/api/v2/jobs/${jobId}/status`,
+          { status: 'failed' }
+        );
+        if (!failed.success) {
+          console.error('[QTS Apply] Could not mark the claimed job row failed:', failed.message);
+        }
+      }
+    }
+    throw error;
   }
 
-  await worker.waitForTabComplete(jobTabId, 45000);
-  await setJobQueueBadge(jobTabId, '', '#2563eb');
-  await showPageDetectAlert(
-    jobTabId,
-    `Reserved ${claim.job.title} — ${claim.job.company} for Account ${claim.account.name}. The job page is ready.`,
-    'success',
-    10000
-  );
+  try {
+    await worker.waitForTabComplete(jobTabId, 45000);
+    await setJobQueueBadge(jobTabId, '', '#2563eb');
+    await showPageDetectAlert(
+      jobTabId,
+      `Reserved ${claim.job.title} — ${claim.job.company} for Account ${claim.account.name}. The job page is ready.`,
+      'success',
+      10000
+    );
+  } catch (error) {
+    if (claimRegistered && applicationRuntime?.discardClaim) {
+      try {
+        await applicationRuntime.discardClaim(jobTabId);
+      } catch (discardError) {
+        console.error('[QTS Apply] Could not release the failed job row:', discardError);
+      }
+    }
+    throw error;
+  }
   return { ok: true, claimed: true, jobTabId };
 }
+
+self.__qtsStartNextApplication = (tabId) =>
+  startManagerJobQueue(tabId, { preferCurrentUrl: false });
 
 async function isAutoApplyArmed() {
   return Boolean(await self.__qtsAutoApplicationPipeline?.isExtensionOperational?.());

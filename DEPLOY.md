@@ -10,12 +10,12 @@ Browser ──► Vercel web app ──► Vercel API functions ──► Neon
 
 The web app proxies API requests to the API deployment. The deployed system
 uses the new-schema tables only. The extension supports the new Manager login
-and the GPT-assisted Workable application flow; other job sites and the retired
-Custom GPT application/PDF workflow are not part of this implementation.
+and a handler-based application queue. Workable is the first supported site
+handler; other site handlers can be added separately.
 
 Vercel deployment updates the web app and API only. The browser extension is a
 separate deliverable; update or reload the unpacked extension from the
-`extension` directory to use its Workable adapter.
+`extension` directory to use its application handlers.
 
 ## 1. Create a Neon database
 
@@ -65,8 +65,8 @@ removes retired legacy tables using `CASCADE`; this permanently deletes their
 contents and dependent objects. The active tables retained include
 `categories`, `users`, `job_list`, `bids`, `interviews`, `app_settings`,
 `prompts`, Manager application-answer tables, Account application profiles,
-Job–Account application attempts, GPT application tasks, and generated task
-documents. The API's daily cleanup cron requires `CRON_SECRET`.
+Account-specific job rows, GPT application tasks, and generated task documents.
+The API's daily cleanup cron requires `CRON_SECRET`.
 Use Neon's pooled connection string to keep database connections within the
 provider's limits.
 

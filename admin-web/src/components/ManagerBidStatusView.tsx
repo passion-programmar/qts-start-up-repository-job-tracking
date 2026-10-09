@@ -2,123 +2,97 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '@/lib/api';
+import type { NewSchemaJobAccountStatus } from '@/lib/types';
 
-type BidAttempt = {
-  attempt_id: number | null;
-  job_id: number;
-  job_title: string;
-  company: string;
-  url: string;
-  account_user_id: number;
-  account_name: string;
-  status: 'not_started' | 'in_progress' | 'needs_review' | 'submitted' | 'failed';
-  failure_reason: string | null;
-  manager_note: string | null;
-  started_at: string | null;
-  submitted_at: string | null;
-};
-
-const STATUS_LABELS: Record<BidAttempt['status'], string> = {
-  not_started: 'Not started',
-  in_progress: 'In progress',
-  needs_review: 'Needs review',
-  submitted: 'Submitted',
+const STATUS_LABELS: Record<NewSchemaJobAccountStatus['status'], string> = {
+  todo: 'To do',
+  processing: 'Processing',
+  did: 'Applied',
   failed: 'Failed',
 };
 
+function applicationTypeLabel(type: string): string {
+  return type === 'workable' ? 'Workable' : type;
+}
+
 export function ManagerBidStatusView() {
-  const [attempts, setAttempts] = useState<BidAttempt[]>([]);
+  const [rows, setRows] = useState<NewSchemaJobAccountStatus[]>([]);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [message, setMessage] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
-    const response = await api<{ success: boolean; message?: string; attempts?: BidAttempt[] }>(
-      'GET',
-      '/api/v2/application-attempts'
-    );
-    if (!response.success) {
-      setError(response.message || 'Could not load Bid Status.');
-      setAttempts([]);
-    } else {
-      setAttempts(response.attempts || []);
+    try {
+      const response = await api<{
+        success: boolean;
+        message?: string;
+        jobs?: NewSchemaJobAccountStatus[];
+      }>('GET', '/api/v2/jobs/statuses');
+      if (!response.success) {
+        setError(response.message || 'Could not load application statuses.');
+        setRows([]);
+      } else {
+        setRows(response.jobs || []);
+      }
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : 'Could not load application statuses.');
+      setRows([]);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }, []);
 
   useEffect(() => {
-    // Load Job–Account bid statuses after the page mounts.
+    // Load application statuses on mount.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
   }, [load]);
 
-  const visibleAttempts = useMemo(() => {
+  const visibleRows = useMemo(() => {
     const needle = search.trim().toLowerCase();
-    if (!needle) return attempts;
-    return attempts.filter((attempt) =>
-      `${attempt.account_name} ${attempt.job_title} ${attempt.company} ${attempt.status} ${attempt.failure_reason || ''}`
+    if (!needle) return rows;
+    return rows.filter((row) =>
+      `${row.account_name} ${row.job_title} ${row.company} ${row.application_type} ${row.status}`
         .toLowerCase().includes(needle)
     );
-  }, [attempts, search]);
-
-  async function editNote(attempt: BidAttempt) {
-    if (!attempt.attempt_id) return;
-    const managerNote = window.prompt('Add or edit a note for this application:', attempt.manager_note || '');
-    if (managerNote === null) return;
-    const result = await api<{ success: boolean; message?: string }>(
-      'PUT',
-      `/api/v2/application-attempts/${attempt.job_id}/${attempt.account_user_id}/note`,
-      { managerNote: managerNote.trim() || null }
-    );
-    if (!result.success) {
-      setError(result.message || 'Could not save the Manager note.');
-      return;
-    }
-    setMessage('Manager note saved.');
-    await load();
-  }
+  }, [rows, search]);
 
   return (
     <>
       {error && <div className="alert alert-error">{error}</div>}
-      {message && <div className="alert alert-success">{message}</div>}
       <div className="search-row">
-        <input aria-label="Search bid statuses" placeholder="Search Accounts or jobs…"
-          value={search} onChange={(event) => setSearch(event.target.value)} />
-        <button className="btn btn-ghost" type="button" onClick={() => { void load(); }}>Refresh</button>
+        <input
+          aria-label="Search bid statuses"
+          placeholder="Search Accounts or jobs…"
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+        />
+        <button className="btn btn-ghost" type="button" onClick={() => { void load(); }}>
+          Refresh
+        </button>
       </div>
       <div className="card">
         <h2>Applications by Account and Job</h2>
-        <p className="text-muted">Each assigned Account has its own application status. Failed attempts are closed and cannot be retried.</p>
+        <p className="text-muted">Each Account has a separate job row. Status changes from To do to Processing, Applied, or Failed.</p>
         {loading ? <div className="text-muted">Loading…</div> : (
           <div className="table-scroll">
             <table>
               <thead><tr>
-                <th>Account</th><th>Job</th><th>Company</th><th>Status</th>
-                <th>Failure reason</th><th>Manager note</th><th />
+                <th>Account</th><th>Job</th><th>Application type</th><th>Company</th><th>Status</th>
               </tr></thead>
               <tbody>
-                {visibleAttempts.map((attempt) => (
-                  <tr key={`${attempt.job_id}-${attempt.account_user_id}`}>
-                    <td>{attempt.account_name}</td>
-                    <td><a href={attempt.url} target="_blank" rel="noreferrer">{attempt.job_title}</a></td>
-                    <td>{attempt.company}</td>
-                    <td>{STATUS_LABELS[attempt.status]}</td>
-                    <td>{attempt.failure_reason || '—'}</td>
-                    <td>{attempt.manager_note || '—'}</td>
-                    <td className="text-right">
-                      {attempt.attempt_id && (
-                        <button className="btn btn-ghost btn-sm" type="button" onClick={() => { void editNote(attempt); }}>
-                          {attempt.manager_note ? 'Edit note' : 'Add note'}
-                        </button>
-                      )}
-                    </td>
+                {visibleRows.map((row) => (
+                  <tr key={row.job_id}>
+                    <td>{row.account_name}</td>
+                    <td><a href={row.url} target="_blank" rel="noreferrer">{row.job_title}</a></td>
+                    <td>{applicationTypeLabel(row.application_type)}</td>
+                    <td>{row.company}</td>
+                    <td>{STATUS_LABELS[row.status]}</td>
                   </tr>
                 ))}
-                {!visibleAttempts.length && <tr><td colSpan={7} className="text-muted">No assigned Accounts or bids found.</td></tr>}
+                {!visibleRows.length && <tr><td colSpan={5} className="text-muted">No Account-specific job rows found.</td></tr>}
               </tbody>
             </table>
           </div>

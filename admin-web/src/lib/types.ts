@@ -125,6 +125,7 @@ export interface NewSchemaJob {
   id: number;
   manager_id: number;
   url: string;
+  application_type: string;
   company: string;
   title: string;
   category_ids: number[];
@@ -133,7 +134,7 @@ export interface NewSchemaJob {
   selected_accounts: Array<{
     account_user_id: number;
     name: string;
-    status: 'not_started' | 'in_progress' | 'needs_review' | 'submitted' | 'failed';
+    status: 'processing' | 'todo' | 'did' | 'failed';
   }>;
   status: 'processing' | 'todo' | 'did' | 'failed';
   get_date: string;
@@ -150,6 +151,18 @@ export interface NewSchemaAccountProfile {
 export interface NewSchemaCategory {
   category_id: number;
   category_title: string;
+}
+
+export interface NewSchemaJobAccountStatus {
+  job_id: number;
+  job_title: string;
+  company: string;
+  url: string;
+  application_type: string;
+  status: 'processing' | 'todo' | 'did' | 'failed';
+  get_date: string;
+  account_user_id: number;
+  account_name: string;
 }
 
 export interface NewSchemaBid {

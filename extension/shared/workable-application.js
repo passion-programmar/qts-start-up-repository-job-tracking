@@ -57,16 +57,9 @@
     return result;
   }
 
-  function attemptPath(run) {
-    return `/api/v2/application-attempts/${run.jobId}/${run.accountId}`;
-  }
-
-  async function setAttemptStatus(run, status, failureReason) {
+  async function setJobStatus(run, status) {
     if (run.status === status) return;
-    await request('PATCH', attemptPath(run), {
-      status,
-      ...(failureReason ? { failureReason } : {}),
-    });
+    await request('PATCH', `/api/v2/jobs/${run.jobId}/status`, { status });
     run.status = status;
     await saveRun(run.tabId, run);
   }
@@ -83,8 +76,8 @@
     }
   }
 
-  async function loadContext(url) {
-    return request('GET', `/api/v2/application-attempts/context?url=${encodeURIComponent(url)}`);
+  async function loadContext(jobId) {
+    return request('GET', `/api/v2/jobs/${encodeURIComponent(jobId)}/application-context`);
   }
 
   function delay(ms) {
@@ -152,7 +145,6 @@
       run.phase = 'paused';
       run.pageNumber = pageNumber;
       await saveRun(tabId, run);
-      await setAttemptStatus(run, 'needs_review');
       await watchForOutcome(tabId);
       notify(tabId, 'Security verification found. Complete it manually; QTS will not bypass it.', 'warn');
       return { paused: true };
@@ -161,7 +153,6 @@
       run.phase = 'paused';
       run.pageNumber = pageNumber;
       await saveRun(tabId, run);
-      await setAttemptStatus(run, 'needs_review');
       await watchForOutcome(tabId);
       notify(tabId, 'No application fields were detected on this page. Review it and continue manually.', 'warn');
       return { paused: true };
@@ -201,7 +192,6 @@
       run.phase = 'paused';
       run.pageNumber = pageNumber;
       await saveRun(tabId, run);
-      await setAttemptStatus(run, 'needs_review');
       await watchForOutcome(tabId);
       notify(tabId, (fill?.failures || ['Some fields need your review.']).join(' '), 'warn');
       return { paused: true };
@@ -212,7 +202,6 @@
       run.phase = 'paused';
       run.pageNumber = pageNumber;
       await saveRun(tabId, run);
-      await setAttemptStatus(run, 'needs_review');
       await watchForOutcome(tabId);
       const reason = unresolved.length
         ? `The GPT needs facts for: ${unresolved.map((field) => field.question).join('; ')}.`
@@ -227,7 +216,6 @@
       run.phase = 'paused';
       run.pageNumber = pageNumber;
       await saveRun(tabId, run);
-      await setAttemptStatus(run, 'needs_review');
       await watchForOutcome(tabId);
       notify(tabId, 'Workable did not advance to another page. Review validation messages and continue manually.', 'warn');
       return { paused: true };
@@ -236,7 +224,6 @@
       run.phase = 'waiting';
       run.pageNumber = pageNumber;
       await saveRun(tabId, run);
-      await setAttemptStatus(run, 'needs_review');
       await watchForOutcome(tabId);
       notify(tabId, `Application form filled for ${account.name}. Review it and click the final Submit button yourself.`, 'warn');
       return { completedPages: true, finalPage: true };
@@ -251,28 +238,36 @@
 
   async function failAndContinue(run, reason) {
     try {
-      await setAttemptStatus(run, 'failed', reason);
+      await setJobStatus(run, 'failed');
     } catch (error) {
-      notify(run.tabId, `Could not record the failed attempt: ${error.message}`, 'error');
-      console.error('[QTS Workable] Failed to save attempt status:', error);
+      notify(run.tabId, `Could not record the failed job status: ${error.message}`, 'error');
+      console.error('[QTS Workable] Failed to save job status:', error);
       return;
     }
     notify(run.tabId, `Account ${run.accountName}: ${reason}`, 'error');
-    await beginNext(run.tabId, run.jobUrl);
+    await beginNext(run.tabId);
   }
 
-  async function beginNext(tabId, jobUrl) {
+  async function beginNext(tabId) {
     await clearRun(tabId);
     const tab = await chrome.tabs.get(tabId).catch(() => null);
     if (!tab) return;
-    if (tab.url === jobUrl) await chrome.tabs.reload(tabId);
-    else await chrome.tabs.update(tabId, { url: jobUrl });
+    const startNext = self.__qtsStartNextApplication;
+    if (typeof startNext !== 'function') {
+      notify(tabId, 'Application status was saved, but the next-job workflow is unavailable in this extension version.', 'error');
+      return;
+    }
+    try {
+      await startNext(tabId);
+    } catch (error) {
+      notify(tabId, `Application status was saved, but QTS could not load the next job: ${error.message}`, 'error');
+    }
   }
 
   async function startAccount(tabId, context, account, claimedRun = null, pageState = {}) {
     const job = context.job;
     const accountId = Number(account.account_user_id);
-    const resumingPaused = claimedRun?.phase === 'paused';
+    const resuming = Boolean(claimedRun && claimedRun.phase !== 'claimed');
     const run = claimedRun || {
       tabId,
       jobId: Number(job.j_id),
@@ -284,36 +279,27 @@
       pageNumber: 0,
     };
 
-    if (!claimedRun) {
-      const started = await request(
-        'POST',
-        `/api/v2/application-attempts/${job.j_id}/${accountId}/start`
-      );
-      run.status = started.attempt.status;
-      run.attemptId = Number(started.attempt.attempt_id);
-    }
-    if (!run.attemptId) throw new Error('Application attempt ID is missing.');
-    if (!resumingPaused) run.phase = 'opening';
+    if (!resuming) run.phase = 'opening';
     await saveRun(tabId, run);
 
     let jobDescription = String(run.jobDescription || '').trim();
     if (!jobDescription && !run.taskId) jobDescription = await captureJobDescription(tabId);
     const task = await request(
       'POST',
-      `/api/v2/gpt-application-tasks/attempts/${run.attemptId}`,
+      `/api/v2/gpt-application-tasks/jobs/${run.jobId}`,
       {
         sourcePlatform: 'workable',
         ...(jobDescription ? { jobDescription } : {}),
       }
     );
     if (run.taskId && task.taskId !== run.taskId) {
-      throw new Error('The server returned a different GPT task for this application attempt.');
+      throw new Error('The server returned a different GPT task for this job row.');
     }
     run.taskId = task.taskId;
     if (jobDescription) run.jobDescription = jobDescription;
     await saveRun(tabId, run);
 
-    if (!resumingPaused) {
+    if (!resuming) {
       const opened = await sendToTab(tabId, { type: 'QTS_WORKABLE_OPEN_FORM' });
       if (!opened?.ok) throw new Error(opened?.error || 'Could not open the Workable application form.');
     }
@@ -329,15 +315,14 @@
     if (jobDescription.length < 100) {
       run.phase = 'paused';
       await saveRun(tabId, run);
-      await setAttemptStatus(run, 'needs_review');
       notify(tabId, 'QTS could not capture the job description. Add or confirm it before continuing with the GPT.', 'warn');
       return;
     }
     run.jobDescription = jobDescription;
-    const pageChangedAfterPause = resumingPaused
+    const pageChangedAfterPause = resuming
       && (run.pageUrl !== pageState.url || run.pageSignature !== pageState.pageSignature);
     let pageNumber = Math.max(1, Number(run.pageNumber || 0) + (pageChangedAfterPause ? 1 : 0));
-    if (resumingPaused && !pageChangedAfterPause) {
+    if (resuming && !pageChangedAfterPause) {
       notify(tabId, 'This application page is paused. Complete the requested fields and continue to the next page.', 'warn');
       return;
     }
@@ -358,7 +343,6 @@
     }
     run.phase = 'paused';
     await saveRun(tabId, run);
-    await setAttemptStatus(run, 'needs_review');
     await watchForOutcome(tabId);
     notify(tabId, 'This application has more than 50 pages. Continue manually and review before submitting.', 'warn');
   }
@@ -369,85 +353,39 @@
     try {
       if (!api?.workerApiRequest) throw new Error('Extension API helpers are unavailable.');
       const savedRun = await readRun(tabId);
-      if (savedRun) {
-        if (savedRun.phase === 'waiting') {
-          await watchForOutcome(tabId);
-          return;
-        }
-        if (savedRun.phase === 'paused'
-          && savedRun.pageSignature === pageSignature
-          && savedRun.pageUrl === url) {
-          return;
-        }
-        if (savedRun.phase !== 'claimed' && savedRun.phase !== 'paused') {
-          notify(
-            tabId,
-            'An earlier Workable attempt is still in progress. Review this page; QTS will not restart or duplicate it.',
-            'warn'
-          );
-          return;
-        }
+      if (!savedRun) return;
+      if (savedRun.phase === 'waiting') {
+        await watchForOutcome(tabId);
+        return;
       }
+      if (!['claimed', 'paused', 'processing'].includes(savedRun.phase)) {
+        notify(tabId, 'This Workable job row is not active. Start Apply from the extension to claim a todo row.', 'warn');
+        return;
+      }
+      const pageChanged = savedRun.phase !== 'claimed'
+        && (savedRun.pageSignature !== pageSignature || savedRun.pageUrl !== url);
+      if (savedRun.phase !== 'claimed' && !pageChanged) return;
 
       let context;
       try {
-        context = await loadContext(url);
+        context = await loadContext(savedRun.jobId);
       } catch (error) {
-        if (!/not assigned|workable job url/i.test(error.message)) {
-          notify(tabId, error.message, 'error');
-        }
-        return;
+        throw error;
       }
 
-      const accounts = context.accounts || [];
-      if (savedRun?.phase === 'claimed' || savedRun?.phase === 'paused') {
-        const claimedAccount = accounts.find(
-          (account) => Number(account.account_user_id) === Number(savedRun.accountId)
-        );
-        if (Number(context.job?.j_id) !== Number(savedRun.jobId)
-          || !claimedAccount
-          || (claimedAccount.status !== 'in_progress'
-            && !(savedRun.phase === 'paused' && claimedAccount.status === 'needs_review'))) {
-          notify(tabId, 'The reserved job or Account no longer matches this page. Review the Manager job list before retrying.', 'error');
-          return;
-        }
-        await startAccount(tabId, context, claimedAccount, savedRun, {
-          url,
-          pageSignature,
-        });
-        return;
+      if (Number(context.job?.j_id) !== Number(savedRun.jobId)
+        || Number(context.account?.account_user_id) !== Number(savedRun.accountId)) {
+        throw new Error('The reserved job row or Account no longer matches. Check the Manager job list.');
       }
-
-      const unfinished = accounts.find((account) =>
-        account.status === 'in_progress' || account.status === 'needs_review'
-      );
-      if (unfinished) {
-        notify(
-          tabId,
-          `${unfinished.name} already has an unfinished attempt. Finish or review it before processing another Account.`,
-          'warn'
-        );
-        return;
-      }
-      const account = accounts.find((item) => item.status === 'not_started');
-      if (!account) return;
-      await startAccount(tabId, context, account);
+      await startAccount(tabId, context, context.account, savedRun, { url, pageSignature });
     } catch (error) {
       console.error('[QTS Workable] Could not process assigned Account:', error);
       const run = await readRun(tabId).catch(() => null);
-      if (run && ['opening', 'processing'].includes(run.phase)) {
-        run.phase = 'paused';
-        await saveRun(tabId, run);
-        if (run.attemptId) {
-          try {
-            await setAttemptStatus(run, 'needs_review');
-            await watchForOutcome(tabId);
-          } catch (statusError) {
-            console.error('[QTS Workable] Could not record the paused GPT task:', statusError);
-          }
-        }
+      if (run && run.status === 'processing' && run.phase !== 'waiting') {
+        await failAndContinue(run, error.message || 'Could not process the Workable application.');
+      } else {
+        notify(tabId, error.message || 'Could not process the Workable application.', 'error');
       }
-      notify(tabId, error.message || 'Could not process the Workable application.', 'error');
     } finally {
       busyTabs.delete(tabId);
     }
@@ -463,17 +401,22 @@
       tabId,
       jobId,
       accountId,
-      attemptId: Number(claim?.attempt?.attempt_id) || null,
       jobUrl: claim.job.url,
       accountName: claim.account.name,
-      status: 'in_progress',
+      status: 'processing',
       phase: 'claimed',
     });
   }
 
   async function discardClaim(tabId) {
     const run = await readRun(tabId);
-    if (run?.phase === 'claimed') await clearRun(tabId);
+    if (run?.phase === 'claimed') {
+      try {
+        await setJobStatus(run, 'failed');
+      } finally {
+        await clearRun(tabId);
+      }
+    }
   }
 
   async function handleOutcome(tabId, message) {
@@ -482,13 +425,13 @@
     if (!run || (run.phase !== 'waiting' && run.phase !== 'paused')) return;
     if (message.outcome === 'submitted') {
       try {
-        await setAttemptStatus(run, 'submitted');
+        await setJobStatus(run, 'did');
       } catch (error) {
         notify(tabId, `Workable confirmed submission, but QTS could not save it: ${error.message}`, 'error');
         return;
       }
       notify(tabId, `Workable confirmed submission for ${run.accountName}.`, 'success');
-      await beginNext(tabId, run.jobUrl);
+      await beginNext(tabId);
     } else if (message.outcome === 'failed') {
       await failAndContinue(run, message.reason || 'Workable reported a submission error.');
     }

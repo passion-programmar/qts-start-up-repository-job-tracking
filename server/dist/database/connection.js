@@ -200,16 +200,31 @@ async function runMigrations() {
     CREATE TABLE IF NOT EXISTS job_list (
       j_id SERIAL PRIMARY KEY,
       u_id INTEGER NOT NULL REFERENCES users(u_id) ON DELETE RESTRICT,
-      url TEXT NOT NULL UNIQUE,
+      url TEXT NOT NULL,
+      application_type TEXT NOT NULL DEFAULT 'unknown',
       company TEXT NOT NULL,
       title TEXT NOT NULL,
       category_ids INTEGER[] NOT NULL DEFAULT ARRAY[]::INTEGER[],
-      selected_account_u_ids INTEGER[] NOT NULL DEFAULT ARRAY[]::INTEGER[],
       status TEXT NOT NULL DEFAULT 'todo'
         CHECK (status IN ('processing', 'todo', 'did', 'failed')),
       get_date TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+    await execute('ALTER TABLE job_list ADD COLUMN IF NOT EXISTS application_type TEXT NOT NULL DEFAULT \'unknown\'');
+    await execute(`
+    UPDATE job_list
+    SET application_type = CASE
+      WHEN url ~* '^https?://[^/]*[.]workable[.]com/([^?]*?/)?j/[^/?#]+'
+        THEN 'workable'
+      ELSE regexp_replace(
+        split_part(split_part(split_part(lower(url), '://', 2), '/', 1), ':', 1),
+        '^www[.]',
+        ''
+      )
+    END
+    WHERE application_type = 'unknown'
+  `);
+    await execute('ALTER TABLE job_list DROP CONSTRAINT IF EXISTS job_list_url_key');
     await execute(`
     CREATE TABLE IF NOT EXISTS job_account_assignments (
       job_account_assignment_id SERIAL PRIMARY KEY,
@@ -353,20 +368,41 @@ async function runMigrations() {
     )
   `);
     await execute(`
-    CREATE TABLE IF NOT EXISTS application_attempts (
-      attempt_id SERIAL PRIMARY KEY,
-      manager_user_id INTEGER NOT NULL REFERENCES users(u_id) ON DELETE RESTRICT,
-      j_id INTEGER NOT NULL REFERENCES job_list(j_id) ON DELETE RESTRICT,
-      account_user_id INTEGER NOT NULL REFERENCES users(u_id) ON DELETE RESTRICT,
-      status TEXT NOT NULL CHECK (status IN ('in_progress', 'needs_review', 'submitted', 'failed')),
-      failure_reason TEXT,
-      manager_note TEXT,
-      started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      submitted_at TIMESTAMPTZ,
-      updated_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      UNIQUE (j_id, account_user_id)
+    CREATE TABLE IF NOT EXISTS gpt_application_tasks (
+      task_id TEXT PRIMARY KEY,
+      job_id INTEGER NOT NULL REFERENCES job_list(j_id) ON DELETE CASCADE,
+      status TEXT NOT NULL DEFAULT 'waiting_for_page'
+        CHECK (status IN ('waiting_for_page', 'waiting_for_gpt', 'ready', 'failed', 'completed')),
+      page_number INTEGER NOT NULL DEFAULT 0 CHECK (page_number >= 0),
+      task_context JSONB NOT NULL DEFAULT '{}'::jsonb,
+      package JSONB NOT NULL DEFAULT '{}'::jsonb,
+      answers JSONB NOT NULL DEFAULT '[]'::jsonb,
+      resume_text TEXT,
+      resume_text_expires_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      last_activity_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+    await execute(`
+    CREATE TABLE IF NOT EXISTS gpt_application_task_documents (
+      task_id TEXT NOT NULL REFERENCES gpt_application_tasks(task_id) ON DELETE CASCADE,
+      document_type TEXT NOT NULL CHECK (document_type IN ('resume', 'cover_letter')),
+      file_name TEXT NOT NULL,
+      content BYTEA NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (task_id, document_type)
+    )
+  `);
+    await execute(`
+    ALTER TABLE gpt_application_tasks
+    ADD COLUMN IF NOT EXISTS answers JSONB NOT NULL DEFAULT '[]'::jsonb
+  `);
+    await execute(`
+    ALTER TABLE gpt_application_tasks
+    ADD COLUMN IF NOT EXISTS job_id INTEGER REFERENCES job_list(j_id) ON DELETE CASCADE
+  `);
+    await migrateAccountSpecificJobRows();
     await execute(`
     INSERT INTO account_application_profiles (account_user_id, first_name, last_name)
     SELECT u.u_id,
@@ -406,17 +442,10 @@ async function runMigrations() {
     await execute('CREATE INDEX IF NOT EXISTS idx_manager_salary_answers_manager ON manager_salary_answers(manager_user_id)');
     await execute('CREATE INDEX IF NOT EXISTS idx_manager_custom_answers_manager ON manager_custom_application_answers(manager_user_id)');
     await execute('CREATE INDEX IF NOT EXISTS idx_account_application_profiles_account ON account_application_profiles(account_user_id)');
-    await execute('CREATE INDEX IF NOT EXISTS idx_application_attempts_manager ON application_attempts(manager_user_id, updated_date DESC)');
+    await execute('CREATE INDEX IF NOT EXISTS idx_job_list_manager_url ON job_list(u_id, url)');
+    await execute('CREATE INDEX IF NOT EXISTS idx_job_list_queue_type_status ON job_list(u_id, application_type, status, get_date)');
+    await execute('CREATE INDEX IF NOT EXISTS idx_gpt_application_tasks_resume_expiry ON gpt_application_tasks(resume_text_expires_at) WHERE resume_text IS NOT NULL');
     await migrateSchema();
-    await execute(`
-    INSERT INTO application_attempts (
-      manager_user_id, j_id, account_user_id, status, submitted_at, started_at
-    )
-    SELECT b.manager_user_id, b.j_id, b.u_id, 'submitted', b.applied_date, b.applied_date
-    FROM bids b
-    JOIN job_list j ON j.j_id = b.j_id
-    ON CONFLICT (j_id, account_user_id) DO NOTHING
-  `);
     await execute(`
     DROP TABLE IF EXISTS
       bidders, bidder_job_sites, account_job_sites, job_sites,
@@ -427,6 +456,128 @@ async function runMigrations() {
   `);
     logger_1.logger.info('Legacy tables removed; new-schema data retained');
     logger_1.logger.info('Database migrations complete');
+}
+async function migrateAccountSpecificJobRows() {
+    await withTransaction(async (tx) => {
+        const attemptTable = await tx.query(`SELECT to_regclass('public.application_attempts') IS NOT NULL AS exists`);
+        const hasAttempts = Boolean(attemptTable.rows[0].exists);
+        const taskAttemptColumn = await tx.query(`SELECT EXISTS (
+         SELECT 1 FROM information_schema.columns
+         WHERE table_schema = current_schema()
+           AND table_name = 'gpt_application_tasks'
+           AND column_name = 'attempt_id'
+       ) AS exists`);
+        const hasTaskAttemptColumn = Boolean(taskAttemptColumn.rows[0].exists);
+        if (hasAttempts) {
+            await tx.query(`WITH missing AS (
+           SELECT attempt.j_id, attempt.account_user_id
+           FROM application_attempts attempt
+           JOIN users account ON account.u_id = attempt.account_user_id
+             AND account.role = 'account'
+           WHERE NOT EXISTS (
+             SELECT 1 FROM job_account_assignments assignment
+             WHERE assignment.j_id = attempt.j_id
+               AND assignment.account_user_id = attempt.account_user_id
+           )
+         ), numbered AS (
+           SELECT missing.j_id, missing.account_user_id,
+                  COALESCE((
+                    SELECT MAX(existing.position)
+                    FROM job_account_assignments existing WHERE existing.j_id = missing.j_id
+                  ), 0) + ROW_NUMBER() OVER (
+                    PARTITION BY missing.j_id ORDER BY missing.account_user_id
+                  ) AS position
+           FROM missing
+         )
+         INSERT INTO job_account_assignments (j_id, account_user_id, position)
+         SELECT j_id, account_user_id, position::int FROM numbered
+         ON CONFLICT (j_id, account_user_id) DO NOTHING`);
+        }
+        const assignedJobs = await tx.query(`SELECT job.j_id, job.u_id, job.url, job.application_type, job.company, job.title, job.category_ids,
+              job.status, job.get_date, assignment.job_account_assignment_id,
+              assignment.account_user_id
+       FROM job_list job
+       JOIN job_account_assignments assignment ON assignment.j_id = job.j_id
+       ORDER BY job.j_id, assignment.position, assignment.job_account_assignment_id`);
+        const rows = assignedJobs.rows;
+        let currentJobId = -1;
+        let keptFirstAccount = false;
+        for (const row of rows) {
+            if (Number(row.j_id) !== currentJobId) {
+                currentJobId = Number(row.j_id);
+                keptFirstAccount = false;
+            }
+            if (!keptFirstAccount) {
+                keptFirstAccount = true;
+                continue;
+            }
+            const inserted = await tx.query(`INSERT INTO job_list (u_id, url, application_type, company, title, category_ids, status, get_date)
+         VALUES ($1, $2, $3, $4, $5, $6::int[], $7, $8)
+         RETURNING j_id`, [
+                row.u_id, row.url, row.application_type, row.company,
+                row.title, row.category_ids, row.status, row.get_date,
+            ]);
+            const newJobId = Number(inserted.rows[0].j_id);
+            await tx.query(`UPDATE job_account_assignments
+         SET j_id = $1, position = 1
+         WHERE job_account_assignment_id = $2`, [newJobId, row.job_account_assignment_id]);
+            await tx.query('UPDATE bids SET j_id = $1 WHERE j_id = $2 AND u_id = $3', [newJobId, row.j_id, row.account_user_id]);
+            if (hasAttempts) {
+                await tx.query('UPDATE application_attempts SET j_id = $1 WHERE j_id = $2 AND account_user_id = $3', [newJobId, row.j_id, row.account_user_id]);
+            }
+        }
+        if (hasAttempts) {
+            await tx.query(`UPDATE job_list job
+         SET status = CASE
+           WHEN attempt.status = 'submitted' THEN 'did'
+           WHEN attempt.status = 'failed' THEN 'failed'
+           ELSE 'processing'
+         END
+         FROM application_attempts attempt
+         WHERE attempt.j_id = job.j_id
+           AND attempt.account_user_id = (
+             SELECT assignment.account_user_id
+             FROM job_account_assignments assignment
+             WHERE assignment.j_id = job.j_id
+             LIMIT 1
+           )`);
+        }
+        await tx.query(`UPDATE job_list job SET status = 'did'
+       FROM bids bid
+       JOIN job_account_assignments assignment
+         ON assignment.j_id = bid.j_id AND assignment.account_user_id = bid.u_id
+       WHERE job.j_id = bid.j_id AND job.status <> 'failed'`);
+        if (hasTaskAttemptColumn) {
+            if (!hasAttempts) {
+                throw new Error('GPT tasks still reference application attempts, but the attempt table is missing.');
+            }
+            await tx.query(`UPDATE gpt_application_tasks task
+         SET job_id = attempt.j_id
+         FROM application_attempts attempt
+         WHERE task.attempt_id = attempt.attempt_id AND task.job_id IS NULL`);
+            await tx.query(`UPDATE gpt_application_tasks
+         SET task_context = jsonb_set(
+           task_context,
+           '{jobContext,jobId}',
+           to_jsonb(job_id),
+           true
+         )
+         WHERE task_context->'jobContext' IS NOT NULL`);
+            const orphanedTasks = await tx.query('SELECT COUNT(*)::int AS count FROM gpt_application_tasks WHERE job_id IS NULL');
+            const orphanedCount = Number(orphanedTasks.rows[0].count);
+            if (orphanedCount) {
+                throw new Error(`Cannot migrate ${orphanedCount} GPT task(s) without a matching Account job row.`);
+            }
+            await tx.query('ALTER TABLE gpt_application_tasks DROP CONSTRAINT IF EXISTS gpt_application_tasks_attempt_id_fkey');
+            await tx.query('ALTER TABLE gpt_application_tasks DROP CONSTRAINT IF EXISTS gpt_application_tasks_attempt_id_key');
+            await tx.query('ALTER TABLE gpt_application_tasks DROP COLUMN attempt_id');
+        }
+        await tx.query('ALTER TABLE gpt_application_tasks ALTER COLUMN job_id SET NOT NULL');
+        await tx.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_gpt_application_tasks_job_id ON gpt_application_tasks(job_id)');
+        if (hasAttempts) {
+            await tx.query('DROP TABLE application_attempts');
+        }
+    });
 }
 async function columnExists(table, column) {
     const row = await queryOne(`SELECT EXISTS (
@@ -523,10 +674,11 @@ function runPgDump(destination) {
 }
 async function runLogicalBackup(destination) {
     const tables = [
-        'categories', 'users', 'job_list', 'bids', 'interviews', 'app_settings', 'prompts',
+        'categories', 'users', 'job_list', 'job_account_assignments', 'bids', 'interviews', 'app_settings', 'prompts',
         'custom_gpts', 'manager_custom_gpt_assignments',
         'manager_application_profiles', 'manager_salary_answers', 'manager_custom_application_answers',
-        'account_application_profiles', 'application_attempts',
+        'account_application_profiles',
+        'gpt_application_tasks', 'gpt_application_task_documents',
     ];
     const lines = [
         `-- ${branding_1.APP_NAME} PostgreSQL logical backup`,
