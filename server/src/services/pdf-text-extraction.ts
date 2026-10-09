@@ -1,3 +1,4 @@
+import '@napi-rs/canvas';
 import { PDFParse } from 'pdf-parse';
 
 const MAX_RESUME_TEXT_LENGTH = 75_000;
