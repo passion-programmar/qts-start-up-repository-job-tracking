@@ -232,12 +232,65 @@ async function runMigrations(): Promise<void> {
       company TEXT NOT NULL,
       title TEXT NOT NULL,
       category_ids INTEGER[] NOT NULL DEFAULT ARRAY[]::INTEGER[],
-      selected_account_u_ids INTEGER[] NOT NULL DEFAULT ARRAY[]::INTEGER[],
       status TEXT NOT NULL DEFAULT 'todo'
         CHECK (status IN ('processing', 'todo', 'did', 'failed')),
       get_date TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+  await execute(`
+    CREATE TABLE IF NOT EXISTS job_account_assignments (
+      job_account_assignment_id SERIAL PRIMARY KEY,
+      j_id INTEGER NOT NULL REFERENCES job_list(j_id) ON DELETE CASCADE,
+      account_user_id INTEGER NOT NULL REFERENCES users(u_id) ON DELETE CASCADE,
+      position INTEGER NOT NULL CHECK (position > 0),
+      UNIQUE (j_id, account_user_id),
+      UNIQUE (j_id, position)
+    )
+  `);
+
+  await withTransaction(async (tx) => {
+    await tx.query('LOCK TABLE job_list IN ACCESS EXCLUSIVE MODE');
+    const legacyColumn = await tx.query(
+      `SELECT EXISTS (
+         SELECT 1 FROM information_schema.columns
+         WHERE table_schema = current_schema()
+           AND table_name = 'job_list'
+           AND column_name = 'selected_account_u_ids'
+       ) AS has_legacy_column`
+    );
+    if ((legacyColumn.rows[0] as { has_legacy_column: boolean }).has_legacy_column) {
+      const invalidAssignments = await tx.query(
+        `SELECT COUNT(*)::int AS count
+         FROM job_list job
+         CROSS JOIN LATERAL unnest(
+           COALESCE(job.selected_account_u_ids, ARRAY[]::INTEGER[])
+         ) AS selected(account_user_id)
+         LEFT JOIN users account ON account.u_id = selected.account_user_id
+         WHERE account.u_id IS NULL
+           OR account.role <> 'account'
+           OR account.parent_user_id <> job.u_id`
+      );
+      const invalidCount = Number((invalidAssignments.rows[0] as { count: number }).count);
+      if (invalidCount > 0) {
+        throw new Error(
+          `Cannot migrate job Account assignments: ${invalidCount} legacy assignment(s) reference a missing or differently owned Account.`
+        );
+      }
+      await tx.query(`
+        INSERT INTO job_account_assignments (j_id, account_user_id, position)
+        SELECT DISTINCT ON (job.j_id, selected.account_user_id)
+               job.j_id, selected.account_user_id, selected.position::int
+        FROM job_list job
+        CROSS JOIN LATERAL unnest(
+          COALESCE(job.selected_account_u_ids, ARRAY[]::INTEGER[])
+        ) WITH ORDINALITY AS selected(account_user_id, position)
+        ORDER BY job.j_id, selected.account_user_id, selected.position
+        ON CONFLICT (j_id, account_user_id) DO NOTHING
+      `);
+      await tx.query('DROP INDEX IF EXISTS idx_job_list_selected_accounts');
+      await tx.query('ALTER TABLE job_list DROP COLUMN selected_account_u_ids');
+    }
+  });
 
   await execute(`
     CREATE TABLE IF NOT EXISTS bids (
@@ -384,7 +437,7 @@ async function runMigrations(): Promise<void> {
   await execute('CREATE INDEX IF NOT EXISTS idx_users_category ON users(category_id)');
   await execute('CREATE INDEX IF NOT EXISTS idx_job_list_manager ON job_list(u_id)');
   await execute('CREATE INDEX IF NOT EXISTS idx_job_list_categories ON job_list USING GIN(category_ids)');
-  await execute('CREATE INDEX IF NOT EXISTS idx_job_list_selected_accounts ON job_list USING GIN(selected_account_u_ids)');
+  await execute('CREATE INDEX IF NOT EXISTS idx_job_account_assignments_account ON job_account_assignments(account_user_id, j_id)');
   await execute('CREATE INDEX IF NOT EXISTS idx_bids_user ON bids(u_id)');
   await execute('CREATE INDEX IF NOT EXISTS idx_bids_job ON bids(j_id)');
   await execute('CREATE INDEX IF NOT EXISTS idx_interviews_bid ON interviews(b_id)');

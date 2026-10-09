@@ -78,7 +78,26 @@ async function validateJobAssignments(
 
 function jobProjection(): string {
   return `SELECT j.j_id AS id, j.u_id AS manager_id, j.url, j.company, j.title,
-                 j.category_ids, j.selected_account_u_ids, j.status, j.get_date,
+                 j.category_ids,
+                 COALESCE((
+                   SELECT array_agg(assignment.account_user_id ORDER BY assignment.position)
+                   FROM job_account_assignments assignment
+                   WHERE assignment.j_id = j.j_id
+                 ), ARRAY[]::INTEGER[]) AS selected_account_u_ids,
+                 COALESCE((
+                   SELECT json_agg(json_build_object(
+                     'account_user_id', assignment.account_user_id,
+                     'name', account.name,
+                     'status', COALESCE(attempt.status, 'not_started')
+                   ) ORDER BY assignment.position)
+                   FROM job_account_assignments assignment
+                   JOIN users account ON account.u_id = assignment.account_user_id
+                   LEFT JOIN application_attempts attempt
+                     ON attempt.j_id = assignment.j_id
+                    AND attempt.account_user_id = assignment.account_user_id
+                   WHERE assignment.j_id = j.j_id
+                 ), '[]'::json) AS selected_accounts,
+                 j.status, j.get_date,
                  (SELECT COUNT(*)::int FROM bids b WHERE b.j_id = j.j_id) AS bid_count
           FROM job_list j`;
 }
@@ -180,17 +199,26 @@ router.post('/', async (req: NewSchemaAuthRequest, res: Response) => {
     res.status(409).json({ success: false, message: 'That job URL has already been added.' });
     return;
   }
-  const row = await queryOne<{ j_id: number }>(
-    `INSERT INTO job_list (u_id, url, company, title, category_ids, selected_account_u_ids, status)
-     VALUES ($1, $2, $3, $4, $5::int[], $6::int[], $7)
-     RETURNING j_id`,
-    [
-      user.id, url, data.company, data.title, data.categoryIds,
-      data.selectedAccountUserIds, data.status ?? 'todo',
-    ]
-  );
-  const job = await queryOne(`${jobProjection()} WHERE j.j_id = $1`, [row!.j_id]);
-  logger.info('New-schema job created', { id: row!.j_id, managerId: user.id });
+  const jobId = await withTransaction(async (tx) => {
+    const inserted = await tx.query(
+      `INSERT INTO job_list (u_id, url, company, title, category_ids, status)
+       VALUES ($1, $2, $3, $4, $5::int[], $6)
+       RETURNING j_id`,
+      [user.id, url, data.company, data.title, data.categoryIds, data.status ?? 'todo']
+    );
+    const created = inserted.rows[0] as { j_id: number } | undefined;
+    if (!created) throw new Error('Job could not be created.');
+    for (const [position, accountId] of data.selectedAccountUserIds.entries()) {
+      await tx.query(
+        `INSERT INTO job_account_assignments (j_id, account_user_id, position)
+         VALUES ($1, $2, $3)`,
+        [created.j_id, accountId, position + 1]
+      );
+    }
+    return created.j_id;
+  });
+  const job = await queryOne(`${jobProjection()} WHERE j.j_id = $1`, [jobId]);
+  logger.info('New-schema job created', { id: jobId, managerId: user.id });
   res.status(201).json({ success: true, job });
 });
 
@@ -207,14 +235,6 @@ router.put('/:id', async (req: NewSchemaAuthRequest, res: Response) => {
     return;
   }
   const data = parsed.data;
-  const existing = await queryOne<{ j_id: number }>(
-    'SELECT j_id FROM job_list WHERE j_id = $1 AND u_id = $2',
-    [id, user.id]
-  );
-  if (!existing) {
-    res.status(404).json({ success: false, message: 'Job not found in your list.' });
-    return;
-  }
   const assignmentError = await validateJobAssignments(
     user.id,
     data.categoryIds,
@@ -233,22 +253,37 @@ router.put('/:id', async (req: NewSchemaAuthRequest, res: Response) => {
     res.status(409).json({ success: false, message: 'That job URL has already been added.' });
     return;
   }
-  await withTransaction(async (client) => {
+  const updated = await withTransaction(async (client) => {
+    const locked = await client.query(
+      'SELECT j_id FROM job_list WHERE j_id = $1 AND u_id = $2 FOR UPDATE',
+      [id, user.id]
+    );
+    if (!locked.rows.length) return false;
     await client.query(
       `UPDATE job_list SET url = $1, company = $2, title = $3, category_ids = $4::int[],
-         selected_account_u_ids = $5::int[], status = COALESCE($6, status)
-       WHERE j_id = $7 AND u_id = $8`,
-      [
-        url, data.company, data.title, data.categoryIds,
-        data.selectedAccountUserIds, data.status ?? null, id, user.id,
-      ]
+         status = COALESCE($5, status)
+       WHERE j_id = $6 AND u_id = $7`,
+      [url, data.company, data.title, data.categoryIds, data.status ?? null, id, user.id]
     );
+    await client.query('DELETE FROM job_account_assignments WHERE j_id = $1', [id]);
+    for (const [position, accountId] of data.selectedAccountUserIds.entries()) {
+      await client.query(
+        `INSERT INTO job_account_assignments (j_id, account_user_id, position)
+         VALUES ($1, $2, $3)`,
+        [id, accountId, position + 1]
+      );
+    }
     await client.query(
       `UPDATE bids SET job_status = COALESCE($1, job_status)
        WHERE j_id = $2 AND manager_user_id = $3`,
       [data.status ?? null, id, user.id]
     );
+    return true;
   });
+  if (!updated) {
+    res.status(404).json({ success: false, message: 'Job not found in your list.' });
+    return;
+  }
   const job = await queryOne(`${jobProjection()} WHERE j.j_id = $1`, [id]);
   res.json({ success: true, job });
 });

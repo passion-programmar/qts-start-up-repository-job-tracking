@@ -40,7 +40,8 @@ tables listed above are kept. Legacy tables are not recreated by migrations.
 - Super creates Admin users; Admins create Managers and Callers; Managers
   create Account profiles.
 - Managers create and manage job listings, assigning categories and Account
-  profiles.
+  profiles. A job is stored once in `job_list`; each assigned Account has a
+  separate ordered row in `job_account_assignments`.
 - Managers can delete old job listings from their active list even when there
   is application history. The associated retry-blocking attempt rows are cleared;
   Bids and linked interview records remain as history.
@@ -75,6 +76,8 @@ tables listed above are kept. Legacy tables are not recreated by migrations.
   supported by this Manager Apply pipeline.
 - The Manager Bid Status page shows each assigned Account's status and keeps
   past attempt history visible if an Account is later unassigned from a job.
+- The existing Manager → Jobs table shows each job once and lists its assigned
+  Accounts with each Account's individual application-attempt status.
 
 ## Retired workflows
 

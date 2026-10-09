@@ -6,6 +6,14 @@ import { useAuth } from '@/components/AuthProvider';
 import { formatDate } from '@/lib/utils';
 import type { NewSchemaBid, NewSchemaJob } from '@/lib/types';
 
+const ATTEMPT_STATUS_LABELS: Record<NewSchemaJob['selected_accounts'][number]['status'], string> = {
+  not_started: 'Not started',
+  in_progress: 'In progress',
+  needs_review: 'Needs review',
+  submitted: 'Submitted',
+  failed: 'Failed',
+};
+
 export function NewSchemaJobsView() {
   const { user } = useAuth();
   const isManager = user?.role === 'manager';
@@ -70,7 +78,9 @@ export function NewSchemaJobsView() {
     const needle = search.trim().toLowerCase();
     if (!needle) return jobs;
     return jobs.filter((job) =>
-      `${job.title} ${job.company} ${job.url} ${job.status}`.toLowerCase().includes(needle)
+      `${job.title} ${job.company} ${job.url} ${job.status} ${(job.selected_accounts || [])
+        .map((account) => `${account.name} ${account.status}`).join(' ')}`
+        .toLowerCase().includes(needle)
     );
   }, [jobs, search]);
 
@@ -137,7 +147,17 @@ export function NewSchemaJobsView() {
                       <td><a href={job.url} target="_blank" rel="noreferrer">{job.title}</a></td>
                       <td>{job.company}</td>
                       <td>{job.status}</td>
-                      <td>{job.selected_account_u_ids?.length || 0}</td>
+                      <td>
+                        {job.selected_accounts?.length ? (
+                          <ul style={{ margin: 0, paddingLeft: 18 }}>
+                            {job.selected_accounts.map((account) => (
+                              <li key={account.account_user_id}>
+                                {account.name} — {ATTEMPT_STATUS_LABELS[account.status] || account.status}
+                              </li>
+                            ))}
+                          </ul>
+                        ) : 'No Accounts assigned'}
+                      </td>
                       <td>{job.bid_count}</td>
                       <td>{formatDate(job.get_date)}</td>
                       <td>

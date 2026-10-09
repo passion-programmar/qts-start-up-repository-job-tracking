@@ -66,10 +66,9 @@ const TABLES = {
   },
   job_list: {
     label: 'Jobs (new schema)',
-    description: 'Manager-owned job listings and their Account selections.',
+    description: 'Manager-owned job listings; Account assignments are stored separately.',
     columns: [
-      'j_id', 'u_id', 'url', 'company', 'title', 'category_ids',
-      'selected_account_u_ids', 'status', 'get_date',
+      'j_id', 'u_id', 'url', 'company', 'title', 'category_ids', 'status', 'get_date',
     ],
     searchColumns: ['url', 'company', 'title', 'status'],
     orderBy: 'j_id',
@@ -80,9 +79,21 @@ const TABLES = {
       company: { type: 'text', required: true, maxLength: 300 },
       title: { type: 'text', required: true, maxLength: 300 },
       category_ids: { type: 'integer-array' },
-      selected_account_u_ids: { type: 'integer-array' },
       status: { type: 'enum', required: true, options: ['processing', 'todo', 'did', 'failed'] },
       get_date: { type: 'datetime' },
+    },
+  },
+  job_account_assignments: {
+    label: 'Job–Account assignments',
+    description: 'Ordered Account assignments for each Manager-owned job.',
+    columns: ['job_account_assignment_id', 'j_id', 'account_user_id', 'position'],
+    searchColumns: ['j_id', 'account_user_id'],
+    orderBy: 'job_account_assignment_id',
+    primaryKey: 'job_account_assignment_id',
+    fields: {
+      j_id: { type: 'integer', required: true },
+      account_user_id: { type: 'integer', required: true },
+      position: { type: 'integer', required: true },
     },
   },
   bids: {

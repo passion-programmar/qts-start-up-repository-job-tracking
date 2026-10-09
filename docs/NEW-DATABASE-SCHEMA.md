@@ -121,12 +121,28 @@ initially based on category matching and then adjustable by the Manager.
 | `company` | Text | Required |
 | `title` | Text | Required |
 | `category_ids` | Integer array | Required; category IDs associated with the job; defaults to an empty array |
-| `selected_account_u_ids` | Integer array | Required; selected Account User IDs eligible for the job; defaults to an empty array |
 | `status` | Text | `processing`, `todo`, `did`, or `failed`; defaults to `todo` |
 | `get_date` | Timestamp with time zone | Required; defaults to the creation time |
 
 The current database only verifies that `u_id` exists. It does not verify that
 the referenced User has the Manager role.
+
+### `job_account_assignments`
+
+Stores one relationship row for each Account assigned to a job. A job remains
+one row in `job_list` even when it has multiple assigned Accounts.
+
+| Column | Type | Rules and purpose |
+|---|---|---|
+| `job_account_assignment_id` | Integer | Primary key, generated automatically |
+| `j_id` | Integer | Required foreign key to `job_list.j_id`; assignments are removed with their job |
+| `account_user_id` | Integer | Required foreign key to `users.u_id`; assignments are removed with their Account |
+| `position` | Integer | Required positive value that preserves the Manager's Account selection order |
+
+The `(j_id, account_user_id)` pair and `(j_id, position)` are each unique.
+Application attempts are tracked separately for each job/Account pair. The
+Manager Jobs table displays each job once and lists its assigned Accounts with
+their individual attempt statuses.
 
 ### `bids`
 
@@ -268,25 +284,26 @@ to recover Super-deleted records.
   many settings.
 - **Users → Prompts:** one User may create or update many prompts.
 
-## Array-based job assignments
+## Job assignments and categories
 
-To avoid separate job assignment tables, `job_list` stores `category_ids` and
-`selected_account_u_ids` as PostgreSQL integer arrays. PostgreSQL can index
-these arrays with
-GIN indexes, but it cannot enforce a foreign key for each array element.
+Account assignments use `job_account_assignments` rather than an Account ID
+array on `job_list`. This preserves one canonical job row and one
+foreign-key-constrained relationship row per assigned Account. Assignment
+order is stored in `position`, and deleting a job or Account removes its
+assignment rows through the foreign keys.
 
-Therefore, server code must validate that:
+The API continues accepting `selectedAccountUserIds` as a list when a Manager
+saves or edits a job. It validates ownership and category matching, then
+inserts one assignment row per Account in a transaction. The
+`selected_account_u_ids` property in job API responses is derived from those
+relationship rows for compatibility; it is no longer a database column.
 
-1. Every `category_ids` entry refers to an existing Category.
-2. Every `selected_account_u_ids` entry refers to an existing Account User.
-3. Selected Account profiles match the job's categories according to the
-   application rules, unless the Manager intentionally overrides the initial
-   category-based selection.
-
-When deleting a Category or Account profile, the server must also remove or
-update its ID in any affected job arrays. For stronger referential integrity,
-the future design could replace these arrays with relationship tables, but
-that would increase the number of tables.
+`category_ids` remains an integer array. Server code validates that every
+category exists and that selected Accounts match the job categories unless
+the Manager intentionally overrides the initial category-based selection.
+On startup, the schema migration copies existing Account IDs and their order
+from `job_list.selected_account_u_ids` into `job_account_assignments`, then
+drops the legacy Account-ID array column.
 
 ## Useful queries
 

@@ -528,10 +528,6 @@ router.delete('/:id', async (req: NewSchemaAuthRequest, res: Response) => {
       res.status(409).json({ success: false, message: 'This Account has bid history and cannot be deleted.' });
       return;
     }
-    await execute(
-      'UPDATE job_list SET selected_account_u_ids = array_remove(selected_account_u_ids, $1)',
-      [userId]
-    );
   } else if (target.role === 'manager') {
     const jobs = await queryOne<{ count: number }>(
       'SELECT COUNT(*)::int AS count FROM job_list WHERE u_id = $1',

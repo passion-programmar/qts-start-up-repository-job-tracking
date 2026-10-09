@@ -32,11 +32,10 @@ router.get('/', async (req: NewSchemaAuthRequest, res: Response) => {
               account.u_id AS account_user_id, account.name AS account_name,
               COALESCE(a.status, 'not_started') AS status,
               a.failure_reason, a.manager_note, a.started_at, a.submitted_at,
-              a.updated_date, j.get_date AS job_date, selected.position, FALSE AS historical
+              a.updated_date, j.get_date AS job_date, assignment.position, FALSE AS historical
        FROM job_list j
-       CROSS JOIN LATERAL unnest(j.selected_account_u_ids) WITH ORDINALITY
-         AS selected(account_user_id, position)
-       JOIN users account ON account.u_id = selected.account_user_id
+       JOIN job_account_assignments assignment ON assignment.j_id = j.j_id
+       JOIN users account ON account.u_id = assignment.account_user_id
          AND account.role = 'account' AND account.parent_user_id = j.u_id
        LEFT JOIN application_attempts a
          ON a.j_id = j.j_id AND a.account_user_id = account.u_id
@@ -50,7 +49,9 @@ router.get('/', async (req: NewSchemaAuthRequest, res: Response) => {
        JOIN job_list j ON j.j_id = a.j_id AND j.u_id = $1
        JOIN users account ON account.u_id = a.account_user_id
          AND account.role = 'account' AND account.parent_user_id = j.u_id
-       WHERE NOT (account.u_id = ANY(COALESCE(j.selected_account_u_ids, ARRAY[]::integer[])))
+       LEFT JOIN job_account_assignments assignment
+         ON assignment.j_id = j.j_id AND assignment.account_user_id = account.u_id
+       WHERE assignment.j_id IS NULL
      )
      SELECT attempt_id, job_id, job_title, company, url, account_user_id, account_name,
             status, failure_reason, manager_note, started_at, submitted_at, updated_date
@@ -89,16 +90,15 @@ router.get('/context', async (req: NewSchemaAuthRequest, res: Response) => {
             (profile.resume_content IS NOT NULL) AS has_resume,
             profile.education, profile.work_experience,
             COALESCE(attempt.status, 'not_started') AS status
-     FROM unnest(
-       (SELECT selected_account_u_ids FROM job_list WHERE j_id = $1)
-     ) WITH ORDINALITY AS selected(account_user_id, position)
-     JOIN users account ON account.u_id = selected.account_user_id
+     FROM job_account_assignments assignment
+     JOIN users account ON account.u_id = assignment.account_user_id
        AND account.role = 'account' AND account.parent_user_id = $2
        AND account.blocked_date IS NULL
      LEFT JOIN account_application_profiles profile ON profile.account_user_id = account.u_id
      LEFT JOIN application_attempts attempt
        ON attempt.j_id = $1 AND attempt.account_user_id = account.u_id
-     ORDER BY selected.position`,
+     WHERE assignment.j_id = $1
+     ORDER BY assignment.position`,
     [job.j_id, managerId]
   );
   const applicationProfile = await queryOne(
@@ -143,18 +143,16 @@ router.post('/claim-next', async (req: NewSchemaAuthRequest, res: Response) => {
   const claimed = await withTransaction(async (tx) => {
     const candidateResult = await tx.query(
       `SELECT j.j_id, j.title, j.company, j.url, j.status,
-              selected.account_user_id, account.name AS account_name,
+              assignment.account_user_id, account.name AS account_name,
               attempt.attempt_id AS existing_attempt_id
        FROM job_list j
-       CROSS JOIN LATERAL unnest(
-         COALESCE(j.selected_account_u_ids, ARRAY[]::integer[])
-       ) WITH ORDINALITY AS selected(account_user_id, position)
-       JOIN users account ON account.u_id = selected.account_user_id
+       JOIN job_account_assignments assignment ON assignment.j_id = j.j_id
+       JOIN users account ON account.u_id = assignment.account_user_id
          AND account.role = 'account' AND account.parent_user_id = j.u_id
          AND account.blocked_date IS NULL
        LEFT JOIN application_attempts attempt
          ON attempt.j_id = j.j_id
-         AND attempt.account_user_id = selected.account_user_id
+         AND attempt.account_user_id = assignment.account_user_id
        WHERE j.u_id = $1 AND j.status = 'todo'
          AND j.url ~* '^https?://[^/]*[.]workable[.]com/j/'
          AND (
@@ -162,7 +160,7 @@ router.post('/claim-next', async (req: NewSchemaAuthRequest, res: Response) => {
            OR (attempt.status = 'in_progress'
              AND attempt.updated_date < NOW() - INTERVAL '10 minutes')
          )
-       ORDER BY j.get_date DESC, j.j_id DESC, selected.position ASC`,
+       ORDER BY j.get_date DESC, j.j_id DESC, assignment.position ASC`,
       [managerId]
     );
 
@@ -187,7 +185,11 @@ router.post('/claim-next', async (req: NewSchemaAuthRequest, res: Response) => {
       const lockedJob = await tx.query(
         `SELECT j_id FROM job_list
          WHERE j_id = $1 AND u_id = $2 AND status = 'todo'
-           AND $3 = ANY(selected_account_u_ids)
+           AND EXISTS (
+             SELECT 1 FROM job_account_assignments assignment
+             WHERE assignment.j_id = job_list.j_id
+               AND assignment.account_user_id = $3
+           )
          FOR UPDATE SKIP LOCKED`,
         [row.j_id, managerId, row.account_user_id]
       );
@@ -252,7 +254,11 @@ router.post('/:jobId/:accountId/start', async (req: NewSchemaAuthRequest, res: R
      FROM job_list j
      JOIN users account ON account.u_id = $2 AND account.role = 'account'
        AND account.parent_user_id = j.u_id AND account.blocked_date IS NULL
-     WHERE j.j_id = $1 AND j.u_id = $3 AND $2 = ANY(j.selected_account_u_ids)`,
+     WHERE j.j_id = $1 AND j.u_id = $3
+       AND EXISTS (
+         SELECT 1 FROM job_account_assignments assignment
+         WHERE assignment.j_id = j.j_id AND assignment.account_user_id = $2
+       )`,
     [jobId, accountId, managerId]
   );
   if (!allowed) {

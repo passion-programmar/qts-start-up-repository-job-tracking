@@ -79,8 +79,9 @@ router.post('/', async (req: NewSchemaAuthRequest, res: Response) => {
      JOIN application_attempts attempt
        ON attempt.j_id = j.j_id AND attempt.account_user_id = account.u_id
        AND attempt.manager_user_id = j.u_id AND attempt.status = 'submitted'
-     WHERE j.j_id = $1 AND j.u_id = $3
-       AND $2 = ANY(j.selected_account_u_ids)`,
+     JOIN job_account_assignments assignment
+       ON assignment.j_id = j.j_id AND assignment.account_user_id = account.u_id
+     WHERE j.j_id = $1 AND j.u_id = $3`,
     [data.jobId, data.accountUserId, user.id]
   );
   if (!eligible) {

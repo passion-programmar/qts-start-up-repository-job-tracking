@@ -128,7 +128,13 @@ export interface NewSchemaJob {
   company: string;
   title: string;
   category_ids: number[];
+  /** Derived API compatibility field; assignments are stored as relation rows. */
   selected_account_u_ids: number[];
+  selected_accounts: Array<{
+    account_user_id: number;
+    name: string;
+    status: 'not_started' | 'in_progress' | 'needs_review' | 'submitted' | 'failed';
+  }>;
   status: 'processing' | 'todo' | 'did' | 'failed';
   get_date: string;
   bid_count: number;
