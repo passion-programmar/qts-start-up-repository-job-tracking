@@ -2,7 +2,7 @@ import { NextFunction, Router, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { execute, queryAll, queryOne } from '../../database/connection';
+import { execute, queryAll, queryOne, withTransaction } from '../../database/connection';
 import {
   NewSchemaAuthRequest,
   requireNewSchemaAuth,
@@ -572,6 +572,40 @@ router.delete('/tables/:table/:id', async (req: NewSchemaAuthRequest, res: Respo
         }
       }
     }
+    if (table === 'job_list') {
+      const deleted = await withTransaction(async (tx) => {
+        const lockedJob = await tx.query(
+          'SELECT j_id FROM job_list WHERE j_id = $1 FOR UPDATE',
+          [recordId]
+        );
+        if (!lockedJob.rows.length) return null;
+
+        const attempts = await tx.query(
+          'DELETE FROM application_attempts WHERE j_id = $1 RETURNING attempt_id',
+          [recordId]
+        );
+        const bids = await tx.query(
+          'DELETE FROM bids WHERE j_id = $1 RETURNING b_id',
+          [recordId]
+        );
+        await tx.query('DELETE FROM job_list WHERE j_id = $1', [recordId]);
+        return {
+          attemptsDeleted: attempts.rowCount ?? attempts.rows.length,
+          bidsDeleted: bids.rowCount ?? bids.rows.length,
+        };
+      });
+      if (!deleted) {
+        res.status(404).json({ success: false, message: 'Record not found.' });
+        return;
+      }
+      res.json({
+        success: true,
+        message: `Job deleted from live database with ${deleted.attemptsDeleted} application attempt(s) and ${deleted.bidsDeleted} Bid record(s). Related interview records were deleted with their Bids.`,
+        ...deleted,
+      });
+      return;
+    }
+
     const result = await execute(
       `DELETE FROM "${table}" WHERE "${definition.primaryKey}" = $1`,
       [recordId]
@@ -582,6 +616,17 @@ router.delete('/tables/:table/:id', async (req: NewSchemaAuthRequest, res: Respo
     }
     res.json({ success: true, message: 'Record deleted.' });
   } catch (error) {
+    if (table === 'job_list'
+      && typeof error === 'object'
+      && error !== null
+      && 'code' in error
+      && error.code === '23503') {
+      res.status(409).json({
+        success: false,
+        message: 'This job has related application history and cannot be deleted.',
+      });
+      return;
+    }
     next(error);
   }
 });

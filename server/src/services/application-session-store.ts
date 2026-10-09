@@ -11,6 +11,7 @@ export type ApplicationSessionStatus =
   | 'scanning'
   | 'filling'
   | 'awaiting_ai'
+  | 'apply'
   | 'completed'
   | 'abandoned'
   | 'error';

@@ -55,17 +55,14 @@ function booleanChoice(value: unknown): BooleanChoice {
   return '';
 }
 
-export function ManagerApplicationProfilesView({ superMode = false }: { superMode?: boolean }) {
-  const [managers, setManagers] = useState<Array<{ u_id: number; name: string; username: string }>>([]);
-  const [managerId, setManagerId] = useState('');
+export function ManagerApplicationProfilesView() {
   const [profile, setProfile] = useState<ProfileForm>(emptyProfile());
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const [isError, setIsError] = useState(false);
 
-  const loadProfile = useCallback(async (targetId?: string) => {
-    const query = superMode && targetId ? `?managerId=${encodeURIComponent(targetId)}` : '';
+  const loadProfile = useCallback(async () => {
     const response = await api<{
       success: boolean;
       message?: string;
@@ -73,7 +70,7 @@ export function ManagerApplicationProfilesView({ superMode = false }: { superMod
         salaryAnswers?: Array<Record<string, unknown>>;
         customAnswers?: Array<Record<string, unknown>>;
       };
-    }>('GET', `/api/v2/manager-application-profile${query}`);
+    }>('GET', '/api/v2/manager-application-profile');
     setLoading(false);
     if (!response.success || !response.profile) {
       setMessage(response.message || 'Could not load application profile.');
@@ -109,30 +106,13 @@ export function ManagerApplicationProfilesView({ superMode = false }: { superMod
     });
     setMessage('');
     setIsError(false);
-  }, [superMode]);
+  }, []);
 
   useEffect(() => {
-    if (!superMode) {
-      // The loader updates the view after its authenticated API request completes.
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      void loadProfile();
-      return;
-    }
-    let cancelled = false;
-    void api<{ success: boolean; users?: Array<{ u_id: number; name: string; username: string }> }>(
-      'GET',
-      '/api/v2/users?role=manager'
-    ).then((response) => {
-      if (cancelled) return;
-      const list = response.users || [];
-      setManagers(list);
-      const firstId = list[0] ? String(list[0].u_id) : '';
-      setManagerId(firstId);
-      if (firstId) void loadProfile(firstId);
-      else setLoading(false);
-    });
-    return () => { cancelled = true; };
-  }, [loadProfile, superMode]);
+    // The loader updates the view after its authenticated API request completes.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void loadProfile();
+  }, [loadProfile]);
 
   function update<K extends keyof ProfileForm>(key: K, value: ProfileForm[K]) {
     setProfile((current) => ({ ...current, [key]: value }));
@@ -144,7 +124,7 @@ export function ManagerApplicationProfilesView({ superMode = false }: { superMod
     setMessage('');
     const response = await api<{ success: boolean; message?: string }>(
       'PUT',
-      `/api/v2/manager-application-profile${superMode ? `?managerId=${encodeURIComponent(managerId)}` : ''}`,
+      '/api/v2/manager-application-profile',
       {
         managedCountry: profile.managedCountry || null,
         authorizedToWork: nullableBoolean(profile.authorizedToWork),
@@ -189,31 +169,11 @@ export function ManagerApplicationProfilesView({ superMode = false }: { superMod
 
   return (
     <form className="card settings-card" onSubmit={(event) => { void save(event); }}>
-      <div className="card-title">{superMode ? 'Manager Application Answers' : 'Reusable Application Answers'}</div>
+      <div className="card-title">Reusable Application Answers</div>
       <p className="text-muted">
-        Answers are shared with this Manager’s Accounts. They should only be reused when accurate for the applicant;
-        automation must ask rather than guess when an answer does not clearly apply.
+        These answers belong to your Manager account and are used for applications you manage. Reuse them only when
+        accurate for the Account applying; automation must ask rather than guess when an answer does not clearly apply.
       </p>
-      {superMode && (
-        <div className="form-group">
-          <label htmlFor="application-profile-manager">Manager</label>
-          <select
-            id="application-profile-manager"
-            value={managerId}
-            onChange={(event) => {
-              setManagerId(event.target.value);
-              if (event.target.value) {
-                setLoading(true);
-                void loadProfile(event.target.value);
-              }
-            }}
-          >
-            {managers.map((manager) => (
-              <option key={manager.u_id} value={manager.u_id}>{manager.name} ({manager.username})</option>
-            ))}
-          </select>
-        </div>
-      )}
       {loading ? <p>Loading application answers…</p> : (
         <>
           {message && <div className={`alert ${isError ? 'alert-error' : 'alert-success'}`}>{message}</div>}
@@ -325,7 +285,7 @@ export function ManagerApplicationProfilesView({ superMode = false }: { superMod
             ...profile.customAnswers, { topic: '', question: '', answer: '' },
           ])}>Add custom question and answer</button>
           <div className="form-actions">
-            <button className="btn btn-primary" type="submit" disabled={saving || (superMode && !managerId)}>
+            <button className="btn btn-primary" type="submit" disabled={saving}>
               {saving ? 'Saving…' : 'Save Application Answers'}
             </button>
           </div>

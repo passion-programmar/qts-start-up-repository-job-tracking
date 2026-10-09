@@ -244,6 +244,12 @@ optional Manager note, and timestamps. Attempts are unique per Job–Account
 pair and terminal failures cannot be restarted. Successful submissions also
 create the corresponding `bids` row. Attempt history remains available on the
 Manager Bid Status page when an Account is later unassigned from the job.
+When a Manager deletes a job-list entry, its application attempts are cleared
+so the active list can be refreshed; related Bids and interviews are retained.
+When Super deletes a job from the database browser, its application attempts
+and Bids are permanently deleted from the live database, and interviews linked
+to those Bids are deleted by the database cascade. Restore a database backup
+to recover Super-deleted records.
 
 ## Relationship details
 
@@ -337,9 +343,15 @@ legacy data:
 - `/api/v2/categories` and `/api/v2/settings` apply Super-only writes.
 - `/api/v2/jobs` lets Managers manage their own jobs and selected Account
   profiles; Admins can read jobs owned by their Managers and Super can read all.
-- `/api/v2/bids` records automation-submitted bids for a selected Account using
-  the owning Manager's authenticated session; it rejects unassigned Accounts
-  and duplicate bids.
+- `/api/v2/application-attempts` claims a Manager's next eligible `todo`
+  Workable job/Account pair from `job_list`, stores its attempt state, and
+  creates a Bid only when the Manager's extension reports a confirmed
+  submission. The attempt update and Bid insert are transactional.
+- `/api/v2/manager-application-profile` is Manager-only and reads or writes
+  only the authenticated Manager's reusable application answers. Super users
+  cannot select another Manager's profile.
+- `/api/v2/bids` exposes role-scoped Bid records and rejects unassigned
+  Accounts and duplicate Bids.
 - `/api/v2/interviews` scopes reads to the caller or reporting hierarchy;
   Managers schedule/edit interviews and Callers submit only the outcome on
   their assigned interviews.
@@ -357,6 +369,10 @@ analytics, and personal profile settings. Callers see only assigned interviews
 and can submit outcomes; Managers can manage their jobs, Account profiles,
 interviews, and scoped analytics; Admins and Super users have scoped staff and
 reporting views.
+For the extension's Manager workflow, Get JD saves to `/api/v2/jobs`, and Apply
+claims only from `/api/v2/application-attempts` using `job_list`; it does not
+use the legacy candidate or application-session records. Workable is currently
+the supported site for this automated application flow.
 
 News and the Super-only system-settings UI are not yet migrated. The
 `/api/v2/settings` API exists, but there is no corresponding frontend screen

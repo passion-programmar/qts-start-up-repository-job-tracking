@@ -21,7 +21,6 @@ const NAV_ITEMS: NavItem[] = [
   { href: '/bid-status', label: '📋 Bid Status', page: 'bid-status', modes: ['manager'] },
   { href: '/analytics', label: '📊 Analytics', page: 'analytics', modes: ['admin', 'manager'] },
   { href: '/database', label: '🗄️ Database', page: 'database', modes: ['admin'], roles: ['super'] },
-  { href: '/application-profiles', label: '📝 Application Profiles', page: 'application-profiles', modes: ['admin'], roles: ['super'] },
   { href: '/accounts', label: '👤 Account Profiles', page: 'accounts', modes: ['manager'] },
   { href: '/application-profile', label: '📝 Application Answers', page: 'application-profile', modes: ['manager'] },
   { href: '/people', label: '👥 People', page: 'people', modes: ['admin'] },
@@ -41,7 +40,6 @@ const PAGE_TITLES: Record<string, string> = {
   categories: 'Categories',
   interviews: 'Interview Process',
   settings: 'Settings',
-  'application-profiles': 'Manager Application Profiles',
   'application-profile': 'Application Answers',
   'bid-status': 'Bid Status',
 };

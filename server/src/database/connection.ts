@@ -205,6 +205,26 @@ async function runMigrations(): Promise<void> {
   `);
 
   await execute(`
+    CREATE TABLE IF NOT EXISTS custom_gpts (
+      custom_gpt_id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      url TEXT NOT NULL UNIQUE,
+      gpt_id TEXT NOT NULL UNIQUE,
+      created_by INTEGER REFERENCES users(u_id) ON DELETE SET NULL,
+      created_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_date TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await execute(`
+    CREATE TABLE IF NOT EXISTS manager_custom_gpt_assignments (
+      manager_user_id INTEGER PRIMARY KEY REFERENCES users(u_id) ON DELETE CASCADE,
+      custom_gpt_id INTEGER NOT NULL REFERENCES custom_gpts(custom_gpt_id) ON DELETE RESTRICT,
+      assigned_by INTEGER REFERENCES users(u_id) ON DELETE SET NULL,
+      assigned_date TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await execute(`
     CREATE TABLE IF NOT EXISTS job_list (
       j_id SERIAL PRIMARY KEY,
       u_id INTEGER NOT NULL REFERENCES users(u_id) ON DELETE RESTRICT,
@@ -509,6 +529,7 @@ function runPgDump(destination: string): Promise<void> {
 async function runLogicalBackup(destination: string): Promise<void> {
   const tables = [
     'categories', 'users', 'job_list', 'bids', 'interviews', 'app_settings', 'prompts',
+    'custom_gpts', 'manager_custom_gpt_assignments',
     'manager_application_profiles', 'manager_salary_answers', 'manager_custom_application_answers',
     'account_application_profiles', 'application_attempts',
   ] as const;

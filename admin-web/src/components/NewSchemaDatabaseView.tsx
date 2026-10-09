@@ -238,7 +238,10 @@ export function NewSchemaDatabaseView() {
   async function deleteRecord(record: Record<string, unknown>) {
     if (!tableInfo) return;
     const primaryValue = record[tableInfo.primaryKey];
-    if (!window.confirm(`Delete ${tableInfo.label} record ${String(primaryValue)}? Related records may also be removed.`)) return;
+    const confirmation = selectedTable === 'job_list'
+      ? `Permanently delete job ${String(primaryValue)} from live Neon, including its application attempts, Bids, and related interview records? Recovery will require restoring your database backup.`
+      : `Delete ${tableInfo.label} record ${String(primaryValue)}? Related records may also be removed.`;
+    if (!window.confirm(confirmation)) return;
     const result = await api<{ success: boolean; message?: string }>(
       'DELETE',
       `/api/v2/database/tables/${encodeURIComponent(selectedTable)}/${encodeURIComponent(String(primaryValue))}`

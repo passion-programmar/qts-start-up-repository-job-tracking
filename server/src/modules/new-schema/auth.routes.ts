@@ -105,6 +105,26 @@ router.get('/me', requireNewSchemaAuth, (req: NewSchemaAuthRequest, res: Respons
   });
 });
 
+router.get('/custom-gpt-assignment', requireNewSchemaAuth, async (req: NewSchemaAuthRequest, res: Response) => {
+  const user = req.newSchemaUser!;
+  if (user.role !== 'manager') {
+    res.status(403).json({ success: false, message: 'Only Managers can use the extension Custom GPT.' });
+    return;
+  }
+
+  const assigned = await queryOne<{ url: string; gpt_id: string }>(
+    `SELECT custom_gpt.url, custom_gpt.gpt_id
+     FROM manager_custom_gpt_assignments assignment
+     JOIN custom_gpts custom_gpt ON custom_gpt.custom_gpt_id = assignment.custom_gpt_id
+     WHERE assignment.manager_user_id = $1`,
+    [user.id]
+  );
+  const customGpt = assigned
+    ? { url: assigned.url, id: assigned.gpt_id, source: 'super_assignment' }
+    : null;
+  res.json({ success: true, assigned: Boolean(customGpt), customGpt });
+});
+
 router.post('/logout', requireNewSchemaAuth, (_req: NewSchemaAuthRequest, res: Response) => {
   res.json({ success: true, message: 'Logged out.' });
 });

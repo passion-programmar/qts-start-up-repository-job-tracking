@@ -136,6 +136,108 @@ router.get('/context', async (req: NewSchemaAuthRequest, res: Response) => {
   });
 });
 
+router.post('/claim-next', async (req: NewSchemaAuthRequest, res: Response) => {
+  if (!managerOnly(req, res)) return;
+  const managerId = req.newSchemaUser!.id;
+
+  const claimed = await withTransaction(async (tx) => {
+    const candidateResult = await tx.query(
+      `SELECT j.j_id, j.title, j.company, j.url, j.status,
+              selected.account_user_id, account.name AS account_name,
+              attempt.attempt_id AS existing_attempt_id
+       FROM job_list j
+       CROSS JOIN LATERAL unnest(
+         COALESCE(j.selected_account_u_ids, ARRAY[]::integer[])
+       ) WITH ORDINALITY AS selected(account_user_id, position)
+       JOIN users account ON account.u_id = selected.account_user_id
+         AND account.role = 'account' AND account.parent_user_id = j.u_id
+         AND account.blocked_date IS NULL
+       LEFT JOIN application_attempts attempt
+         ON attempt.j_id = j.j_id
+         AND attempt.account_user_id = selected.account_user_id
+       WHERE j.u_id = $1 AND j.status = 'todo'
+         AND j.url ~* '^https?://[^/]*[.]workable[.]com/j/'
+         AND (
+           attempt.attempt_id IS NULL
+           OR (attempt.status = 'in_progress'
+             AND attempt.updated_date < NOW() - INTERVAL '10 minutes')
+         )
+       ORDER BY j.get_date DESC, j.j_id DESC, selected.position ASC`,
+      [managerId]
+    );
+
+    for (const row of candidateResult.rows as Array<{
+      j_id: number;
+      title: string;
+      company: string;
+      url: string;
+      status: string;
+      account_user_id: number;
+      account_name: string;
+      existing_attempt_id: number | null;
+    }>) {
+      let parsedUrl: URL;
+      try {
+        parsedUrl = new URL(row.url);
+      } catch {
+        continue;
+      }
+      if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') continue;
+
+      const lockedJob = await tx.query(
+        `SELECT j_id FROM job_list
+         WHERE j_id = $1 AND u_id = $2 AND status = 'todo'
+           AND $3 = ANY(selected_account_u_ids)
+         FOR UPDATE SKIP LOCKED`,
+        [row.j_id, managerId, row.account_user_id]
+      );
+      if (!lockedJob.rows.length) continue;
+
+      const attemptResult = row.existing_attempt_id
+        ? await tx.query(
+          `UPDATE application_attempts
+           SET started_at = NOW(), updated_date = NOW(), failure_reason = NULL
+           WHERE attempt_id = $1 AND manager_user_id = $2 AND status = 'in_progress'
+             AND updated_date < NOW() - INTERVAL '10 minutes'
+           RETURNING attempt_id, status`,
+          [row.existing_attempt_id, managerId]
+        )
+        : await tx.query(
+          `INSERT INTO application_attempts (manager_user_id, j_id, account_user_id, status)
+           VALUES ($1, $2, $3, 'in_progress')
+           ON CONFLICT (j_id, account_user_id) DO NOTHING
+           RETURNING attempt_id, status`,
+          [managerId, row.j_id, row.account_user_id]
+        );
+      const attempt = attemptResult.rows[0] as { attempt_id: number; status: string } | undefined;
+      if (!attempt) continue;
+
+      return {
+        job: {
+          id: row.j_id,
+          title: row.title,
+          company: row.company,
+          url: row.url,
+          status: row.status,
+        },
+        account: {
+          id: row.account_user_id,
+          name: row.account_name,
+        },
+        attempt,
+      };
+    }
+
+    return null;
+  });
+
+  res.json({
+    success: true,
+    claimed: Boolean(claimed),
+    ...(claimed || {}),
+  });
+});
+
 router.post('/:jobId/:accountId/start', async (req: NewSchemaAuthRequest, res: Response) => {
   if (!managerOnly(req, res)) return;
   const jobId = Number.parseInt(req.params.jobId, 10);

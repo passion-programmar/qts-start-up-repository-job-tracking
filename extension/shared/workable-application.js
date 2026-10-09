@@ -106,32 +106,40 @@
     else await chrome.tabs.update(tabId, { url: jobUrl });
   }
 
-  async function startAccount(tabId, context, account) {
+  async function startAccount(tabId, context, account, claimedRun = null) {
     const job = context.job;
     const accountId = Number(account.account_user_id);
+    const run = claimedRun || {
+      tabId,
+      jobId: Number(job.j_id),
+      accountId,
+      jobUrl: job.url,
+      accountName: account.name,
+      status: 'in_progress',
+      phase: 'opening',
+    };
     let resume = null;
     if (account.has_resume) {
       const loaded = await api.workerFetchAccountResumeBase64(accountId);
       if (!loaded.success) {
+        if (claimedRun) {
+          await failAndContinue(run, loaded.message || 'Could not load the saved PDF resume.');
+          return;
+        }
         notify(tabId, loaded.message || 'Could not load the saved PDF resume.', 'error');
         return;
       }
       resume = { fileName: loaded.fileName, base64: loaded.base64 };
     }
 
-    const started = await request(
-      'POST',
-      `/api/v2/application-attempts/${job.j_id}/${accountId}/start`
-    );
-    const run = {
-      tabId,
-      jobId: Number(job.j_id),
-      accountId,
-      jobUrl: job.url,
-      accountName: account.name,
-      status: started.attempt.status,
-      phase: 'opening',
-    };
+    if (!claimedRun) {
+      const started = await request(
+        'POST',
+        `/api/v2/application-attempts/${job.j_id}/${accountId}/start`
+      );
+      run.status = started.attempt.status;
+    }
+    run.phase = 'opening';
     await saveRun(tabId, run);
 
     run.phase = 'filling';
@@ -213,12 +221,14 @@
           await watchForOutcome(tabId);
           return;
         }
-        notify(
-          tabId,
-          'An earlier Workable attempt is still in progress. Review this page; QTS will not restart or duplicate it.',
-          'warn'
-        );
-        return;
+        if (savedRun.phase !== 'claimed') {
+          notify(
+            tabId,
+            'An earlier Workable attempt is still in progress. Review this page; QTS will not restart or duplicate it.',
+            'warn'
+          );
+          return;
+        }
       }
 
       let context;
@@ -232,6 +242,20 @@
       }
 
       const accounts = context.accounts || [];
+      if (savedRun?.phase === 'claimed') {
+        const claimedAccount = accounts.find(
+          (account) => Number(account.account_user_id) === Number(savedRun.accountId)
+        );
+        if (Number(context.job?.j_id) !== Number(savedRun.jobId)
+          || !claimedAccount
+          || claimedAccount.status !== 'in_progress') {
+          notify(tabId, 'The reserved job or Account no longer matches this page. Review the Manager job list before retrying.', 'error');
+          return;
+        }
+        await startAccount(tabId, context, claimedAccount, savedRun);
+        return;
+      }
+
       const unfinished = accounts.find((account) =>
         account.status === 'in_progress' || account.status === 'needs_review'
       );
@@ -252,6 +276,28 @@
     } finally {
       busyTabs.delete(tabId);
     }
+  }
+
+  async function registerClaim(tabId, claim) {
+    const jobId = Number(claim?.job?.id);
+    const accountId = Number(claim?.account?.id);
+    if (!Number.isSafeInteger(tabId) || !Number.isSafeInteger(jobId) || !Number.isSafeInteger(accountId)) {
+      throw new Error('The reserved job claim is incomplete.');
+    }
+    await saveRun(tabId, {
+      tabId,
+      jobId,
+      accountId,
+      jobUrl: claim.job.url,
+      accountName: claim.account.name,
+      status: 'in_progress',
+      phase: 'claimed',
+    });
+  }
+
+  async function discardClaim(tabId) {
+    const run = await readRun(tabId);
+    if (run?.phase === 'claimed') await clearRun(tabId);
   }
 
   async function handleOutcome(tabId, message) {
@@ -291,4 +337,6 @@
     }
     return false;
   });
+
+  self.__qtsWorkableApplication = { registerClaim, discardClaim };
 })();

@@ -79,8 +79,9 @@
       ? await auth.getWorkerAuthToken()
       : (await chrome.storage.local.get(['authToken'])).authToken || '';
     if (!token) return false;
-    const stored = await chrome.storage.local.get([AUTO_APPLY_ENABLED_KEY]);
-    return stored[AUTO_APPLY_ENABLED_KEY] === true;
+    const stored = await chrome.storage.local.get([AUTO_APPLY_ENABLED_KEY, 'qtsCustomGptConfig']);
+    return stored[AUTO_APPLY_ENABLED_KEY] === true
+      && Boolean(stored.qtsCustomGptConfig?.url);
   }
 
   async function setAutoApplyEnabled(enabled) {
@@ -89,7 +90,7 @@
 
   async function isExtensionOperational() {
     const user = await readSessionUser();
-    if (!user || (user.role !== 'account' && user.role !== 'manager')) return false;
+    if (!user || user.role !== 'account') return false;
     if (!(await isAutoApplyEnabled())) return false;
     const candidateId = await readDefaultCandidateId(user.accountId);
     return Number.isFinite(candidateId) && candidateId > 0;
@@ -97,7 +98,7 @@
 
   async function resolveDefaultCandidateId() {
     const user = await readSessionUser();
-    if (!user || (user.role !== 'account' && user.role !== 'manager')) return null;
+    if (!user || user.role !== 'account') return null;
     if (!(await isAutoApplyEnabled())) return null;
     return readDefaultCandidateId(user.accountId);
   }

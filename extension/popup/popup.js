@@ -20,6 +20,7 @@ let sourceWindowId = null;
 let jobSavedInBackend = false;
 let currentUser = null;
 let candidateStacks = [];
+let managerCustomGptAssigned = false;
 const expandedCandidateIds = new Set();
 let activeApplicationId = null;
 let activeTaskId = null;
@@ -460,24 +461,42 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('btn-apply').addEventListener('click', async () => {
     try {
       await selectAction('btn-apply');
+      if (currentUser?.role !== 'manager') {
+        throw new Error('Only a Manager can start a job from the assigned job list.');
+      }
+      requireManagerCustomGpt();
+      let sourceId = targetTabId;
+      if (!sourceId) {
+        const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+        sourceId = activeTab?.id;
+      }
+      if (!sourceId) throw new Error('Could not find the active Chrome tab.');
+
+      const response = await chrome.runtime.sendMessage({
+        type: 'START_MANAGER_JOB_QUEUE',
+        sourceTabId: sourceId,
+      });
+      if (!response?.ok) {
+        throw new Error(response?.error || 'Could not start Apply.');
+      }
     } catch (e) {
-      showAlert('main-alert', e?.message || 'Could not save selected action.', 'error');
-      return;
+      showAlert('main-alert', e?.message || 'Could not start Apply.', 'error');
     }
-    const candidateId = defaultCandidateId || readSelectedDefaultCandidateId();
-    if (!candidateId) {
-      showAlert('main-alert', 'Choose a default candidate before applying.', 'error');
-      return;
-    }
-    startApplication(candidateId).catch((e) => {
-      showAlert('main-alert', e?.message || 'Could not start application.', 'error');
-    });
   });
   document.getElementById('btn-custom-apply').addEventListener('click', async () => {
     try {
+      if (currentUser?.role === 'manager') {
+        throw new Error('Managers apply through the assigned job list using the Apply button.');
+      }
       await selectAction('btn-custom-apply');
     } catch (e) {
       showAlert('main-alert', e?.message || 'Could not save selected action.', 'error');
+      return;
+    }
+    try {
+      requireManagerCustomGpt();
+    } catch (e) {
+      showAlert('main-alert', e?.message || 'Contact your Admin for a Custom GPT assignment.', 'warn');
       return;
     }
     dispatchGptTask(activeApplicationId, { pollAndApply: true }).catch((e) => {
@@ -510,12 +529,24 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
   document.getElementById('btn-open-custom-gpt')?.addEventListener('click', () => {
+    try {
+      requireManagerCustomGpt();
+    } catch (e) {
+      showAlert('main-alert', e?.message || 'Contact your Admin for a Custom GPT assignment.', 'warn');
+      return;
+    }
     dispatchGptTask(activeApplicationId, { pollAndApply: true }).catch((e) => {
       console.error('dispatchGptTask error:', e);
       showAlert('main-alert', e?.message || 'Could not send task to Custom GPT.', 'error');
     });
   });
   document.getElementById('btn-apply-gpt-package')?.addEventListener('click', () => {
+    try {
+      requireManagerCustomGpt();
+    } catch (e) {
+      showAlert('main-alert', e?.message || 'Contact your Admin for a Custom GPT assignment.', 'warn');
+      return;
+    }
     chrome.runtime.sendMessage({
       type: 'APPLY_GPT_PACKAGE_TO_TAB',
       applicationId: activeApplicationId,
@@ -702,6 +733,11 @@ async function bootstrapPopupFast() {
       name: user.name,
       role: user.role,
     };
+    const assignedGpt = await window.api.getAssignedCustomGpt();
+    if (!assignedGpt.success) {
+      throw new Error(assignedGpt.message || 'Could not check the Custom GPT assigned by your Admin.');
+    }
+    await applyWorkspaceCustomGpt(assignedGpt.customGpt, sessionUser);
     await storeSessionUser(sessionUser);
     await resumeSelectedMode(sessionUser);
   } finally {
@@ -917,6 +953,9 @@ async function readAutoApplyEnabled() {
 }
 
 async function setAutoApplyEnabled(enabled) {
+  if (enabled && !managerCustomGptAssigned) {
+    throw new Error('No Custom GPT is assigned to your Manager account. Contact your Admin.');
+  }
   await new Promise((resolve) => {
     chrome.storage.local.set({ [AUTO_APPLY_ENABLED_KEY]: Boolean(enabled) }, resolve);
   });
@@ -1028,19 +1067,24 @@ async function selectManagerTeam() {
       showAlert('login-alert', workspace.message || 'Could not load that Account team.', 'error');
       return;
     }
+    const assignedGpt = await window.api.getAssignedCustomGpt();
+    if (!assignedGpt.success) {
+      throw new Error(assignedGpt.message || 'Could not check the Custom GPT assigned by your Admin.');
+    }
     managerTeams = workspace.teams || managerTeams;
     const sessionSnapshot = workspace.user;
     await global.__qtsAccountAuth.storePopupAuth(workspace.token, sessionSnapshot, workspace.expiresAt);
     window.api.setCachedToken(workspace.token);
     await storeSessionUser(sessionSnapshot);
     applyCandidatesData(workspace.candidates || [], workspace.stacks || []);
-    if (workspace.customGpt) await applyWorkspaceCustomGpt(workspace.customGpt, sessionSnapshot);
+    await applyWorkspaceCustomGpt(assignedGpt.customGpt, sessionSnapshot);
     await writeCandidateCache(workspace.candidates || [], workspace.stacks || [], sessionSnapshot);
     document.getElementById('login-team-step')?.classList.add('hidden');
-    document.getElementById('login-candidate-fields')?.classList.remove('hidden');
+    document.getElementById('login-candidate-step')?.classList.add('hidden');
+    document.getElementById('login-candidate-fields')?.classList.add('hidden');
     setSession(sessionSnapshot);
-    defaultCandidateId = await readDefaultCandidateId(sessionSnapshot.accountId);
-    await showDefaultCandidateStep(sessionSnapshot);
+    defaultCandidateId = null;
+    await showActionScreen(sessionSnapshot);
   } finally {
     hideLoading();
   }
@@ -1119,6 +1163,10 @@ async function continueToActionScreen() {
   if (!user || !isAccountSession(user)) {
     throw new Error('Sign in first.');
   }
+  if (user.role === 'manager') {
+    await showActionScreen(user);
+    return;
+  }
   const select = document.getElementById('login-default-candidate');
   const candidateId = parseInt(select?.value, 10);
   if (!Number.isFinite(candidateId) || !isValidDefaultCandidateId(candidateId)) {
@@ -1130,9 +1178,13 @@ async function continueToActionScreen() {
 }
 
 async function toggleAutoApplyFromPopup() {
+  requireManagerCustomGpt();
   const user = currentUser || await readSessionUser();
   if (!user || !isAccountSession(user)) {
     throw new Error('Sign in first.');
+  }
+  if (user.role === 'manager') {
+    throw new Error('Managers apply through the assigned job list using the Apply button.');
   }
   if (!(await readAutoApplyEnabled())) {
     const select = document.getElementById('main-default-candidate');
@@ -1158,6 +1210,10 @@ function updateAutoApplyBarUi() {
   const statusEl = document.getElementById('auto-apply-status');
   const toggleBtn = document.getElementById('btn-toggle-auto-apply');
   if (!bar || !statusEl || !toggleBtn) return;
+  if (currentUser?.role === 'manager') {
+    bar.classList.add('hidden');
+    return;
+  }
 
   readAutoApplyEnabled().then((enabled) => {
     bar.classList.remove('hidden');
@@ -1203,6 +1259,13 @@ function updateDefaultCandidateUi() {
   const quickBtn = document.getElementById('btn-start-default-candidate');
   const mainSelect = document.getElementById('main-default-candidate');
   const def = getDefaultCandidate();
+  const managerMode = currentUser?.role === 'manager';
+  mainSelect?.classList.toggle('hidden', managerMode || !candidates.length);
+  quickBtn?.classList.toggle('hidden', managerMode);
+  document.getElementById('cand-list')?.classList.toggle('hidden', managerMode);
+  document.getElementById('cand-empty')?.classList.toggle('hidden', managerMode);
+  document.querySelector('.cand-header')?.classList.toggle('hidden', managerMode);
+  if (managerMode) return;
 
   if (mainSelect) {
     if (candidates.length) {
@@ -1225,6 +1288,10 @@ function updateDefaultCandidateUi() {
 }
 
 async function startApplicationWithDefault() {
+  if (currentUser?.role === 'manager') {
+    throw new Error('Managers apply through the assigned job list using the Apply button.');
+  }
+  requireManagerCustomGpt();
   const def = getDefaultCandidate();
   if (!def) {
     throw new Error('Choose a default candidate on the login screen or from the Candidates dropdown.');
@@ -1237,6 +1304,10 @@ async function startApplicationWithDefault() {
 
 async function ensureWorkspaceReady(user) {
   if (!user || !isAccountSession(user)) return false;
+  if (user.role === 'manager') {
+    defaultCandidateId = null;
+    return true;
+  }
   if (await needsDefaultCandidateSelection(user)) {
     await showDefaultCandidateStep(user);
     return false;
@@ -1326,6 +1397,11 @@ async function doLogin() {
       };
       await global.__qtsAccountAuth.storePopupAuth(r.token, sessionSnapshot, r.expiresAt);
       window.api.setCachedToken(r.token);
+      const assignedGpt = await window.api.getAssignedCustomGpt();
+      if (!assignedGpt.success) {
+        throw new Error(assignedGpt.message || 'Could not check the Custom GPT assigned by your Admin.');
+      }
+      await applyWorkspaceCustomGpt(assignedGpt.customGpt, sessionSnapshot);
       document.getElementById('login-pass').value = '';
       clearAlert('login-alert');
       await showActionScreen(sessionSnapshot);
@@ -1406,13 +1482,34 @@ function applyCandidatesData(nextCandidates, nextStacks) {
 }
 
 async function applyWorkspaceCustomGpt(customGpt, user) {
-  if (!customGpt?.url || !global.__qtsCustomGpt?.persistCustomGptConfig) return;
-  await global.__qtsCustomGpt.persistCustomGptConfig({
-    url: customGpt.url,
-    id: customGpt.id,
-    source: customGpt.source || 'account',
-    accountId: user?.accountId ?? null,
+  managerCustomGptAssigned = Boolean(customGpt?.url);
+  if (managerCustomGptAssigned) {
+    await global.__qtsCustomGpt?.persistCustomGptConfig?.({
+      url: customGpt.url,
+      id: customGpt.id,
+      source: customGpt.source || 'super_assignment',
+      accountId: user?.accountId ?? null,
+    });
+  } else {
+    await new Promise((resolve) => {
+      chrome.storage.local.remove(['qtsCustomGptConfig', 'qtsCustomGptTabId'], resolve);
+    });
+    global.__qtsCustomGpt?.applyCustomGptConfig?.(null);
+    await new Promise((resolve) => {
+      chrome.storage.local.remove([AUTO_APPLY_ENABLED_KEY], resolve);
+    });
+    await chrome.runtime.sendMessage({ type: 'RESET_AUTO_PIPELINE_STATE' }).catch(() => {});
+  }
+  await chrome.runtime.sendMessage({
+    type: 'SET_CUSTOM_GPT_CONFIG',
+    customGpt: managerCustomGptAssigned ? customGpt : null,
   });
+}
+
+function requireManagerCustomGpt() {
+  if (!managerCustomGptAssigned) {
+    throw new Error('No Custom GPT is assigned to your Manager account. Contact your Admin.');
+  }
 }
 
 async function fetchWorkspaceFromApi() {
@@ -1464,6 +1561,16 @@ async function fetchWorkspaceData(forceRefresh = false) {
   const workspace = await fetchWorkspaceFromApi();
   if (!workspace.success) return workspace;
 
+  if (workspace.user?.role === 'manager') {
+    const assignedGpt = await window.api.getAssignedCustomGpt();
+    if (!assignedGpt.success) {
+      return {
+        success: false,
+        message: assignedGpt.message || 'Could not check the Custom GPT assigned by your Admin.',
+      };
+    }
+    workspace.customGpt = assignedGpt.customGpt || null;
+  }
   managerTeams = workspace.teams || managerTeams;
   lastWorkspaceFetchAt = Date.now();
   applyCandidatesData(workspace.candidates, workspace.stacks);
@@ -1568,6 +1675,7 @@ async function clearSessionUser() {
 }
 
 async function clearAuthState() {
+  managerCustomGptAssigned = false;
   await clearToken();
   await global.__qtsAccountAuth?.clearAuth?.();
   await clearCandidateCache();
@@ -2253,6 +2361,7 @@ async function copyTextToClipboard(text) {
 }
 
 async function dispatchGptTask(applicationId, { pollAndApply = false, taskId: explicitTaskId } = {}) {
+  requireManagerCustomGpt();
   const gpt = window.__qtsCustomGpt;
   if (!gpt?.buildPrompt) {
     throw new Error('Custom GPT helper not loaded.');
@@ -2369,6 +2478,7 @@ async function buildFileUploadFields(applicationId, fields) {
 }
 
 async function applyGptAnswersToForm(applicationId, { skipPreview = false } = {}) {
+  requireManagerCustomGpt();
   const id = Number(applicationId);
   if (!id) throw new Error('No application session to apply.');
 
@@ -3149,6 +3259,7 @@ function prewarmCustomGptTab() {
 }
 
 async function startApplication(candidateId) {
+  requireManagerCustomGpt();
   const candidate = candidates.find((c) => Number(c.id) === Number(candidateId));
   if (!candidate) {
     showAlert('main-alert', 'Candidate not found.', 'error');
@@ -3559,6 +3670,16 @@ function showLogin() {
 async function showActionScreen(user) {
   await restoreSelectedAction();
   setSession(user);
+  const managerMode = user?.role === 'manager';
+  document.getElementById('btn-custom-apply')?.classList.toggle('hidden', managerMode);
+  const subtitle = document.querySelector('.action-subtitle');
+  if (subtitle) {
+    subtitle.textContent = managerMode
+      ? 'Get JD saves a job to your Manager job list. Apply opens the next assigned job and Account.'
+      : 'Select an action for the current job page.';
+  }
+  updateDefaultCandidateUi();
+  updateAutoApplyBarUi();
   document.getElementById('session-bar')?.classList.add('hidden');
   document.getElementById('login-section').classList.add('hidden');
   document.getElementById('action-section').classList.remove('hidden');

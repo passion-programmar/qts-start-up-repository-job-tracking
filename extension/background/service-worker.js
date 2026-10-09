@@ -11,7 +11,8 @@ importScripts(
   '../shared/field-classifier.js',
   '../shared/candidate-matcher.js',
   '../shared/fill-policy.js',
-  '../shared/auto-application-pipeline.js'
+  '../shared/auto-application-pipeline.js',
+  '../shared/workable-application.js'
 );
 
 function isExtractablePageUrl(url) {
@@ -130,6 +131,13 @@ async function applyGptPackageToJobTab(applicationId, jobTabId) {
   if (!api?.workerApiRequest) {
     throw new Error('API worker helpers not loaded.');
   }
+
+  await self.__qtsApplySessionStore?.setActive?.({
+    applicationId,
+    jobTabId,
+    status: 'apply',
+    applying: true,
+  });
 
   const result = await api.workerApiRequest('GET', `/api/application-sessions/${applicationId}/result`);
   if (!result.success) {
@@ -1265,6 +1273,85 @@ async function showPageDetectAlert(tabId, message, type, durationMs, options = {
   }
 }
 
+async function setJobQueueBadge(tabId, text, color) {
+  try {
+    if (color) await chrome.action.setBadgeBackgroundColor({ tabId, color });
+    await chrome.action.setBadgeText({ tabId, text });
+  } catch (error) {
+    console.warn('[QTS Apply] Could not update the tab status badge:', error);
+  }
+}
+
+async function startManagerJobQueue(sourceTabId) {
+  const worker = self.__qtsGptWorkerHandoff;
+  const api = self.__qtsApiWorker;
+  if (!worker?.ensurePinnedGptTab || !api?.workerApiRequest) {
+    throw new Error('QTS extension workflow helpers are unavailable.');
+  }
+  if (!self.__qtsCustomGpt?.CUSTOM_GPT_URL) {
+    throw new Error('No Custom GPT is assigned to your Manager account. Contact your Admin.');
+  }
+
+  const sourceTab = await getTab(sourceTabId);
+  if (!sourceTab?.id) throw new Error('Could not find the tab that started Apply.');
+
+  await setJobQueueBadge(sourceTabId, '...', '#2563eb');
+  await showPageDetectAlert(sourceTabId, 'QTS Apply: opening your assigned Custom GPT…', 'info');
+
+  await worker.ensurePinnedGptTab({
+    storageKey: GPT_TAB_STORAGE_KEY,
+    focus: true,
+    preparePage: true,
+    pinInBrowser: true,
+  });
+
+  const claim = await api.workerApiRequest('POST', '/api/v2/application-attempts/claim-next');
+  if (!claim.success) {
+    throw new Error(claim.message || 'Could not get the next job from your job list.');
+  }
+
+  if (!claim.claimed) {
+    await focusBrowserWindowForTab(sourceTabId);
+    await chrome.tabs.update(sourceTabId, { active: true });
+    await setJobQueueBadge(sourceTabId, '', '#2563eb');
+    await showPageDetectAlert(sourceTabId, 'No available Workable To do jobs with unclaimed Accounts were found.', 'info', 8000);
+    return { ok: true, claimed: false };
+  }
+
+  const jobUrl = new URL(claim.job.url);
+  if (!['http:', 'https:'].includes(jobUrl.protocol)) {
+    throw new Error('The selected job does not have a valid web URL.');
+  }
+
+  let jobTabId = sourceTabId;
+  const workable = self.__qtsWorkableApplication;
+  if (!workable?.registerClaim) {
+    throw new Error('Workable application support is not available in this extension version.');
+  }
+  await workable.registerClaim(jobTabId, claim);
+  try {
+    await chrome.tabs.update(jobTabId, { url: jobUrl.href, active: true });
+  } catch (error) {
+    console.warn('[QTS Apply] Could not reuse the source tab; opening a new job tab:', error);
+    const createdTab = await chrome.tabs.create({ url: 'about:blank', active: true });
+    if (!createdTab?.id) throw new Error('Could not open the selected job URL.');
+    await workable.discardClaim(jobTabId);
+    jobTabId = createdTab.id;
+    await workable.registerClaim(jobTabId, claim);
+    await chrome.tabs.update(jobTabId, { url: jobUrl.href, active: true });
+  }
+
+  await worker.waitForTabComplete(jobTabId, 45000);
+  await setJobQueueBadge(jobTabId, '', '#2563eb');
+  await showPageDetectAlert(
+    jobTabId,
+    `Reserved ${claim.job.title} — ${claim.job.company} for Account ${claim.account.name}. The job page is ready.`,
+    'success',
+    10000
+  );
+  return { ok: true, claimed: true, jobTabId };
+}
+
 async function isAutoApplyArmed() {
   return Boolean(await self.__qtsAutoApplicationPipeline?.isExtensionOperational?.());
 }
@@ -1506,6 +1593,22 @@ chrome.runtime.onConnect.addListener((port) => {
 });
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.type === 'START_MANAGER_JOB_QUEUE') {
+    startManagerJobQueue(Number(msg.sourceTabId))
+      .then((result) => sendResponse(result))
+      .catch(async (error) => {
+        const message = error?.message || 'Could not start Apply.';
+        const sourceTabId = Number(msg.sourceTabId);
+        if (Number.isSafeInteger(sourceTabId) && sourceTabId > 0) {
+          await focusBrowserWindowForTab(sourceTabId).catch(() => {});
+          await chrome.tabs.update(sourceTabId, { active: true }).catch(() => {});
+          await setJobQueueBadge(sourceTabId, '', '#b91c1c');
+          await showPageDetectAlert(sourceTabId, message, 'error', 10000);
+        }
+        sendResponse({ ok: false, error: message });
+      });
+    return true;
+  }
   if (msg.type === 'AUTH_SESSION_EXPIRED') {
     disarmJobPageActivity();
     sendResponse({ ok: true });
@@ -1614,6 +1717,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       lastAutoPipelineKeyByTab.delete(tabId);
       await autoDetectJob(tabId, url).catch(() => {});
     })().catch(() => {});
+    return false;
+  }
+
+  if (msg.type === 'SET_CUSTOM_GPT_CONFIG') {
+    self.__qtsCustomGpt?.applyCustomGptConfig?.(msg.customGpt || null);
+    if (!msg.customGpt?.url) {
+      chrome.storage.local.remove([GPT_TAB_STORAGE_KEY]);
+      stopGptPollAndApply();
+    }
+    sendResponse({ ok: true });
     return false;
   }
 

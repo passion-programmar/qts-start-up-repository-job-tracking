@@ -76,12 +76,18 @@ router.post('/', async (req: NewSchemaAuthRequest, res: Response) => {
      FROM job_list j
      JOIN users account ON account.u_id = $2 AND account.role = 'account'
        AND account.parent_user_id = j.u_id AND account.blocked_date IS NULL
+     JOIN application_attempts attempt
+       ON attempt.j_id = j.j_id AND attempt.account_user_id = account.u_id
+       AND attempt.manager_user_id = j.u_id AND attempt.status = 'submitted'
      WHERE j.j_id = $1 AND j.u_id = $3
        AND $2 = ANY(j.selected_account_u_ids)`,
     [data.jobId, data.accountUserId, user.id]
   );
   if (!eligible) {
-    res.status(404).json({ success: false, message: 'The job or selected Account is not available to this Manager.' });
+    res.status(404).json({
+      success: false,
+      message: 'A Bid can be recorded only after this selected Account has a confirmed submitted attempt.',
+    });
     return;
   }
   const existing = await queryOne<{ b_id: number }>(

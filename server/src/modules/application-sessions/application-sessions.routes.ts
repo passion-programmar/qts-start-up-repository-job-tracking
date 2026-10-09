@@ -82,7 +82,7 @@ const PatchFieldsSchema = z.object({
   fields: z.array(SessionFieldSchema).min(1),
   currentStep: z.string().optional().nullable(),
   discoveredPages: z.array(z.record(z.unknown())).optional(),
-  status: z.enum(['active', 'scanning', 'filling', 'awaiting_ai', 'completed', 'abandoned', 'error']).optional(),
+  status: z.enum(['active', 'scanning', 'filling', 'awaiting_ai', 'apply', 'completed', 'abandoned', 'error']).optional(),
 });
 
 const SubmitAnswersSchema = z.object({

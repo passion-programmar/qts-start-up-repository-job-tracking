@@ -172,6 +172,7 @@ window.api = {
     'GET',
     `/api/auth/extension-bootstrap${accountId ? `?accountId=${encodeURIComponent(accountId)}` : ''}`
   ),
+  getAssignedCustomGpt: () => apiRequest('GET', '/api/v2/auth/custom-gpt-assignment'),
   extensionStatus: () => apiRequest('GET', '/api/auth/extension-status'),
   health: () => apiRequest('GET', '/api/health'),
   getCandidates: () => apiRequest('GET', '/api/candidates?active=true'),

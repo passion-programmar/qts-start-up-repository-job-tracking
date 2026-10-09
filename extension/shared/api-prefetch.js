@@ -97,7 +97,14 @@ async function prefetchWriteSessionUser(user) {
 }
 
 async function prefetchWriteCustomGptConfig(customGpt, user) {
-  if (!customGpt?.url) return;
+  if (!customGpt?.url) {
+    const root = typeof globalThis !== 'undefined' ? globalThis : self;
+    root.__qtsCustomGpt?.applyCustomGptConfig?.(null);
+    await new Promise((resolve) => {
+      chrome.storage.local.remove([PREFETCH_CUSTOM_GPT_CONFIG_KEY, 'qtsCustomGptTabId'], resolve);
+    });
+    return;
+  }
   const payload = {
     url: customGpt.url,
     id: customGpt.id || null,
@@ -119,6 +126,11 @@ async function prefetchWorkspace(force = false) {
   if (!force) {
     const cached = await prefetchReadCandidateCache();
     if (cached?.user && Array.isArray(cached.candidates) && cached.candidates.length > 0) {
+      const assignedGpt = await prefetchApiRequest('/api/v2/auth/custom-gpt-assignment');
+      await prefetchWriteCustomGptConfig(
+        assignedGpt.success ? assignedGpt.customGpt : null,
+        cached.user
+      );
       return { success: true, fromCache: true, user: cached.user, candidates: cached.candidates, stacks: cached.stacks || [] };
     }
   }
@@ -133,8 +145,12 @@ async function prefetchWorkspace(force = false) {
 
     const candidates = boot.candidates || [];
     const stacks = boot.stacks || [];
+    const assignedGpt = await prefetchApiRequest('/api/v2/auth/custom-gpt-assignment');
     await prefetchWriteSessionUser(boot.user);
-    await prefetchWriteCustomGptConfig(boot.customGpt, boot.user);
+    await prefetchWriteCustomGptConfig(
+      assignedGpt.success ? assignedGpt.customGpt : null,
+      boot.user
+    );
     if (candidates.length) {
       await prefetchWriteCandidateCache(candidates, stacks, boot.user);
     }
@@ -198,7 +214,12 @@ async function prefetchSavedJobByUrl(url) {
     return null;
   }
 
-  const r = await prefetchApiRequest(`/api/jobs/by-url?url=${encodeURIComponent(trimmed)}`);
+  const stored = await chrome.storage.local.get([PREFETCH_SESSION_USER_KEY]);
+  const isManager = stored[PREFETCH_SESSION_USER_KEY]?.role === 'manager';
+  const path = isManager
+    ? `/api/v2/jobs/check-url?url=${encodeURIComponent(trimmed)}`
+    : `/api/jobs/by-url?url=${encodeURIComponent(trimmed)}`;
+  const r = await prefetchApiRequest(path);
   if (r.success && r.job) {
     await writeSavedJobToCache(trimmed, r.job);
     return r.job;

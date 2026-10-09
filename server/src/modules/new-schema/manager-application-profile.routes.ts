@@ -37,30 +37,16 @@ const profileSchema = z.object({
   })).max(100),
 });
 
-async function resolveManagerId(
-  req: NewSchemaAuthRequest,
-  res: Response
-): Promise<number | null> {
+function resolveManagerId(req: NewSchemaAuthRequest, res: Response): number | null {
   const actor = req.newSchemaUser!;
-  if (actor.role === 'manager') return actor.id;
-  if (actor.role !== 'super') {
-    res.status(403).json({ success: false, message: 'Manager or Super access required.' });
+  if (actor.role !== 'manager') {
+    res.status(403).json({
+      success: false,
+      message: 'Only Managers can view or edit their own reusable application answers.',
+    });
     return null;
   }
-  const managerId = Number(req.query.managerId);
-  if (!Number.isSafeInteger(managerId) || managerId <= 0) {
-    res.status(400).json({ success: false, message: 'Select a valid Manager.' });
-    return null;
-  }
-  const manager = await queryOne<{ u_id: number }>(
-    "SELECT u_id FROM users WHERE u_id = $1 AND role = 'manager'",
-    [managerId]
-  );
-  if (!manager) {
-    res.status(404).json({ success: false, message: 'Manager not found.' });
-    return null;
-  }
-  return manager.u_id;
+  return actor.id;
 }
 
 async function readProfile(managerId: number) {
@@ -93,14 +79,14 @@ async function readProfile(managerId: number) {
 }
 
 router.get('/', async (req: NewSchemaAuthRequest, res: Response) => {
-  const managerId = await resolveManagerId(req, res);
+  const managerId = resolveManagerId(req, res);
   if (managerId === null) return;
   const profile = await readProfile(managerId);
   res.json({ success: true, profile });
 });
 
 router.put('/', async (req: NewSchemaAuthRequest, res: Response) => {
-  const managerId = await resolveManagerId(req, res);
+  const managerId = resolveManagerId(req, res);
   if (managerId === null) return;
   const parsed = profileSchema.safeParse(req.body);
   if (!parsed.success) {

@@ -264,24 +264,29 @@ router.delete('/:id', async (req: NewSchemaAuthRequest, res: Response) => {
     res.status(400).json({ success: false, message: 'Invalid job ID.' });
     return;
   }
-  const existing = await queryOne<{ j_id: number }>(
-    'SELECT j_id FROM job_list WHERE j_id = $1 AND u_id = $2',
-    [id, user.id]
-  );
-  if (!existing) {
+  const deleted = await withTransaction(async (tx) => {
+    const existing = await tx.query(
+      'SELECT j_id FROM job_list WHERE j_id = $1 AND u_id = $2 FOR UPDATE',
+      [id, user.id]
+    );
+    if (!existing.rows.length) return null;
+
+    const attempts = await tx.query(
+      'DELETE FROM application_attempts WHERE j_id = $1 RETURNING attempt_id',
+      [id]
+    );
+    await tx.query('DELETE FROM job_list WHERE j_id = $1 AND u_id = $2', [id, user.id]);
+    return attempts.rowCount ?? attempts.rows.length;
+  });
+
+  if (deleted === null) {
     res.status(404).json({ success: false, message: 'Job not found in your list.' });
     return;
   }
-  const attempts = await queryOne<{ count: number }>(
-    'SELECT COUNT(*)::int AS count FROM application_attempts WHERE j_id = $1',
-    [id]
-  );
-  if (Number(attempts?.count ?? 0) > 0) {
-    res.status(409).json({ success: false, message: 'This job has application history and cannot be deleted.' });
-    return;
-  }
-  await execute('DELETE FROM job_list WHERE j_id = $1 AND u_id = $2', [id, user.id]);
-  res.json({ success: true, message: 'Job deleted.' });
+  res.json({
+    success: true,
+    message: `Job removed from your active job list. ${deleted} application attempt(s) cleared; Bids and interview history retained.`,
+  });
 });
 
 export default router;
