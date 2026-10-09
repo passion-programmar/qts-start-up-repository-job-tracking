@@ -60,7 +60,26 @@ async function validateJobAssignments(managerId, categoryIds, accountIds) {
 }
 function jobProjection() {
     return `SELECT j.j_id AS id, j.u_id AS manager_id, j.url, j.company, j.title,
-                 j.category_ids, j.selected_account_u_ids, j.status, j.get_date,
+                 j.category_ids,
+                 COALESCE((
+                   SELECT array_agg(assignment.account_user_id ORDER BY assignment.position)
+                   FROM job_account_assignments assignment
+                   WHERE assignment.j_id = j.j_id
+                 ), ARRAY[]::INTEGER[]) AS selected_account_u_ids,
+                 COALESCE((
+                   SELECT json_agg(json_build_object(
+                     'account_user_id', assignment.account_user_id,
+                     'name', account.name,
+                     'status', COALESCE(attempt.status, 'not_started')
+                   ) ORDER BY assignment.position)
+                   FROM job_account_assignments assignment
+                   JOIN users account ON account.u_id = assignment.account_user_id
+                   LEFT JOIN application_attempts attempt
+                     ON attempt.j_id = assignment.j_id
+                    AND attempt.account_user_id = assignment.account_user_id
+                   WHERE assignment.j_id = j.j_id
+                 ), '[]'::json) AS selected_accounts,
+                 j.status, j.get_date,
                  (SELECT COUNT(*)::int FROM bids b WHERE b.j_id = j.j_id) AS bid_count
           FROM job_list j`;
 }
@@ -87,6 +106,24 @@ router.get('/', async (req, res) => {
     query += ' ORDER BY j.get_date DESC, j.j_id DESC';
     const jobs = await (0, connection_1.queryAll)(query, params);
     res.json({ success: true, jobs });
+});
+router.get('/check-url', async (req, res) => {
+    const user = req.newSchemaUser;
+    if (user.role !== 'manager') {
+        res.status(403).json({ success: false, message: 'Only Managers can check saved job URLs.' });
+        return;
+    }
+    const parsedUrl = zod_1.z.string().url().max(2000).safeParse(req.query.url);
+    if (!parsedUrl.success) {
+        res.status(400).json({ success: false, message: 'Provide a valid job URL.' });
+        return;
+    }
+    const url = (0, normalize_url_1.normalizeUrl)(parsedUrl.data);
+    const [job, bid] = await Promise.all([
+        (0, connection_1.queryOne)(`${jobProjection()} WHERE j.u_id = $1 AND j.url = $2`, [user.id, url]),
+        (0, connection_1.queryOne)('SELECT b_id FROM bids WHERE manager_user_id = $1 AND job_url = $2 LIMIT 1', [user.id, url]),
+    ]);
+    res.json({ success: true, alreadyApplied: Boolean(bid), job: job || null });
 });
 router.get('/:id', async (req, res) => {
     const id = Number.parseInt(req.params.id, 10);
@@ -131,14 +168,21 @@ router.post('/', async (req, res) => {
         res.status(409).json({ success: false, message: 'That job URL has already been added.' });
         return;
     }
-    const row = await (0, connection_1.queryOne)(`INSERT INTO job_list (u_id, url, company, title, category_ids, selected_account_u_ids, status)
-     VALUES ($1, $2, $3, $4, $5::int[], $6::int[], $7)
-     RETURNING j_id`, [
-        user.id, url, data.company, data.title, data.categoryIds,
-        data.selectedAccountUserIds, data.status ?? 'todo',
-    ]);
-    const job = await (0, connection_1.queryOne)(`${jobProjection()} WHERE j.j_id = $1`, [row.j_id]);
-    logger_1.logger.info('New-schema job created', { id: row.j_id, managerId: user.id });
+    const jobId = await (0, connection_1.withTransaction)(async (tx) => {
+        const inserted = await tx.query(`INSERT INTO job_list (u_id, url, company, title, category_ids, status)
+       VALUES ($1, $2, $3, $4, $5::int[], $6)
+       RETURNING j_id`, [user.id, url, data.company, data.title, data.categoryIds, data.status ?? 'todo']);
+        const created = inserted.rows[0];
+        if (!created)
+            throw new Error('Job could not be created.');
+        for (const [position, accountId] of data.selectedAccountUserIds.entries()) {
+            await tx.query(`INSERT INTO job_account_assignments (j_id, account_user_id, position)
+         VALUES ($1, $2, $3)`, [created.j_id, accountId, position + 1]);
+        }
+        return created.j_id;
+    });
+    const job = await (0, connection_1.queryOne)(`${jobProjection()} WHERE j.j_id = $1`, [jobId]);
+    logger_1.logger.info('New-schema job created', { id: jobId, managerId: user.id });
     res.status(201).json({ success: true, job });
 });
 router.put('/:id', async (req, res) => {
@@ -154,11 +198,6 @@ router.put('/:id', async (req, res) => {
         return;
     }
     const data = parsed.data;
-    const existing = await (0, connection_1.queryOne)('SELECT j_id FROM job_list WHERE j_id = $1 AND u_id = $2', [id, user.id]);
-    if (!existing) {
-        res.status(404).json({ success: false, message: 'Job not found in your list.' });
-        return;
-    }
     const assignmentError = await validateJobAssignments(user.id, data.categoryIds, data.selectedAccountUserIds);
     if (assignmentError) {
         res.status(400).json({ success: false, message: assignmentError });
@@ -170,12 +209,26 @@ router.put('/:id', async (req, res) => {
         res.status(409).json({ success: false, message: 'That job URL has already been added.' });
         return;
     }
-    await (0, connection_1.execute)(`UPDATE job_list SET url = $1, company = $2, title = $3, category_ids = $4::int[],
-       selected_account_u_ids = $5::int[], status = COALESCE($6, status)
-     WHERE j_id = $7 AND u_id = $8`, [
-        url, data.company, data.title, data.categoryIds,
-        data.selectedAccountUserIds, data.status ?? null, id, user.id,
-    ]);
+    const updated = await (0, connection_1.withTransaction)(async (client) => {
+        const locked = await client.query('SELECT j_id FROM job_list WHERE j_id = $1 AND u_id = $2 FOR UPDATE', [id, user.id]);
+        if (!locked.rows.length)
+            return false;
+        await client.query(`UPDATE job_list SET url = $1, company = $2, title = $3, category_ids = $4::int[],
+         status = COALESCE($5, status)
+       WHERE j_id = $6 AND u_id = $7`, [url, data.company, data.title, data.categoryIds, data.status ?? null, id, user.id]);
+        await client.query('DELETE FROM job_account_assignments WHERE j_id = $1', [id]);
+        for (const [position, accountId] of data.selectedAccountUserIds.entries()) {
+            await client.query(`INSERT INTO job_account_assignments (j_id, account_user_id, position)
+         VALUES ($1, $2, $3)`, [id, accountId, position + 1]);
+        }
+        await client.query(`UPDATE bids SET job_status = COALESCE($1, job_status)
+       WHERE j_id = $2 AND manager_user_id = $3`, [data.status ?? null, id, user.id]);
+        return true;
+    });
+    if (!updated) {
+        res.status(404).json({ success: false, message: 'Job not found in your list.' });
+        return;
+    }
     const job = await (0, connection_1.queryOne)(`${jobProjection()} WHERE j.j_id = $1`, [id]);
     res.json({ success: true, job });
 });
@@ -190,18 +243,22 @@ router.delete('/:id', async (req, res) => {
         res.status(400).json({ success: false, message: 'Invalid job ID.' });
         return;
     }
-    const existing = await (0, connection_1.queryOne)('SELECT j_id FROM job_list WHERE j_id = $1 AND u_id = $2', [id, user.id]);
-    if (!existing) {
+    const deleted = await (0, connection_1.withTransaction)(async (tx) => {
+        const existing = await tx.query('SELECT j_id FROM job_list WHERE j_id = $1 AND u_id = $2 FOR UPDATE', [id, user.id]);
+        if (!existing.rows.length)
+            return null;
+        const attempts = await tx.query('DELETE FROM application_attempts WHERE j_id = $1 RETURNING attempt_id', [id]);
+        await tx.query('DELETE FROM job_list WHERE j_id = $1 AND u_id = $2', [id, user.id]);
+        return attempts.rowCount ?? attempts.rows.length;
+    });
+    if (deleted === null) {
         res.status(404).json({ success: false, message: 'Job not found in your list.' });
         return;
     }
-    const bids = await (0, connection_1.queryOne)('SELECT COUNT(*)::int AS count FROM bids WHERE j_id = $1', [id]);
-    if (Number(bids?.count ?? 0) > 0) {
-        res.status(409).json({ success: false, message: 'This job has bid history and cannot be deleted.' });
-        return;
-    }
-    await (0, connection_1.execute)('DELETE FROM job_list WHERE j_id = $1 AND u_id = $2', [id, user.id]);
-    res.json({ success: true, message: 'Job deleted.' });
+    res.json({
+        success: true,
+        message: `Job removed from your active job list. ${deleted} application attempt(s) cleared; Bids and interview history retained.`,
+    });
 });
 exports.default = router;
 //# sourceMappingURL=jobs.routes.js.map

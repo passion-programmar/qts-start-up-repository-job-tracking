@@ -9,6 +9,7 @@ const logger_1 = require("../../utilities/logger");
 const env_1 = require("../../config/env");
 const application_session_store_1 = require("../../services/application-session-store");
 const document_builder_1 = require("../document-builder");
+const application_document_store_1 = require("../../services/application-document-store");
 const application_task_id_1 = require("./application-task-id");
 const gpt_task_context_1 = require("./gpt-task-context");
 const router = (0, express_1.Router)();
@@ -317,6 +318,9 @@ router.post('/:taskId/package', async (req, res) => {
             resume: packageData.resume,
             coverLetter: packageData.coverLetter,
         });
+        if (env_1.config.applicationSessionPersistDb) {
+            await (0, application_document_store_1.storeApplicationDocumentArtifacts)(sessionId, documentManifest);
+        }
         documents = documentManifest.paths;
     }
     const fileFieldRows = env_1.config.applicationSessionPersistDb

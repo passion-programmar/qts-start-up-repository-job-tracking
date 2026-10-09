@@ -9,16 +9,16 @@ export declare const CandidateContactSchema: z.ZodObject<{
 }, "strip", z.ZodTypeAny, {
     email: string;
     fullName: string;
+    location?: string | undefined;
     phone?: string | undefined;
     linkedinUrl?: string | undefined;
-    location?: string | undefined;
     headline?: string | undefined;
 }, {
     email: string;
     fullName: string;
+    location?: string | undefined;
     phone?: string | undefined;
     linkedinUrl?: string | undefined;
-    location?: string | undefined;
     headline?: string | undefined;
 }>;
 export declare const ResumeSectionItemSchema: z.ZodObject<{
@@ -84,16 +84,16 @@ export declare const ResumeDocumentSchema: z.ZodObject<{
     }, "strip", z.ZodTypeAny, {
         email: string;
         fullName: string;
+        location?: string | undefined;
         phone?: string | undefined;
         linkedinUrl?: string | undefined;
-        location?: string | undefined;
         headline?: string | undefined;
     }, {
         email: string;
         fullName: string;
+        location?: string | undefined;
         phone?: string | undefined;
         linkedinUrl?: string | undefined;
-        location?: string | undefined;
         headline?: string | undefined;
     }>;
     targetRole: z.ZodString;
@@ -138,9 +138,9 @@ export declare const ResumeDocumentSchema: z.ZodObject<{
     candidate: {
         email: string;
         fullName: string;
+        location?: string | undefined;
         phone?: string | undefined;
         linkedinUrl?: string | undefined;
-        location?: string | undefined;
         headline?: string | undefined;
     };
     targetRole: string;
@@ -159,9 +159,9 @@ export declare const ResumeDocumentSchema: z.ZodObject<{
     candidate: {
         email: string;
         fullName: string;
+        location?: string | undefined;
         phone?: string | undefined;
         linkedinUrl?: string | undefined;
-        location?: string | undefined;
         headline?: string | undefined;
     };
     targetRole: string;
@@ -186,7 +186,7 @@ export declare const CoverLetterDocumentSchema: z.ZodObject<{
         linkedinUrl: z.ZodOptional<z.ZodString>;
         location: z.ZodOptional<z.ZodString>;
         headline: z.ZodOptional<z.ZodString>;
-    }, "email" | "phone" | "linkedinUrl" | "fullName">, "strip", z.ZodTypeAny, {
+    }, "email" | "phone" | "fullName" | "linkedinUrl">, "strip", z.ZodTypeAny, {
         email: string;
         fullName: string;
         phone?: string | undefined;
@@ -245,16 +245,16 @@ export declare const BuildDocumentsInputSchema: z.ZodEffects<z.ZodObject<{
         }, "strip", z.ZodTypeAny, {
             email: string;
             fullName: string;
+            location?: string | undefined;
             phone?: string | undefined;
             linkedinUrl?: string | undefined;
-            location?: string | undefined;
             headline?: string | undefined;
         }, {
             email: string;
             fullName: string;
+            location?: string | undefined;
             phone?: string | undefined;
             linkedinUrl?: string | undefined;
-            location?: string | undefined;
             headline?: string | undefined;
         }>;
         targetRole: z.ZodString;
@@ -299,9 +299,9 @@ export declare const BuildDocumentsInputSchema: z.ZodEffects<z.ZodObject<{
         candidate: {
             email: string;
             fullName: string;
+            location?: string | undefined;
             phone?: string | undefined;
             linkedinUrl?: string | undefined;
-            location?: string | undefined;
             headline?: string | undefined;
         };
         targetRole: string;
@@ -320,9 +320,9 @@ export declare const BuildDocumentsInputSchema: z.ZodEffects<z.ZodObject<{
         candidate: {
             email: string;
             fullName: string;
+            location?: string | undefined;
             phone?: string | undefined;
             linkedinUrl?: string | undefined;
-            location?: string | undefined;
             headline?: string | undefined;
         };
         targetRole: string;
@@ -346,7 +346,7 @@ export declare const BuildDocumentsInputSchema: z.ZodEffects<z.ZodObject<{
             linkedinUrl: z.ZodOptional<z.ZodString>;
             location: z.ZodOptional<z.ZodString>;
             headline: z.ZodOptional<z.ZodString>;
-        }, "email" | "phone" | "linkedinUrl" | "fullName">, "strip", z.ZodTypeAny, {
+        }, "email" | "phone" | "fullName" | "linkedinUrl">, "strip", z.ZodTypeAny, {
             email: string;
             fullName: string;
             phone?: string | undefined;
@@ -398,9 +398,9 @@ export declare const BuildDocumentsInputSchema: z.ZodEffects<z.ZodObject<{
         candidate: {
             email: string;
             fullName: string;
+            location?: string | undefined;
             phone?: string | undefined;
             linkedinUrl?: string | undefined;
-            location?: string | undefined;
             headline?: string | undefined;
         };
         targetRole: string;
@@ -436,9 +436,9 @@ export declare const BuildDocumentsInputSchema: z.ZodEffects<z.ZodObject<{
         candidate: {
             email: string;
             fullName: string;
+            location?: string | undefined;
             phone?: string | undefined;
             linkedinUrl?: string | undefined;
-            location?: string | undefined;
             headline?: string | undefined;
         };
         targetRole: string;
@@ -474,9 +474,9 @@ export declare const BuildDocumentsInputSchema: z.ZodEffects<z.ZodObject<{
         candidate: {
             email: string;
             fullName: string;
+            location?: string | undefined;
             phone?: string | undefined;
             linkedinUrl?: string | undefined;
-            location?: string | undefined;
             headline?: string | undefined;
         };
         targetRole: string;
@@ -512,9 +512,9 @@ export declare const BuildDocumentsInputSchema: z.ZodEffects<z.ZodObject<{
         candidate: {
             email: string;
             fullName: string;
+            location?: string | undefined;
             phone?: string | undefined;
             linkedinUrl?: string | undefined;
-            location?: string | undefined;
             headline?: string | undefined;
         };
         targetRole: string;
@@ -551,11 +551,11 @@ export declare const GptApplicationPackageSchema: z.ZodObject<{
         stableFieldId: z.ZodString;
         answer: z.ZodString;
     }, "strip", z.ZodTypeAny, {
-        stableFieldId: string;
         answer: string;
+        stableFieldId: string;
     }, {
-        stableFieldId: string;
         answer: string;
+        stableFieldId: string;
     }>, "many">>;
     resume: z.ZodOptional<z.ZodObject<{
         candidate: z.ZodObject<{
@@ -568,16 +568,16 @@ export declare const GptApplicationPackageSchema: z.ZodObject<{
         }, "strip", z.ZodTypeAny, {
             email: string;
             fullName: string;
+            location?: string | undefined;
             phone?: string | undefined;
             linkedinUrl?: string | undefined;
-            location?: string | undefined;
             headline?: string | undefined;
         }, {
             email: string;
             fullName: string;
+            location?: string | undefined;
             phone?: string | undefined;
             linkedinUrl?: string | undefined;
-            location?: string | undefined;
             headline?: string | undefined;
         }>;
         targetRole: z.ZodString;
@@ -622,9 +622,9 @@ export declare const GptApplicationPackageSchema: z.ZodObject<{
         candidate: {
             email: string;
             fullName: string;
+            location?: string | undefined;
             phone?: string | undefined;
             linkedinUrl?: string | undefined;
-            location?: string | undefined;
             headline?: string | undefined;
         };
         targetRole: string;
@@ -643,9 +643,9 @@ export declare const GptApplicationPackageSchema: z.ZodObject<{
         candidate: {
             email: string;
             fullName: string;
+            location?: string | undefined;
             phone?: string | undefined;
             linkedinUrl?: string | undefined;
-            location?: string | undefined;
             headline?: string | undefined;
         };
         targetRole: string;
@@ -669,7 +669,7 @@ export declare const GptApplicationPackageSchema: z.ZodObject<{
             linkedinUrl: z.ZodOptional<z.ZodString>;
             location: z.ZodOptional<z.ZodString>;
             headline: z.ZodOptional<z.ZodString>;
-        }, "email" | "phone" | "linkedinUrl" | "fullName">, "strip", z.ZodTypeAny, {
+        }, "email" | "phone" | "fullName" | "linkedinUrl">, "strip", z.ZodTypeAny, {
             email: string;
             fullName: string;
             phone?: string | undefined;
@@ -720,25 +720,25 @@ export declare const GptApplicationPackageSchema: z.ZodObject<{
         stableFieldId: z.ZodString;
         answer: z.ZodString;
     }, "strip", z.ZodTypeAny, {
-        stableFieldId: string;
         answer: string;
+        stableFieldId: string;
     }, {
-        stableFieldId: string;
         answer: string;
+        stableFieldId: string;
     }>, "many">>;
     notes: z.ZodOptional<z.ZodString>;
 }, "strip", z.ZodTypeAny, {
     answers: {
-        stableFieldId: string;
         answer: string;
+        stableFieldId: string;
     }[];
     resume?: {
         candidate: {
             email: string;
             fullName: string;
+            location?: string | undefined;
             phone?: string | undefined;
             linkedinUrl?: string | undefined;
-            location?: string | undefined;
             headline?: string | undefined;
         };
         targetRole: string;
@@ -771,17 +771,17 @@ export declare const GptApplicationPackageSchema: z.ZodObject<{
         signatureName?: string | undefined;
     } | undefined;
     remainingFields?: {
-        stableFieldId: string;
         answer: string;
+        stableFieldId: string;
     }[] | undefined;
 }, {
     resume?: {
         candidate: {
             email: string;
             fullName: string;
+            location?: string | undefined;
             phone?: string | undefined;
             linkedinUrl?: string | undefined;
-            location?: string | undefined;
             headline?: string | undefined;
         };
         targetRole: string;
@@ -814,12 +814,12 @@ export declare const GptApplicationPackageSchema: z.ZodObject<{
         signatureName?: string | undefined;
     } | undefined;
     answers?: {
-        stableFieldId: string;
         answer: string;
+        stableFieldId: string;
     }[] | undefined;
     remainingFields?: {
-        stableFieldId: string;
         answer: string;
+        stableFieldId: string;
     }[] | undefined;
 }>;
 export type ResumeDocument = z.infer<typeof ResumeDocumentSchema>;

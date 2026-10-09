@@ -41,30 +41,26 @@ router.get('/', async (req, res) => {
     const params = scope.params;
     const [bidsByPeriod, interviewsByPeriod, bidsByStatus, interviewsByOutcome, byManager, byAccount] = await Promise.all([
         (0, connection_1.queryAll)(`SELECT date_trunc('${period.buckets}', b.applied_date) AS bucket, count(*)::int AS count
-         FROM bids b
-         JOIN job_list j ON j.j_id = b.j_id
-         JOIN users manager ON manager.u_id = j.u_id AND manager.role = 'manager'
-         WHERE b.applied_date >= NOW() - INTERVAL '${period.interval}' ${where}
+        FROM bids b
+        JOIN users manager ON manager.u_id = b.manager_user_id AND manager.role = 'manager'
+        WHERE b.applied_date >= NOW() - INTERVAL '${period.interval}' ${where}
          GROUP BY bucket ORDER BY bucket ASC`, params),
         (0, connection_1.queryAll)(`SELECT date_trunc('${period.buckets}', i.interview_date::timestamp) AS bucket,
-                count(*)::int AS count
-         FROM interviews i
-         JOIN bids b ON b.b_id = i.b_id
-         JOIN job_list j ON j.j_id = b.j_id
-         JOIN users manager ON manager.u_id = j.u_id AND manager.role = 'manager'
+               count(*)::int AS count
+        FROM interviews i
+        JOIN bids b ON b.b_id = i.b_id
+        JOIN users manager ON manager.u_id = b.manager_user_id AND manager.role = 'manager'
          WHERE i.interview_date >= CURRENT_DATE - INTERVAL '${period.interval}' ${where}
          GROUP BY bucket ORDER BY bucket ASC`, params),
-        (0, connection_1.queryAll)(`SELECT j.status, count(*)::int AS count
+        (0, connection_1.queryAll)(`SELECT b.job_status AS status, count(*)::int AS count
          FROM bids b
-         JOIN job_list j ON j.j_id = b.j_id
-         JOIN users manager ON manager.u_id = j.u_id AND manager.role = 'manager'
+         JOIN users manager ON manager.u_id = b.manager_user_id AND manager.role = 'manager'
          WHERE b.applied_date >= NOW() - INTERVAL '${period.interval}' ${where}
-         GROUP BY j.status ORDER BY j.status`, params),
+         GROUP BY b.job_status ORDER BY b.job_status`, params),
         (0, connection_1.queryAll)(`SELECT COALESCE(i.outcome, 'pending') AS outcome, count(*)::int AS count
-         FROM interviews i
-         JOIN bids b ON b.b_id = i.b_id
-         JOIN job_list j ON j.j_id = b.j_id
-         JOIN users manager ON manager.u_id = j.u_id AND manager.role = 'manager'
+        FROM interviews i
+        JOIN bids b ON b.b_id = i.b_id
+        JOIN users manager ON manager.u_id = b.manager_user_id AND manager.role = 'manager'
          WHERE i.interview_date >= CURRENT_DATE - INTERVAL '${period.interval}' ${where}
          GROUP BY COALESCE(i.outcome, 'pending') ORDER BY outcome`, params),
         (0, connection_1.queryAll)(`WITH scoped_managers AS (
@@ -72,17 +68,16 @@ router.get('/', async (req, res) => {
            FROM users manager
            WHERE manager.role = 'manager' ${scope.clause ? `AND ${scope.clause}` : ''}
          ), bid_counts AS (
-           SELECT j.u_id AS manager_id, count(*)::int AS bids
-           FROM bids b JOIN job_list j ON j.j_id = b.j_id
+           SELECT b.manager_user_id AS manager_id, count(*)::int AS bids
+           FROM bids b
            WHERE b.applied_date >= NOW() - INTERVAL '${period.interval}'
-           GROUP BY j.u_id
+           GROUP BY b.manager_user_id
          ), interview_counts AS (
-           SELECT j.u_id AS manager_id, count(*)::int AS interviews
+           SELECT b.manager_user_id AS manager_id, count(*)::int AS interviews
            FROM interviews i
            JOIN bids b ON b.b_id = i.b_id
-           JOIN job_list j ON j.j_id = b.j_id
            WHERE i.interview_date >= CURRENT_DATE - INTERVAL '${period.interval}'
-           GROUP BY j.u_id
+           GROUP BY b.manager_user_id
          )
          SELECT m.manager_id, m.manager_name, COALESCE(b.bids, 0)::int AS bids,
                 COALESCE(i.interviews, 0)::int AS interviews
@@ -94,16 +89,14 @@ router.get('/', async (req, res) => {
         (0, connection_1.queryAll)(`WITH bid_counts AS (
            SELECT b.u_id AS account_user_id, count(*)::int AS bids
            FROM bids b
-           JOIN job_list j ON j.j_id = b.j_id
-           JOIN users manager ON manager.u_id = j.u_id AND manager.role = 'manager'
+           JOIN users manager ON manager.u_id = b.manager_user_id AND manager.role = 'manager'
            WHERE b.applied_date >= NOW() - INTERVAL '${period.interval}' ${where}
            GROUP BY b.u_id
          ), interview_counts AS (
            SELECT b.u_id AS account_user_id, count(*)::int AS interviews
            FROM interviews i
            JOIN bids b ON b.b_id = i.b_id
-           JOIN job_list j ON j.j_id = b.j_id
-           JOIN users manager ON manager.u_id = j.u_id AND manager.role = 'manager'
+           JOIN users manager ON manager.u_id = b.manager_user_id AND manager.role = 'manager'
            WHERE i.interview_date >= CURRENT_DATE - INTERVAL '${period.interval}' ${where}
            GROUP BY b.u_id
          )

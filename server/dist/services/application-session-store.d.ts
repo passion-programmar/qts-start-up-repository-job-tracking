@@ -1,4 +1,4 @@
-export type ApplicationSessionStatus = 'active' | 'scanning' | 'filling' | 'awaiting_ai' | 'completed' | 'abandoned' | 'error';
+export type ApplicationSessionStatus = 'active' | 'scanning' | 'filling' | 'awaiting_ai' | 'apply' | 'completed' | 'abandoned' | 'error';
 export interface MemorySessionField {
     id: number;
     session_id: number;

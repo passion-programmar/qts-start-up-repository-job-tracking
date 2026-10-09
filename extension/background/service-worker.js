@@ -1307,14 +1307,7 @@ async function startManagerJobQueue(sourceTabId) {
   if (!sourceTab?.id) throw new Error('Could not find the tab that started Apply.');
 
   await setJobQueueBadge(sourceTabId, '...', '#2563eb');
-  await showPageDetectAlert(sourceTabId, 'QTS Apply: opening your assigned Custom GPT…', 'info');
-
-  await worker.ensurePinnedGptTab({
-    storageKey: GPT_TAB_STORAGE_KEY,
-    focus: true,
-    preparePage: true,
-    pinInBrowser: true,
-  });
+  await showPageDetectAlert(sourceTabId, 'QTS Apply: finding your next assigned Workable job…', 'info');
 
   const claim = await api.workerApiRequest('POST', '/api/v2/application-attempts/claim-next');
   if (!claim.success) {
@@ -1328,6 +1321,13 @@ async function startManagerJobQueue(sourceTabId) {
     await showPageDetectAlert(sourceTabId, 'No available Workable To do jobs with unclaimed Accounts were found.', 'info', 8000);
     return { ok: true, claimed: false };
   }
+
+  await worker.ensurePinnedGptTab({
+    storageKey: GPT_TAB_STORAGE_KEY,
+    focus: true,
+    preparePage: true,
+    pinInBrowser: true,
+  });
 
   const jobUrl = new URL(claim.job.url);
   if (!['http:', 'https:'].includes(jobUrl.protocol)) {

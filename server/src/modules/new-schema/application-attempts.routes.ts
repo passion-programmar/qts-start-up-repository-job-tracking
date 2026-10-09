@@ -154,7 +154,7 @@ router.post('/claim-next', async (req: NewSchemaAuthRequest, res: Response) => {
          ON attempt.j_id = j.j_id
          AND attempt.account_user_id = assignment.account_user_id
        WHERE j.u_id = $1 AND j.status = 'todo'
-         AND j.url ~* '^https?://[^/]*[.]workable[.]com/j/'
+         AND j.url ~* '^https?://[^/]*[.]workable[.]com/([^/]+/)?j/'
          AND (
            attempt.attempt_id IS NULL
            OR (attempt.status = 'in_progress'

@@ -16,7 +16,7 @@ export interface ApplicationDocumentManifest {
 }
 /**
  * Build resume and/or cover letter PDFs from Custom GPT JSON.
- * Saves source JSON + PDF under server/data/application-documents/{applicationId}/
+ * Saves artifacts under the local application documents directory or Vercel temp storage.
  */
 export declare function buildApplicationDocuments(applicationId: number, input: BuildDocumentsInput): Promise<ApplicationDocumentManifest>;
 export declare function readDocumentManifest(applicationId: number): ApplicationDocumentManifest | null;

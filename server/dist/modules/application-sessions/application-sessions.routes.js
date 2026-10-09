@@ -66,7 +66,7 @@ const PatchFieldsSchema = zod_1.z.object({
     fields: zod_1.z.array(SessionFieldSchema).min(1),
     currentStep: zod_1.z.string().optional().nullable(),
     discoveredPages: zod_1.z.array(zod_1.z.record(zod_1.z.unknown())).optional(),
-    status: zod_1.z.enum(['active', 'scanning', 'filling', 'awaiting_ai', 'completed', 'abandoned', 'error']).optional(),
+    status: zod_1.z.enum(['active', 'scanning', 'filling', 'awaiting_ai', 'apply', 'completed', 'abandoned', 'error']).optional(),
 });
 const SubmitAnswersSchema = zod_1.z.object({
     answers: zod_1.z.array(zod_1.z.object({

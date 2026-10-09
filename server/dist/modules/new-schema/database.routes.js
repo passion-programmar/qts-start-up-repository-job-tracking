@@ -1,6 +1,11 @@
 "use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
+const bcryptjs_1 = __importDefault(require("bcryptjs"));
+const node_crypto_1 = require("node:crypto");
 const zod_1 = require("zod");
 const connection_1 = require("../../database/connection");
 const new_schema_auth_1 = require("../../middleware/new-schema-auth");
@@ -13,6 +18,11 @@ const TABLES = {
         columns: ['category_id', 'category_title', 'created_date'],
         searchColumns: ['category_title'],
         orderBy: 'category_id',
+        primaryKey: 'category_id',
+        fields: {
+            category_title: { type: 'text', required: true, maxLength: 200 },
+            created_date: { type: 'datetime' },
+        },
     },
     users: {
         label: 'New-schema users',
@@ -24,23 +34,78 @@ const TABLES = {
         ],
         searchColumns: ['username', 'name', 'role', 'email', 'phone', 'city'],
         orderBy: 'u_id',
+        primaryKey: 'u_id',
+        fields: {
+            username: { type: 'text', required: true, maxLength: 100 },
+            name: { type: 'text', required: true, maxLength: 200 },
+            role: { type: 'enum', required: true, options: ['super', 'admin', 'manager', 'caller', 'account'] },
+            password: { type: 'password', maxLength: 200 },
+            must_change_password: { type: 'boolean' },
+            parent_user_id: { type: 'integer', nullable: true, required: true },
+            email: { type: 'text', nullable: true, maxLength: 320 },
+            address: { type: 'text', nullable: true, maxLength: 500 },
+            sex: { type: 'text', nullable: true, maxLength: 50 },
+            birthday: { type: 'date', nullable: true },
+            phone: { type: 'text', nullable: true, maxLength: 50 },
+            country: { type: 'text', nullable: true, maxLength: 100 },
+            city: { type: 'text', nullable: true, maxLength: 100 },
+            blocked_date: { type: 'datetime', nullable: true },
+            category_id: { type: 'integer', nullable: true },
+        },
     },
     job_list: {
         label: 'Jobs (new schema)',
-        description: 'Manager-owned job listings and their Account selections.',
+        description: 'Manager-owned job listings; Account assignments are stored separately.',
         columns: [
-            'j_id', 'u_id', 'url', 'company', 'title', 'category_ids',
-            'selected_account_u_ids', 'status', 'get_date',
+            'j_id', 'u_id', 'url', 'company', 'title', 'category_ids', 'status', 'get_date',
         ],
         searchColumns: ['url', 'company', 'title', 'status'],
         orderBy: 'j_id',
+        primaryKey: 'j_id',
+        fields: {
+            u_id: { type: 'integer', required: true },
+            url: { type: 'url', required: true, maxLength: 2000 },
+            company: { type: 'text', required: true, maxLength: 300 },
+            title: { type: 'text', required: true, maxLength: 300 },
+            category_ids: { type: 'integer-array' },
+            status: { type: 'enum', required: true, options: ['processing', 'todo', 'did', 'failed'] },
+            get_date: { type: 'datetime' },
+        },
+    },
+    job_account_assignments: {
+        label: 'Job–Account assignments',
+        description: 'Ordered Account assignments for each Manager-owned job.',
+        columns: ['job_account_assignment_id', 'j_id', 'account_user_id', 'position'],
+        searchColumns: [],
+        orderBy: 'job_account_assignment_id',
+        primaryKey: 'job_account_assignment_id',
+        fields: {
+            j_id: { type: 'integer', required: true },
+            account_user_id: { type: 'integer', required: true },
+            position: { type: 'integer', required: true },
+        },
     },
     bids: {
         label: 'Bids',
-        description: 'Account applications recorded against Manager job listings.',
-        columns: ['b_id', 'u_id', 'j_id', 'resume_path', 'applied_date'],
-        searchColumns: ['resume_path'],
+        description: 'Durable Account applications with job details retained independently of the job list.',
+        columns: [
+            'b_id', 'u_id', 'j_id', 'manager_user_id', 'job_title', 'company',
+            'job_url', 'job_status', 'resume_path', 'applied_date',
+        ],
+        searchColumns: ['job_title', 'company', 'job_url', 'job_status', 'resume_path'],
         orderBy: 'b_id',
+        primaryKey: 'b_id',
+        fields: {
+            u_id: { type: 'integer', required: true },
+            j_id: { type: 'integer', required: true },
+            manager_user_id: { type: 'integer', required: true },
+            job_title: { type: 'text', required: true, maxLength: 300 },
+            company: { type: 'text', required: true, maxLength: 300 },
+            job_url: { type: 'url', required: true, maxLength: 2000 },
+            job_status: { type: 'enum', required: true, options: ['processing', 'todo', 'did', 'failed'] },
+            resume_path: { type: 'text', required: true, maxLength: 2000 },
+            applied_date: { type: 'datetime' },
+        },
     },
     interviews: {
         label: 'Interviews (new schema)',
@@ -51,53 +116,49 @@ const TABLES = {
         ],
         searchColumns: ['interviewer', 'step', 'status', 'outcome', 'comment'],
         orderBy: 'i_id',
+        primaryKey: 'i_id',
+        fields: {
+            b_id: { type: 'integer', required: true },
+            interview_time: { type: 'time', required: true },
+            interview_date: { type: 'date', required: true },
+            caller_user_id: { type: 'integer', required: true },
+            interviewer: { type: 'text', required: true, maxLength: 200 },
+            step: { type: 'enum', required: true, options: ['intro', 'tech-1', 'tech-2', 'final'] },
+            status: { type: 'enum', required: true, options: ['todo', 'did', 'failed', 'respond_waiting'] },
+            outcome: { type: 'enum', nullable: true, options: ['good', 'bad', 'normal'] },
+            created_date: { type: 'datetime' },
+            comment: { type: 'text', nullable: true, maxLength: 5000 },
+        },
     },
-    accounts: {
-        label: 'Legacy accounts',
-        description: 'Legacy account/team records. Private credentials are not shown.',
-        columns: ['id', 'name', 'notes', 'is_active', 'manager_id', 'custom_gpt_url', 'created_at', 'updated_at'],
-        searchColumns: ['name', 'notes'],
-        orderBy: 'id',
+    app_settings: {
+        label: 'Application settings',
+        description: 'Application-wide settings.',
+        columns: ['setting_name', 'setting_value', 'updated_by', 'created_date', 'updated_date'],
+        searchColumns: ['setting_name', 'setting_value'],
+        orderBy: 'setting_name',
+        primaryKey: 'setting_name',
+        fields: {
+            setting_name: { type: 'text', required: true, maxLength: 200 },
+            setting_value: { type: 'text', required: true, maxLength: 10000 },
+            updated_by: { type: 'integer', nullable: true },
+            created_date: { type: 'datetime' },
+            updated_date: { type: 'datetime' },
+        },
     },
-    admins: {
-        label: 'Legacy staff accounts',
-        description: 'Legacy staff account metadata. Password hashes are excluded.',
-        columns: ['id', 'username', 'role', 'account_id', 'is_active', 'created_at', 'updated_at'],
-        searchColumns: ['username', 'role'],
-        orderBy: 'id',
-    },
-    candidates: {
-        label: 'Legacy candidates',
-        description: 'Legacy candidate profiles. Saved answers and application session data are not included.',
-        columns: ['id', 'name', 'email', 'phone', 'linkedin_url', 'notes', 'color', 'stack', 'is_active', 'account_id', 'created_at', 'updated_at'],
-        searchColumns: ['name', 'email', 'phone', 'stack'],
-        orderBy: 'id',
-    },
-    jobs: {
-        label: 'Legacy jobs',
-        description: 'Legacy job postings.',
-        columns: ['id', 'title', 'company', 'url', 'source', 'created_at', 'updated_at'],
-        searchColumns: ['title', 'company', 'url', 'source'],
-        orderBy: 'id',
-    },
-    candidate_jobs: {
-        label: 'Legacy candidate applications',
-        description: 'Links between legacy candidates and job postings.',
-        columns: ['id', 'candidate_id', 'job_id', 'status', 'applied_at', 'created_at', 'updated_at'],
-        searchColumns: ['status'],
-        orderBy: 'id',
-    },
-    interview_processes: {
-        label: 'Legacy interview processes',
-        description: 'Legacy interview schedule and result records.',
+    prompts: {
+        label: 'Prompts',
+        description: 'Reusable prompt templates managed by Super users.',
         columns: [
-            'id', 'candidate_id', 'candidate_name', 'caller_user_id', 'account_id',
-            'scheduled_date', 'attend_date', 'interview_time', 'timezone', 'position',
-            'company', 'job_url', 'resume', 'meeting_url', 'salary', 'stage',
-            'created_by_user_id', 'created_at', 'updated_at',
+            'prompt_id', 'prompt_name', 'prompt_content', 'created_by', 'updated_by',
+            'created_date', 'updated_date',
         ],
-        searchColumns: ['candidate_name', 'company', 'position', 'stage'],
-        orderBy: 'id',
+        searchColumns: ['prompt_name', 'prompt_content'],
+        orderBy: 'prompt_id',
+        primaryKey: 'prompt_id',
+        fields: {
+            prompt_name: { type: 'text', required: true, maxLength: 200 },
+            prompt_content: { type: 'text', required: true, maxLength: 50000 },
+        },
     },
 };
 function isTableName(value) {
@@ -106,8 +167,155 @@ function isTableName(value) {
 function requireSuper(req, res) {
     if (req.newSchemaUser?.role === 'super')
         return true;
-    res.status(403).json({ success: false, message: 'Only Super users can browse database tables.' });
+    res.status(403).json({ success: false, message: 'Only Super users can manage database records.' });
     return false;
+}
+function isRecord(value) {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+function parseFieldValue(name, definition, value) {
+    if ((value === null || value === '') && definition.nullable) {
+        return { success: true, value: null };
+    }
+    if (definition.type === 'password') {
+        if (typeof value !== 'string' || value.length > (definition.maxLength ?? 200)) {
+            return { success: false, message: `${name} must be a valid password.` };
+        }
+        return { success: true, value };
+    }
+    if (value === null || value === undefined || value === '') {
+        return { success: false, message: `${name} is required.` };
+    }
+    if (definition.type === 'text') {
+        if (typeof value !== 'string' || value.length > (definition.maxLength ?? 5000)) {
+            return { success: false, message: `${name} must be text of at most ${definition.maxLength ?? 5000} characters.` };
+        }
+        return { success: true, value };
+    }
+    if (definition.type === 'enum') {
+        if (typeof value !== 'string' || !definition.options?.includes(value)) {
+            return { success: false, message: `${name} has an unsupported value.` };
+        }
+        return { success: true, value };
+    }
+    if (definition.type === 'integer') {
+        const parsed = typeof value === 'number' ? value : Number(value);
+        if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+            return { success: false, message: `${name} must be a positive integer.` };
+        }
+        return { success: true, value: parsed };
+    }
+    if (definition.type === 'integer-array') {
+        if (!Array.isArray(value) || value.some((item) => !Number.isSafeInteger(item) || Number(item) <= 0)) {
+            return { success: false, message: `${name} must be an array of positive integers.` };
+        }
+        return { success: true, value };
+    }
+    if (definition.type === 'boolean') {
+        if (typeof value !== 'boolean')
+            return { success: false, message: `${name} must be true or false.` };
+        return { success: true, value };
+    }
+    if (definition.type === 'url') {
+        const parsed = zod_1.z.string().url().max(definition.maxLength ?? 2000).safeParse(value);
+        return parsed.success
+            ? { success: true, value: parsed.data }
+            : { success: false, message: `${name} must be a valid URL.` };
+    }
+    if (definition.type === 'date') {
+        const parsed = zod_1.z.string().date().safeParse(value);
+        return parsed.success
+            ? { success: true, value: parsed.data }
+            : { success: false, message: `${name} must be a valid date.` };
+    }
+    if (definition.type === 'time') {
+        const parsed = zod_1.z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/).safeParse(value);
+        return parsed.success
+            ? { success: true, value: parsed.data }
+            : { success: false, message: `${name} must be a valid time.` };
+    }
+    if (definition.type === 'datetime') {
+        if (typeof value !== 'string' || !Number.isFinite(Date.parse(value))) {
+            return { success: false, message: `${name} must be a valid date and time.` };
+        }
+        return { success: true, value };
+    }
+    return { success: false, message: `${name} has an unsupported field type.` };
+}
+function parseRecord(table, value, creating) {
+    if (!isRecord(value))
+        return { success: false, message: 'Provide a record object.' };
+    const fields = TABLES[table].fields;
+    const unknownField = Object.keys(value).find((name) => !Object.prototype.hasOwnProperty.call(fields, name));
+    if (unknownField)
+        return { success: false, message: `Field ${unknownField} cannot be changed.` };
+    const values = {};
+    for (const [name, field] of Object.entries(fields)) {
+        if (!Object.prototype.hasOwnProperty.call(value, name)) {
+            if (creating && field.required) {
+                if (table === 'users' && name === 'username' && value.role === 'account')
+                    continue;
+                if (table === 'users' && name === 'parent_user_id' && value.role === 'super')
+                    continue;
+                return { success: false, message: `${name} is required.` };
+            }
+            continue;
+        }
+        if (creating
+            && table === 'users'
+            && name === 'username'
+            && value.role === 'account'
+            && value[name] === '')
+            continue;
+        if (table === 'users' && name === 'password' && value[name] === '' && !creating)
+            continue;
+        if (value[name] === '' && !field.required && !field.nullable && field.type !== 'password')
+            continue;
+        const parsed = parseFieldValue(name, field, value[name]);
+        if (!parsed.success) {
+            if (name === 'password' && creating && parsed.message.endsWith('is required.'))
+                continue;
+            return parsed;
+        }
+        values[name] = parsed.value;
+    }
+    if (table === 'users') {
+        const role = values.role;
+        const effectiveRole = role ?? (creating ? null : undefined);
+        if (effectiveRole === 'super') {
+            values.parent_user_id = null;
+            values.category_id = null;
+            values.password = values.password || undefined;
+        }
+        else if (effectiveRole === 'account') {
+            values.password = null;
+            values.must_change_password = false;
+        }
+        else if (effectiveRole) {
+            values.category_id = null;
+            if (creating && (typeof values.password !== 'string' || values.password.length < 4)) {
+                return { success: false, message: 'A staff password must contain at least 4 characters.' };
+            }
+        }
+        if (creating && effectiveRole === 'account') {
+            const requiredAccountFields = ['parent_user_id', 'email', 'address', 'sex', 'birthday', 'phone', 'country', 'city', 'category_id'];
+            const missing = requiredAccountFields.find((name) => values[name] === undefined || values[name] === null);
+            if (missing)
+                return { success: false, message: `${missing} is required for an Account profile.` };
+        }
+        if (creating && effectiveRole === 'super' &&
+            (typeof values.password !== 'string' || values.password.length < 4)) {
+            return { success: false, message: 'A Super user password must contain at least 4 characters.' };
+        }
+        if (creating && effectiveRole !== 'super' && effectiveRole !== 'account' &&
+            (values.parent_user_id === undefined || values.parent_user_id === null)) {
+            return { success: false, message: 'parent_user_id is required for staff users.' };
+        }
+    }
+    if (table === 'app_settings' && creating) {
+        values.updated_by ?? (values.updated_by = null);
+    }
+    return { success: true, values };
 }
 const ListSchema = zod_1.z.object({
     q: zod_1.z.string().trim().max(200).optional().default(''),
@@ -167,6 +375,11 @@ router.get('/tables/:table', async (req, res, next) => {
                 label: definition.label,
                 description: definition.description,
                 columns: definition.columns,
+                primaryKey: definition.primaryKey,
+                fields: Object.entries(definition.fields).map(([name, field]) => ({
+                    name,
+                    ...field,
+                })),
             },
             records,
             total: Number(count?.count ?? 0),
@@ -175,6 +388,206 @@ router.get('/tables/:table', async (req, res, next) => {
         });
     }
     catch (error) {
+        next(error);
+    }
+});
+router.post('/tables/:table', async (req, res, next) => {
+    if (!requireSuper(req, res))
+        return;
+    if (!isTableName(req.params.table)) {
+        res.status(404).json({ success: false, message: 'That database table is not available for editing.' });
+        return;
+    }
+    const table = req.params.table;
+    const parsed = parseRecord(table, req.body, true);
+    if (!parsed.success) {
+        res.status(400).json({ success: false, message: parsed.message });
+        return;
+    }
+    try {
+        const values = { ...parsed.values };
+        if (table === 'users') {
+            if (values.role === 'account' && !values.username)
+                values.username = `account-${(0, node_crypto_1.randomUUID)()}`;
+            values.password_hash = typeof values.password === 'string'
+                ? await bcryptjs_1.default.hash(values.password, 12)
+                : null;
+            delete values.password;
+        }
+        if (table === 'app_settings')
+            values.updated_by = req.newSchemaUser.id;
+        if (table === 'prompts') {
+            values.created_by = req.newSchemaUser.id;
+            values.updated_by = req.newSchemaUser.id;
+        }
+        const columns = Object.keys(values);
+        const placeholders = columns.map((_column, index) => `$${index + 1}`);
+        const returnColumns = TABLES[table].columns.map((column) => `"${column}"`).join(', ');
+        const record = await (0, connection_1.queryOne)(`INSERT INTO "${table}" (${columns.map((column) => `"${column}"`).join(', ')})
+       VALUES (${placeholders.join(', ')})
+       RETURNING ${returnColumns}`, columns.map((column) => values[column]));
+        res.status(201).json({ success: true, record });
+    }
+    catch (error) {
+        next(error);
+    }
+});
+router.put('/tables/:table/:id', async (req, res, next) => {
+    if (!requireSuper(req, res))
+        return;
+    if (!isTableName(req.params.table)) {
+        res.status(404).json({ success: false, message: 'That database table is not available for editing.' });
+        return;
+    }
+    const table = req.params.table;
+    const definition = TABLES[table];
+    const recordId = table === 'app_settings' ? req.params.id : Number(req.params.id);
+    if (table !== 'app_settings' && (!Number.isSafeInteger(recordId) || Number(recordId) <= 0)) {
+        res.status(400).json({ success: false, message: 'Invalid record ID.' });
+        return;
+    }
+    const parsed = parseRecord(table, req.body, false);
+    if (!parsed.success || Object.keys(parsed.values).length === 0) {
+        res.status(400).json({
+            success: false,
+            message: parsed.success ? 'Provide at least one field to update.' : parsed.message,
+        });
+        return;
+    }
+    try {
+        const values = { ...parsed.values };
+        if (table === 'users') {
+            const current = values.role
+                ? await (0, connection_1.queryOne)('SELECT role FROM users WHERE u_id = $1', [recordId])
+                : undefined;
+            if (current?.role === 'super' && values.role !== 'super') {
+                if (Number(recordId) === req.newSchemaUser.id) {
+                    res.status(400).json({ success: false, message: 'You cannot change the role of the Super account you are using.' });
+                    return;
+                }
+                const count = await (0, connection_1.queryOne)("SELECT count(*)::int AS count FROM users WHERE role = 'super'");
+                if (Number(count?.count ?? 0) <= 1) {
+                    res.status(400).json({ success: false, message: 'The last Super account cannot be demoted.' });
+                    return;
+                }
+            }
+            if (values.role === 'account') {
+                values.password_hash = null;
+                values.must_change_password = false;
+            }
+            else if (typeof values.password === 'string' && values.password.length > 0) {
+                if (values.password.length < 4) {
+                    res.status(400).json({ success: false, message: 'A password must contain at least 4 characters.' });
+                    return;
+                }
+                values.password_hash = await bcryptjs_1.default.hash(values.password, 12);
+            }
+            else if (values.role && values.role !== 'account') {
+                if (current?.role === 'account') {
+                    res.status(400).json({ success: false, message: 'Enter a password when changing an Account profile to a staff role.' });
+                    return;
+                }
+            }
+            delete values.password;
+        }
+        if (table === 'app_settings') {
+            values.updated_by = req.newSchemaUser.id;
+            values.updated_date = new Date().toISOString();
+        }
+        if (table === 'prompts') {
+            values.updated_by = req.newSchemaUser.id;
+            values.updated_date = new Date().toISOString();
+        }
+        const columns = Object.keys(values);
+        const params = columns.map((column) => values[column]);
+        params.push(recordId);
+        const assignments = columns.map((column, index) => `"${column}" = $${index + 1}`);
+        const returnColumns = definition.columns.map((column) => `"${column}"`).join(', ');
+        const record = await (0, connection_1.queryOne)(`UPDATE "${table}" SET ${assignments.join(', ')}
+       WHERE "${definition.primaryKey}" = $${params.length}
+       RETURNING ${returnColumns}`, params);
+        if (!record) {
+            res.status(404).json({ success: false, message: 'Record not found.' });
+            return;
+        }
+        res.json({ success: true, record });
+    }
+    catch (error) {
+        next(error);
+    }
+});
+router.delete('/tables/:table/:id', async (req, res, next) => {
+    if (!requireSuper(req, res))
+        return;
+    if (!isTableName(req.params.table)) {
+        res.status(404).json({ success: false, message: 'That database table is not available for editing.' });
+        return;
+    }
+    const table = req.params.table;
+    const definition = TABLES[table];
+    const recordId = table === 'app_settings' ? req.params.id : Number(req.params.id);
+    if (table !== 'app_settings' && (!Number.isSafeInteger(recordId) || Number(recordId) <= 0)) {
+        res.status(400).json({ success: false, message: 'Invalid record ID.' });
+        return;
+    }
+    if (table === 'users' && Number(recordId) === req.newSchemaUser.id) {
+        res.status(400).json({ success: false, message: 'You cannot delete the Super account you are using.' });
+        return;
+    }
+    try {
+        if (table === 'users') {
+            const target = await (0, connection_1.queryOne)('SELECT role FROM users WHERE u_id = $1', [recordId]);
+            if (target?.role === 'super') {
+                const count = await (0, connection_1.queryOne)("SELECT count(*)::int AS count FROM users WHERE role = 'super'");
+                if (Number(count?.count ?? 0) <= 1) {
+                    res.status(400).json({ success: false, message: 'The last Super account cannot be deleted.' });
+                    return;
+                }
+            }
+        }
+        if (table === 'job_list') {
+            const deleted = await (0, connection_1.withTransaction)(async (tx) => {
+                const lockedJob = await tx.query('SELECT j_id FROM job_list WHERE j_id = $1 FOR UPDATE', [recordId]);
+                if (!lockedJob.rows.length)
+                    return null;
+                const attempts = await tx.query('DELETE FROM application_attempts WHERE j_id = $1 RETURNING attempt_id', [recordId]);
+                const bids = await tx.query('DELETE FROM bids WHERE j_id = $1 RETURNING b_id', [recordId]);
+                await tx.query('DELETE FROM job_list WHERE j_id = $1', [recordId]);
+                return {
+                    attemptsDeleted: attempts.rowCount ?? attempts.rows.length,
+                    bidsDeleted: bids.rowCount ?? bids.rows.length,
+                };
+            });
+            if (!deleted) {
+                res.status(404).json({ success: false, message: 'Record not found.' });
+                return;
+            }
+            res.json({
+                success: true,
+                message: `Job deleted from live database with ${deleted.attemptsDeleted} application attempt(s) and ${deleted.bidsDeleted} Bid record(s). Related interview records were deleted with their Bids.`,
+                ...deleted,
+            });
+            return;
+        }
+        const result = await (0, connection_1.execute)(`DELETE FROM "${table}" WHERE "${definition.primaryKey}" = $1`, [recordId]);
+        if (!result.rowCount) {
+            res.status(404).json({ success: false, message: 'Record not found.' });
+            return;
+        }
+        res.json({ success: true, message: 'Record deleted.' });
+    }
+    catch (error) {
+        if (table === 'job_list'
+            && typeof error === 'object'
+            && error !== null
+            && 'code' in error
+            && error.code === '23503') {
+            res.status(409).json({
+                success: false,
+                message: 'This job has related application history and cannot be deleted.',
+            });
+            return;
+        }
         next(error);
     }
 });

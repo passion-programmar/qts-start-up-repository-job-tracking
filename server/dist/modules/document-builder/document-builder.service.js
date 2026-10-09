@@ -76,7 +76,7 @@ function artifactToPaths(artifacts) {
 }
 /**
  * Build resume and/or cover letter PDFs from Custom GPT JSON.
- * Saves source JSON + PDF under server/data/application-documents/{applicationId}/
+ * Saves artifacts under the local application documents directory or Vercel temp storage.
  */
 async function buildApplicationDocuments(applicationId, input) {
     const artifacts = [];

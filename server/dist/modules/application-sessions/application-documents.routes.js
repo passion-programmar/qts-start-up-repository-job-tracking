@@ -1,16 +1,13 @@
 "use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
-const node_fs_1 = __importDefault(require("node:fs"));
 const auth_1 = require("../../middleware/auth");
 const scope_1 = require("../../middleware/scope");
 const application_documents_1 = require("../../services/application-documents");
 const connection_1 = require("../../database/connection");
 const env_1 = require("../../config/env");
 const application_session_store_1 = require("../../services/application-session-store");
+const application_document_store_1 = require("../../services/application-document-store");
 const document_builder_1 = require("../document-builder");
 const logger_1 = require("../../utilities/logger");
 const router = (0, express_1.Router)({ mergeParams: true });
@@ -58,8 +55,10 @@ router.get('/', async (req, res) => {
         res.status(404).json({ success: false, message: 'Application session not found.' });
         return;
     }
-    const manifest = (0, document_builder_1.readDocumentManifest)(sessionId);
     const metadata = readMetadata(session);
+    const manifest = env_1.config.applicationSessionPersistDb
+        ? (metadata.documentManifest ?? null)
+        : (0, document_builder_1.readDocumentManifest)(sessionId);
     const documents = metadata.documents && typeof metadata.documents === 'object'
         ? metadata.documents
         : {};
@@ -96,6 +95,9 @@ router.post('/build', async (req, res) => {
         return;
     }
     const manifest = await (0, document_builder_1.buildApplicationDocuments)(sessionId, parsed.data);
+    if (env_1.config.applicationSessionPersistDb) {
+        await (0, application_document_store_1.storeApplicationDocumentArtifacts)(sessionId, manifest);
+    }
     const metadata = readMetadata(session);
     const nextMetadata = {
         ...metadata,
@@ -141,6 +143,27 @@ router.get('/:docType', async (req, res) => {
         return;
     }
     const metadata = readMetadata(session);
+    if (env_1.config.applicationSessionPersistDb) {
+        const normalizedDocType = docType === 'cover-letter' || docType === 'cover_letter'
+            ? 'cover_letter'
+            : docType === 'resume'
+                ? 'resume'
+                : null;
+        const document = normalizedDocType
+            ? await (0, application_document_store_1.getStoredApplicationDocument)(sessionId, normalizedDocType)
+            : null;
+        if (!document) {
+            res.status(404).json({
+                success: false,
+                message: `Document not found: ${docType}. Submit GPT package or POST /documents/build first.`,
+            });
+            return;
+        }
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `inline; filename="${document.file_name}"`);
+        res.send(document.content);
+        return;
+    }
     const resolved = (0, application_documents_1.resolveDocumentFile)(sessionId, docType, metadata);
     if (!resolved) {
         res.status(404).json({
@@ -151,7 +174,7 @@ router.get('/:docType', async (req, res) => {
     }
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `inline; filename="${resolved.fileName}"`);
-    node_fs_1.default.createReadStream(resolved.filePath).pipe(res);
+    res.sendFile(resolved.filePath);
 });
 exports.default = router;
 //# sourceMappingURL=application-documents.routes.js.map
