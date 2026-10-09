@@ -11,10 +11,10 @@
     body {
       margin: 0;
       overflow: hidden;
-      height: 100%;
+      width: 420px;
+      height: 600px;
     }
     body {
-      width: 100%;
       font-size: 13px;
       display: flex;
       flex-direction: column;
@@ -54,6 +54,11 @@
       scrollbar-width: thin;
       scrollbar-color: #cbd5e1 transparent;
     }
+    #f-title,
+    #f-company,
+    #f-url {
+      font-size: 13px;
+    }
     #f-desc::-webkit-scrollbar {
       width: 8px;
     }
@@ -72,6 +77,55 @@
       font-size: 12px;
     }
     .existing-job-notice strong { display: block; margin-bottom: 4px; color: #92400e; }
+    .job-account-assignment {
+      margin: 0 0 14px;
+      padding: 12px;
+      border: 1px solid #cbd5e1;
+      border-radius: 10px;
+      background: #f8fafc;
+    }
+    #f-title, #f-company, #f-url { font-size: 13px; }
+    .job-account-assignment.hidden { display: none; }
+    .job-account-assignment-title {
+      margin: 0;
+      color: #0f172a;
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .job-account-assignment-hint {
+      margin: 4px 0 10px;
+      color: #64748b;
+      font-size: 11px;
+      line-height: 1.4;
+    }
+    .job-account-category + .job-account-category { margin-top: 10px; }
+    .job-account-category-title {
+      margin: 0 0 5px;
+      color: #334155;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .job-account-option {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      padding: 5px 0;
+      color: #1e293b;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .job-account-option input { margin: 1px 0 0; accent-color: #2563eb; }
+    .job-account-option small {
+      display: block;
+      margin-top: 2px;
+      color: #64748b;
+      font-size: 10px;
+    }
+    .job-account-assignment-status {
+      margin: 6px 0 0;
+      color: #64748b;
+      font-size: 11px;
+    }
     .session-bar {
       display: flex;
       align-items: center;
@@ -176,6 +230,83 @@
       color: #334155;
     }
     .auto-apply-bar.is-active .auto-apply-status { color: #166534; }
+    .action-section {
+      padding: 28px 20px;
+    }
+    .action-shell {
+      max-width: 360px;
+      margin: 0 auto;
+    }
+    .action-card {
+      padding: 24px;
+      border: 1px solid #e2e8f0;
+      border-radius: 16px;
+      background: #fff;
+      box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+    }
+    .action-title {
+      margin: 0 0 6px;
+      color: #0f172a;
+      font-size: 20px;
+      text-align: center;
+    }
+    .action-subtitle {
+      margin: 0 0 20px;
+      color: #64748b;
+      font-size: 12px;
+      line-height: 1.5;
+      text-align: center;
+    }
+    .action-buttons {
+      display: grid;
+      gap: 10px;
+    }
+    .action-buttons .btn {
+      min-height: 42px;
+      font-weight: 600;
+    }
+    .action-buttons .btn.is-selected {
+      background: #166534;
+      color: #fff;
+      box-shadow: 0 0 0 3px #bbf7d0;
+    }
+    #get-jd-confirmation {
+      width: min(340px, calc(100% - 40px));
+      padding: 22px;
+      border: 1px solid #e2e8f0;
+      border-radius: 14px;
+      color: #0f172a;
+      box-shadow: 0 16px 40px rgba(15, 23, 42, 0.24);
+    }
+    #get-jd-confirmation::backdrop {
+      background: rgba(15, 23, 42, 0.48);
+    }
+    .get-jd-confirmation-title {
+      margin: 0 0 8px;
+      font-size: 18px;
+    }
+    .get-jd-confirmation-message {
+      margin: 0 0 18px;
+      color: #475569;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .get-jd-confirmation-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+    .job-mode-actions {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+    .job-mode-indicator {
+      color: #166534;
+      font-size: 12px;
+      font-weight: 700;
+    }
     .login-signed-in-as {
       margin: 0 0 12px;
       font-size: 12px;
@@ -267,11 +398,11 @@
           <div class="login-brand">
             <div class="login-badge" aria-hidden="true">QTS</div>
             <h2 class="login-title">Manager Sign In</h2>
-            <p class="login-subtitle">Sign in to capture jobs from LinkedIn, Indeed, and more</p>
+            <p class="login-subtitle">Sign in with your Manager account from QTS_Startup</p>
           </div>
 
-          <div id="login-setup-hint" class="hidden alert alert-warn login-setup-hint">
-            No Manager accounts exist yet. An Admin must create a Manager account before you can sign in here.
+          <div id="login-setup-hint" class="alert alert-warn login-setup-hint">
+            Only Manager accounts can sign in. An Admin creates Manager accounts in the QTS_Startup web app.
           </div>
           <div id="login-alert"></div>
 
@@ -287,69 +418,47 @@
             <button class="btn btn-primary btn-block login-submit" id="btn-login" type="button">Log In</button>
           </div>
 
-          <div id="login-candidate-step" class="login-candidate-step hidden">
-            <p class="login-signed-in-as" id="login-signed-in-as"></p>
-            <div id="login-team-step" class="hidden">
-              <div class="login-field">
-                <label class="login-label" for="login-team">Account team</label>
-                <select id="login-team" class="login-input" aria-label="Account team">
-                  <option value="">— Select Account —</option>
-                </select>
-              </div>
-              <button class="btn btn-primary btn-block login-submit" id="btn-select-team" type="button">Continue</button>
-            </div>
-            <div id="login-candidate-fields">
-            <div class="login-field">
-              <label class="login-label" for="login-default-candidate">Default candidate</label>
-              <select id="login-default-candidate" class="login-input" aria-label="Default candidate">
-                <option value="">— Select candidate —</option>
-              </select>
-              <p class="login-candidate-hint">Choose who you are applying as, then press <strong>Start applying on job pages</strong>. Until you do, the extension will not run on job sites. Open the extension icon anytime to change candidate or stop auto-apply.</p>
-            </div>
-            <div class="login-candidate-actions">
-              <button class="btn btn-primary btn-block login-submit" id="btn-start-auto-apply" type="button">Start applying on job pages</button>
-              <button class="btn btn-ghost btn-block" id="btn-setup-not-now" type="button">Not now</button>
-            </div>
-            </div>
-          </div>
-
-          <p class="login-footer">Use your Manager account from QTS_Startup</p>
         </div>
       </div>
     </div>
 
+    <div id="action-section" class="action-section hidden" aria-live="polite">
+      <div class="action-shell">
+        <div class="action-card">
+          <h2 class="action-title">Job Application</h2>
+          <p class="action-subtitle">Select an action for the current job page.</p>
+          <div class="action-buttons">
+            <button class="btn btn-primary" id="btn-get-jd" type="button" aria-pressed="false">Get JD</button>
+            <button class="btn btn-primary" id="btn-apply" type="button" aria-pressed="false">Apply</button>
+            <button class="btn btn-primary" id="btn-custom-apply" type="button" aria-pressed="false">Custom Apply</button>
+            <button class="btn btn-ghost" id="btn-action-logout" type="button">Logout</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <dialog id="get-jd-confirmation" aria-labelledby="get-jd-confirmation-title">
+      <h2 class="get-jd-confirmation-title" id="get-jd-confirmation-title">Get job details?</h2>
+      <p class="get-jd-confirmation-message">
+        Read the current page to find the job URL, title, company, and description?
+      </p>
+      <form method="dialog" class="get-jd-confirmation-actions">
+        <button class="btn btn-ghost" type="submit" value="no">No</button>
+        <button class="btn btn-primary" type="submit" value="yes">Yes</button>
+      </form>
+    </dialog>
+
     <!-- Job Form -->
     <div id="job-section" class="hidden">
+      <div class="job-mode-actions">
+        <span class="job-mode-indicator">Get JD mode</span>
+        <button type="button" class="btn btn-ghost btn-sm" id="btn-change-mode">Change mode</button>
+      </div>
       <div id="main-alert"></div>
 
       <div id="auto-apply-bar" class="auto-apply-bar hidden" aria-live="polite">
         <span class="auto-apply-status" id="auto-apply-status">Auto-apply: off</span>
         <button type="button" class="btn btn-primary btn-sm" id="btn-toggle-auto-apply">Start on job pages</button>
-      </div>
-
-      <div id="job-summary" class="job-summary">
-        <div class="job-summary-stats">
-          <span class="job-summary-item">
-            <span class="job-summary-stat-label">Source:</span>
-            <span class="job-summary-stat-value" id="summary-source">—</span>
-          </span>
-          <span class="job-summary-item">
-            <span class="job-summary-stat-label">Apply method:</span>
-            <span class="job-summary-stat-value" id="summary-apply-template" title="">—</span>
-          </span>
-          <span class="job-summary-item">
-            <span class="job-summary-stat-label">Status:</span>
-            <span class="job-summary-status-pill is-new" id="summary-status">New</span>
-          </span>
-          <span class="job-summary-item">
-            <span class="job-summary-stat-label">Applied:</span>
-            <span class="job-summary-stat-value" id="summary-applied">0</span>
-          </span>
-          <span class="job-summary-item">
-            <span class="job-summary-stat-label">Not applied:</span>
-            <span class="job-summary-stat-value" id="summary-not-applied">0</span>
-          </span>
-        </div>
       </div>
 
       <div id="application-status" class="application-status hidden" aria-live="polite">
@@ -450,22 +559,18 @@
         <div class="field-error" id="err-url">URL is required.</div>
       </div>
 
+      <section id="job-account-assignment" class="job-account-assignment hidden" aria-labelledby="job-account-assignment-title">
+        <div id="job-account-groups" aria-live="polite">
+          <p class="job-account-assignment-status">Loading Accounts…</p>
+        </div>
+        <p id="job-account-selection-status" class="job-account-assignment-status">No Accounts selected.</p>
+      </section>
+
       <div class="divider"></div>
 
       <div class="cand-header">
-        <span class="cand-title">Candidates</span>
         <div class="cand-header-actions">
-          <select class="cand-default-select hidden" id="main-default-candidate" aria-label="Default candidate" title="Default candidate for new applications">
-            <option value="">Default…</option>
-          </select>
-          <button type="button" class="btn btn-primary btn-sm hidden" id="btn-start-default-candidate">Start Application</button>
-          <div class="cand-filters">
-            <select class="cand-stack-filter" id="cand-stack-filter" aria-label="Filter by stack">
-              <option value="">All stacks</option>
-            </select>
-            <input class="cand-search" type="text" placeholder="Search name…" id="cand-filter">
-          </div>
-        </div>
+               </div>
       </div>
       <div class="cand-list" id="cand-list"></div>
       <div id="cand-empty" class="hidden text-muted cand-empty">No active candidates for this Account team. Ask your Manager to add candidates in QTS_Startup.</div>

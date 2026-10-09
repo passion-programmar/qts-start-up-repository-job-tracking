@@ -4,6 +4,11 @@ const global = globalThis;
 
 let candidates = [];
 let managerTeams = [];
+let managerJobAccounts = [];
+let jobCategories = [];
+let selectedJobAccountIds = new Set();
+let hasManuallyChangedJobAccounts = false;
+let jobAssignmentOptionsPromise = null;
 let candidateStatuses = {};
 let candidateAppliedAt = {};
 let candidateLocked = {};
@@ -11,6 +16,7 @@ let existingJobId = null;
 let currentTabUrl = '';
 let currentSource = '';
 let targetTabId = null;
+let sourceWindowId = null;
 let jobSavedInBackend = false;
 let currentUser = null;
 let candidateStacks = [];
@@ -36,6 +42,58 @@ const SESSION_USER_KEY = 'qtsSessionUser';
 const DEFAULT_CANDIDATE_KEY = 'qtsDefaultCandidateByAccount';
 const LEGACY_DEFAULT_CANDIDATE_KEY = 'qtsDefaultCandidateByBidder';
 const AUTO_APPLY_ENABLED_KEY = 'qtsAutoApplyEnabled';
+const SELECTED_ACTION_KEY = 'qtsSelectedAction';
+const ACTION_BUTTON_IDS = ['btn-get-jd', 'btn-apply', 'btn-custom-apply'];
+
+function updateSelectedAction(actionId) {
+  for (const buttonId of ACTION_BUTTON_IDS) {
+    const button = document.getElementById(buttonId);
+    if (!button) continue;
+    const isSelected = buttonId === actionId;
+    button.classList.toggle('is-selected', isSelected);
+    button.setAttribute('aria-pressed', String(isSelected));
+  }
+}
+
+async function selectAction(actionId) {
+  updateSelectedAction(actionId);
+  await chrome.storage.local.set({ [getSelectedActionStorageKey()]: actionId });
+}
+
+function getSelectedActionStorageKey() {
+  return sourceWindowId == null ? SELECTED_ACTION_KEY : `${SELECTED_ACTION_KEY}:window:${sourceWindowId}`;
+}
+
+async function restoreSelectedAction() {
+  const storageKey = getSelectedActionStorageKey();
+  const legacyTabKey = targetTabId == null ? null : `${SELECTED_ACTION_KEY}:${targetTabId}`;
+  const keys = [storageKey, SELECTED_ACTION_KEY, ...(legacyTabKey ? [legacyTabKey] : [])];
+  const stored = await chrome.storage.local.get(keys);
+  const actionId = stored[storageKey] ?? stored[legacyTabKey] ?? stored[SELECTED_ACTION_KEY];
+  if (stored[storageKey] == null && actionId != null && sourceWindowId != null) {
+    await chrome.storage.local.set({ [storageKey]: actionId });
+    if (stored[legacyTabKey] == null && stored[SELECTED_ACTION_KEY] != null) {
+      await chrome.storage.local.remove([SELECTED_ACTION_KEY]);
+    }
+  }
+  const selectedAction = ACTION_BUTTON_IDS.includes(actionId) ? actionId : null;
+  updateSelectedAction(selectedAction);
+  return selectedAction;
+}
+
+function confirmGetJobDetails() {
+  const dialog = document.getElementById('get-jd-confirmation');
+  if (!dialog) {
+    throw new Error('Get JD confirmation dialog is unavailable. Reload the extension.');
+  }
+
+  return new Promise((resolve) => {
+    dialog.addEventListener('close', () => {
+      resolve(dialog.returnValue === 'yes');
+    }, { once: true });
+    dialog.showModal();
+  });
+}
 
 async function hydrateApplySessionStore() {
   const store = global.__qtsApplySessionStore;
@@ -89,35 +147,17 @@ async function withLoading(task, message = 'Loading…') {
   }
 }
 
-const POPUP_WINDOW_WIDTH = 660;
-const POPUP_WINDOW_HEIGHT_RATIO = 0.8;
-const POPUP_WINDOW_MIN_HEIGHT = 480;
-
-function getTargetWindowHeight() {
-  const screenH = window.screen?.availHeight || window.screen?.height || 900;
-  return Math.max(POPUP_WINDOW_MIN_HEIGHT, Math.round(screenH * POPUP_WINDOW_HEIGHT_RATIO));
-}
-
-function applyPopupScrollArea(windowHeight) {
+function applyPopupScrollArea() {
   const scroll = document.querySelector('.popup-scroll');
   if (!scroll) return;
   const top = document.querySelector('.popup-top')?.offsetHeight || 0;
   const actionBar = document.getElementById('action-bar');
   const actions = actionBar?.classList.contains('hidden') ? 0 : (actionBar?.offsetHeight || 0);
-  scroll.style.maxHeight = `${Math.max(120, windowHeight - top - actions - 8)}px`;
+  scroll.style.maxHeight = `${Math.max(120, window.innerHeight - top - actions - 8)}px`;
 }
 
 function fitPopupWindow() {
-  if (!chrome.windows?.getCurrent) return;
-  const height = getTargetWindowHeight();
-  applyPopupScrollArea(height);
-  chrome.windows.getCurrent((win) => {
-    if (!win?.id || win.type !== 'popup') return;
-    chrome.windows.update(win.id, {
-      width: POPUP_WINDOW_WIDTH,
-      height,
-    });
-  });
+  applyPopupScrollArea();
 }
 
 let fitPopupQueued = false;
@@ -307,10 +347,22 @@ function applyGptDispatchResult(msg) {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
+  if (new URLSearchParams(window.location.search).get('embedded') === '1') {
+    document.documentElement.style.width = '100%';
+    document.documentElement.style.height = '100%';
+    document.body.style.width = '100%';
+    document.body.style.height = '100%';
+  }
   const logoEl = document.getElementById('header-logo');
   if (logoEl) logoEl.src = chrome.runtime.getURL('assets/account-logo.png');
   targetTabId = getQueryTabId() || await resolveTargetTabOnLoad();
   if (targetTabId) {
+    try {
+      const sourceTab = await chrome.tabs.get(targetTabId);
+      sourceWindowId = sourceTab.windowId ?? null;
+    } catch (e) {
+      console.warn('Could not resolve source browser window:', e);
+    }
     await chrome.storage.local.set({ qtsJobSourceTabId: targetTabId });
     chrome.runtime.sendMessage({ type: 'REGISTER_JOB_TAB', tabId: targetTabId }).catch(() => {});
   }
@@ -347,13 +399,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   });
   document.getElementById('btn-start-auto-apply')?.addEventListener('click', () => {
-    startAutoApplyFromLoginStep().catch((e) => {
-      showAlert('login-alert', e?.message || 'Could not start auto-apply.', 'error');
+    continueToActionScreen().catch((e) => {
+      showAlert('login-alert', e?.message || 'Could not continue.', 'error');
     });
   });
   document.getElementById('btn-setup-not-now')?.addEventListener('click', () => {
-    dismissSetupWithoutAutoApply().catch((e) => {
-      showAlert('login-alert', e?.message || 'Could not save setup.', 'error');
+    continueToActionScreen().catch((e) => {
+      showAlert('login-alert', e?.message || 'Could not continue.', 'error');
     });
   });
   document.getElementById('login-default-candidate')?.addEventListener('change', (event) => {
@@ -377,7 +429,72 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   });
   document.getElementById('btn-logout').addEventListener('click', doLogout);
+  document.getElementById('btn-action-logout').addEventListener('click', doLogout);
+  document.getElementById('btn-change-mode').addEventListener('click', () => {
+    if (!currentUser) return;
+    showActionScreen(currentUser).catch((e) => {
+      showAlert('main-alert', e?.message || 'Could not change mode.', 'error');
+    });
+  });
+  document.getElementById('btn-get-jd').addEventListener('click', async () => {
+    try {
+      await selectAction('btn-get-jd');
+      const confirmed = await confirmGetJobDetails();
+      if (!confirmed) {
+        showAlert('main-alert', 'Get JD cancelled. No job details were read.', 'info');
+        return;
+      }
+    } catch (e) {
+      showAlert('main-alert', e?.message || 'Could not save selected action.', 'error');
+      return;
+    }
+    clearAlert('main-alert');
+    showJobSection();
+    showLoading('Reading job details from this tab…');
+    loadCurrentTab({ preferCache: true, allowExtract: true }).catch((e) => {
+      showAlert('main-alert', e?.message || 'Could not load the job description.', 'error');
+    }).finally(() => {
+      hideLoading();
+    });
+  });
+  document.getElementById('btn-apply').addEventListener('click', async () => {
+    try {
+      await selectAction('btn-apply');
+    } catch (e) {
+      showAlert('main-alert', e?.message || 'Could not save selected action.', 'error');
+      return;
+    }
+    const candidateId = defaultCandidateId || readSelectedDefaultCandidateId();
+    if (!candidateId) {
+      showAlert('main-alert', 'Choose a default candidate before applying.', 'error');
+      return;
+    }
+    startApplication(candidateId).catch((e) => {
+      showAlert('main-alert', e?.message || 'Could not start application.', 'error');
+    });
+  });
+  document.getElementById('btn-custom-apply').addEventListener('click', async () => {
+    try {
+      await selectAction('btn-custom-apply');
+    } catch (e) {
+      showAlert('main-alert', e?.message || 'Could not save selected action.', 'error');
+      return;
+    }
+    dispatchGptTask(activeApplicationId, { pollAndApply: true }).catch((e) => {
+      showAlert('main-alert', e?.message || 'Could not start Custom Apply.', 'error');
+    });
+  });
   document.getElementById('btn-save').addEventListener('click', doSave);
+  document.getElementById('job-account-groups')?.addEventListener('change', (event) => {
+    const checkbox = event.target.closest('input[data-job-account-id]');
+    if (!checkbox) return;
+    const accountId = Number(checkbox.dataset.jobAccountId);
+    if (!Number.isSafeInteger(accountId) || accountId <= 0) return;
+    hasManuallyChangedJobAccounts = true;
+    if (checkbox.checked) selectedJobAccountIds.add(accountId);
+    else selectedJobAccountIds.delete(accountId);
+    updateJobAccountSelectionStatus();
+  });
   document.getElementById('btn-refresh').addEventListener('click', doRefresh);
   document.getElementById('btn-refresh-application')?.addEventListener('click', () => {
     refreshApplicationStatus().catch(() => {
@@ -431,7 +548,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('cand-list').addEventListener('change', onCandidateStatusChange);
   document.getElementById('cand-list').addEventListener('click', onCandidateCardClick);
   ['f-title', 'f-company', 'f-url'].forEach(id => {
-    document.getElementById(id).addEventListener('input', updateJobSummary);
+    document.getElementById(id).addEventListener('input', () => {
+      if (id === 'f-title') autoSelectJobAccountsForTitle();
+      updateJobSummary();
+    });
   });
   document.getElementById('f-desc').addEventListener('input', updateJobSummary);
 
@@ -521,30 +641,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       sendResponse?.({ ok: true });
       return;
     }
-    if (msg.type === 'SET_SOURCE_TAB' && msg.tabId) {
-      Promise.all([
-        chrome.storage.local.get(['qtsCustomGptTabId']),
-        chrome.tabs.get(msg.tabId),
-      ]).then(async ([stored, tab]) => {
-        if (stored.qtsCustomGptTabId === msg.tabId) {
-          sendResponse({ ok: false, ignored: true });
-          return;
-        }
-        const gptId = window.__qtsCustomGpt?.CUSTOM_GPT_ID;
-        const onGpt = Boolean(
-          (gptId && tab?.url?.includes(gptId))
-          || /qts[- ]job[- ]tracking/i.test(tab?.title || '')
-        );
-        if (onGpt) {
-          sendResponse({ ok: false, ignored: true });
-          return;
-        }
-        return switchSourceTab(msg.tabId)
-          .then(() => sendResponse({ ok: true }))
-          .catch((e) => sendResponse({ ok: false, error: e?.message || 'Failed' }));
-      }).catch((e) => sendResponse({ ok: false, error: e?.message || 'Failed' }));
-      return true;
-    }
     if (msg.type === 'APPLY_TEMPLATE_DETECTED' && msg.tabId) {
       if (Number(msg.tabId) === Number(targetTabId)) {
         loadApplyTemplateForTab(msg.tabId)
@@ -583,55 +679,34 @@ async function bootstrapPopupFast() {
     return;
   }
 
-  await hydrateApplySessionStore();
-
-  const sessionUser = await readSessionUser();
-  if (!sessionUser || !isExtensionWorkspaceUser(sessionUser)) {
-    await clearAuthState();
+  showLoading('Checking your Manager account…');
+  try {
+    const user = await window.api.me();
+    if (!user.success || !user.username) {
+      if (user._httpStatus === 401 || user._httpStatus === 403) {
+        await clearAuthState();
+      }
+      await showLogin();
+      showAlert('login-alert', user.message || 'Could not verify your login. Try again.', 'error');
+      return;
+    }
+    if (user.role !== 'manager') {
+      await clearAuthState();
+      await showLogin();
+      showAlert('login-alert', 'Only Manager accounts can sign in to the extension.', 'error');
+      return;
+    }
+    const sessionUser = {
+      id: user.id,
+      username: user.username,
+      name: user.name,
+      role: user.role,
+    };
+    await storeSessionUser(sessionUser);
+    await resumeSelectedMode(sessionUser);
+  } finally {
     hideLoading(true);
-    await showLogin();
-    return;
   }
-
-  const cache = await readCandidateCache();
-  if (sessionUser.role === 'manager' && !sessionUser.accountId) {
-    const workspace = await fetchWorkspaceData(true);
-    managerTeams = workspace.teams || [];
-    hideLoading(true);
-    await showManagerTeamStep(sessionUser);
-    return;
-  }
-  if (Array.isArray(cache?.candidates) && cache.candidates.length) {
-    applyCandidatesData(cache.candidates, cache.stacks || []);
-  }
-  defaultCandidateId = await readDefaultCandidateId(sessionUser.accountId);
-  if (await needsDefaultCandidateSelection(sessionUser)) {
-    hideLoading(true);
-    await showDefaultCandidateStep(sessionUser);
-    return;
-  }
-  if (!(await readAutoApplyEnabled())) {
-    hideLoading(true);
-    setSession(sessionUser);
-    showJobSection();
-    await loadCurrentTab({ preferCache: true, allowExtract: false });
-    updateJobSummary();
-    updateDefaultCandidateUi();
-    updateAutoApplyBarUi();
-    scheduleFitPopup();
-    refreshWorkspaceInBackground();
-    return;
-  }
-  await global.__qtsAccountAuth?.armWorkerAuth?.();
-  setSession(sessionUser);
-  showJobSection();
-  hideLoading(true);
-  updateAutoApplyBarUi();
-  await loadCurrentTab({ preferCache: true, allowExtract: false });
-  updateJobSummary();
-  updateDefaultCandidateUi();
-  scheduleFitPopup();
-  refreshWorkspaceInBackground();
 }
 
 async function refreshWorkspaceInBackground() {
@@ -650,21 +725,86 @@ async function refreshWorkspaceInBackground() {
   } catch { /* non-fatal */ }
 }
 
-async function verifySavedJobOnServer(urls, { silent = false } = {}) {
+async function verifySavedJobOnServer(urls) {
   const saved = await findSavedJobByUrls(urls, { skipCache: true, showSpinner: true });
   if (!saved) return false;
 
-  const currentUrl = document.getElementById('f-url')?.value?.trim() || currentTabUrl;
-  const savedUrl = saved.url || '';
-  if (currentUrl && savedUrl && prefetchSavedJobKey(currentUrl) !== prefetchSavedJobKey(savedUrl)) {
-    return false;
-  }
-
-  loadExistingJob(saved, { silent });
+  loadExistingJob(saved, { silent: true });
   renderCandidates();
   updateJobSummary();
   scheduleFitPopup();
   return true;
+}
+
+async function ensurePageNotificationHost(tabId) {
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    files: ['content/capture-panel.js'],
+  });
+}
+
+async function showPageNotice(tabId, message, toastType = 'info', options = {}) {
+  await ensurePageNotificationHost(tabId);
+  const response = await chrome.tabs.sendMessage(tabId, {
+    type: 'QTS_SHOW_PAGE_TOAST',
+    message,
+    toastType,
+    durationMs: options.durationMs,
+    closeTabAfterMs: options.closeTabAfterMs,
+  });
+  if (!response?.ok) {
+    throw new Error(response?.error || 'Could not display the notice on the job page.');
+  }
+}
+
+async function confirmOnJobPage(tabId, message) {
+  await ensurePageNotificationHost(tabId);
+  const response = await chrome.tabs.sendMessage(tabId, {
+    type: 'QTS_CONFIRM_PAGE',
+    title: 'Job already saved',
+    message,
+  });
+  if (!response?.ok) {
+    throw new Error(response?.error || 'Could not show the confirmation on the job page.');
+  }
+  return Boolean(response.confirmed);
+}
+
+async function checkCurrentJobUrl(url) {
+  const response = await window.api.checkJobByUrl(url);
+  if (!response.success) {
+    throw new Error(response.message || 'Could not check this job URL.');
+  }
+  return response;
+}
+
+async function handleGetJdUrlStatus(tabId, url) {
+  const status = await checkCurrentJobUrl(url);
+  if (status.alreadyApplied) {
+    await showPageNotice(
+      tabId,
+      'You have already applied to this job.',
+      'warn',
+      { durationMs: 3000, closeTabAfterMs: 3000 }
+    );
+    return { stop: true, job: null };
+  }
+
+  if (!status.job) return { stop: false, job: null };
+
+  await showPageNotice(tabId, 'This job is already on your list.', 'info');
+  if (status.job.status === 'failed') {
+    await showPageNotice(
+      tabId,
+      'The previous attempt did not succeed. You can try applying again.',
+      'warn'
+    );
+  }
+  const addAnotherAccount = await confirmOnJobPage(
+    tabId,
+    'Would you like to add another account to this job?'
+  );
+  return { stop: !addAnotherAccount, job: addAnotherAccount ? status.job : null };
 }
 
 // ---- Connection ----
@@ -827,10 +967,6 @@ function resetLoginFormView() {
   if (signedInEl) signedInEl.textContent = '';
 }
 
-function isExtensionWorkspaceUser(user) {
-  return user?.role === 'manager';
-}
-
 function populateManagerTeamSelect() {
   const select = document.getElementById('login-team');
   if (!select) return;
@@ -962,37 +1098,19 @@ async function armAutoApplyOnCurrentJobTab() {
   });
 }
 
-async function startAutoApplyFromLoginStep() {
-  const user = currentUser || await readSessionUser();
-  if (!user || !isAccountSession(user)) {
-    throw new Error('Sign in first.');
-  }
-  const candidateId = readSelectedDefaultCandidateId();
-  await storeDefaultCandidateId(user.accountId, candidateId);
-  await setAutoApplyEnabled(true);
-  expandedCandidateIds.add(candidateId);
-  resetLoginFormView();
-  await armAutoApplyOnCurrentJobTab();
-}
-
-async function dismissSetupWithoutAutoApply() {
+async function continueToActionScreen() {
   const user = currentUser || await readSessionUser();
   if (!user || !isAccountSession(user)) {
     throw new Error('Sign in first.');
   }
   const select = document.getElementById('login-default-candidate');
   const candidateId = parseInt(select?.value, 10);
-  if (Number.isFinite(candidateId) && isValidDefaultCandidateId(candidateId)) {
-    await storeDefaultCandidateId(user.accountId, candidateId);
+  if (!Number.isFinite(candidateId) || !isValidDefaultCandidateId(candidateId)) {
+    throw new Error('Choose a candidate before continuing.');
   }
-  await setAutoApplyEnabled(false);
-  resetLoginFormView();
-  showToast('Auto-apply is off. Job pages will not run until you press Start.', 'info');
-  await enterJobWorkspace(user, { skipBackgroundRefresh: false });
-  chrome.runtime.sendMessage({
-    type: 'DISMISS_CAPTURE_WINDOW',
-    jobTabId: targetTabId,
-  }).catch(() => {});
+  await storeDefaultCandidateId(user.accountId, candidateId);
+  defaultCandidateId = candidateId;
+  await showActionScreen(user);
 }
 
 async function toggleAutoApplyFromPopup() {
@@ -1119,9 +1237,11 @@ function setSession(user) {
   const userEl = document.getElementById('session-user');
   if (!user || !bar || !orgEl || !userEl) return;
 
-  const orgLabel = (user.accountName || `Organization #${user.accountId}`).trim();
   const username = (user.username || '—').trim();
-  const showBoth = orgLabel.toLowerCase() !== username.toLowerCase();
+  const accountId = Number(user.accountId);
+  const hasAccount = Number.isFinite(accountId) && accountId > 0;
+  const orgLabel = (user.accountName || (hasAccount ? `Organization #${accountId}` : username)).trim();
+  const showBoth = hasAccount && orgLabel.toLowerCase() !== username.toLowerCase();
 
   if (showBoth) {
     orgEl.textContent = orgLabel;
@@ -1151,92 +1271,8 @@ async function doLogout() {
   await showLogin();
 }
 
-async function prepareLoginForm() {
-  try {
-    const status = await window.api.extensionStatus();
-    const hint = document.getElementById('login-setup-hint');
-    if (hint) {
-      if (status.success && !status.hasManagerAccounts) {
-        hint.classList.remove('hidden');
-      } else {
-        hint.classList.add('hidden');
-      }
-    }
-  } catch { /* non-fatal */ }
-}
-
 async function checkAuth() {
-  try {
-    const token = await getStoredToken();
-    if (!token) {
-      await showLogin();
-      return;
-    }
-
-    showLoading('Loading your account…');
-    try {
-      const workspace = await fetchWorkspaceData(false);
-      if (workspace?.success && workspace.user && isAccountSession(workspace.user)) {
-        await enterJobWorkspace(workspace.user, { skipBackgroundRefresh: true });
-        return;
-      }
-      if (workspace?.success && workspace.user?.role === 'manager' && !workspace.user.accountId) {
-        managerTeams = workspace.teams || [];
-        await showManagerTeamStep(workspace.user);
-        return;
-      }
-
-      const httpStatus = workspace?._httpStatus;
-      if (httpStatus === 401 || httpStatus === 403) {
-        await clearAuthState();
-        await showLogin();
-        if (workspace?.message) {
-          showAlert('login-alert', workspace.message, 'error');
-        }
-        return;
-      }
-
-      const sessionUser = await readSessionUser();
-      const cached = await readCandidateCache();
-      const fallbackUser = sessionUser || cached?.user;
-
-      if (fallbackUser && isAccountSession(fallbackUser)) {
-        const refreshed = await fetchWorkspaceData(true);
-        if (!refreshed?.success && Array.isArray(cached?.candidates) && cached.candidates.length) {
-          applyCandidatesData(cached.candidates, cached.stacks || []);
-        }
-        await enterJobWorkspace(fallbackUser, { skipBackgroundRefresh: Boolean(refreshed?.success) });
-        if (!workspace?.success) {
-          showAlert('main-alert', 'Server unreachable. Using your saved session.', 'warn');
-        }
-        return;
-      }
-
-      const me = await window.api.me();
-      if (me.success && isAccountSession(me)) {
-        await storeSessionUser(me);
-        const loaded = await fetchWorkspaceData(true);
-        if (!loaded?.success) {
-          applyCandidatesData([], []);
-        }
-        await enterJobWorkspace(me, { skipBackgroundRefresh: true });
-        return;
-      }
-
-      if (me._httpStatus === 401 || me._httpStatus === 403) {
-        await clearAuthState();
-      }
-      await showLogin();
-      if (!me.success && me._httpStatus !== 401 && me._httpStatus !== 403) {
-        showAlert('login-alert', 'Cannot reach server. Your login is saved — try again shortly.', 'warn');
-      }
-    } finally {
-      hideLoading();
-    }
-  } catch {
-    hideLoading(true);
-    await showLogin();
-  }
+  return bootstrapPopupFast();
 }
 
 async function doLogin() {
@@ -1259,61 +1295,24 @@ async function doLogin() {
     if (r._httpStatus === 0) {
       showAlert(
         'login-alert',
-        'Cannot reach the API. Confirm start-server.bat is running and https://qts-job-tracking.vercel.app/api/health shows online.',
+        'Cannot reach the public API. Check https://qts-job-tracking.vercel.app/api/health and confirm the Vercel API deployment is healthy.',
         'error'
       );
       return;
     }
-    if (r.success && r.role === 'manager') {
+    if (r.success && r.role === 'manager' && r.token) {
       await clearCandidateCache();
       const sessionSnapshot = {
         id: r.id,
         username: r.username,
         role: r.role,
-        accountId: r.accountId,
-        accountName: r.accountName,
+        name: r.name || r.username,
       };
       await global.__qtsAccountAuth.storePopupAuth(r.token, sessionSnapshot, r.expiresAt);
       window.api.setCachedToken(r.token);
-      setSession(sessionSnapshot);
+      document.getElementById('login-pass').value = '';
       clearAlert('login-alert');
-      try {
-        const workspace = await fetchWorkspaceData(true);
-        if (workspace?.user) {
-          setSession(workspace.user);
-          await global.__qtsAccountAuth.storeSessionUser(workspace.user);
-          managerTeams = workspace.teams || [];
-        }
-      } catch { /* session already saved */ }
-      if (!managerTeams.length && !sessionSnapshot.accountId) {
-        showAlert('login-alert', 'No active Account teams are assigned to your Manager account. Ask an Admin to assign one.', 'error');
-        return;
-      }
-      if (!sessionSnapshot.accountId) {
-        hideLoading(true);
-        await showManagerTeamStep(sessionSnapshot);
-        return;
-      }
-      defaultCandidateId = await readDefaultCandidateId(r.accountId);
-      if (await needsDefaultCandidateSelection(r)) {
-        hideLoading(true);
-        await showDefaultCandidateStep(currentUser || sessionSnapshot);
-        return;
-      }
-      if (!(await readAutoApplyEnabled())) {
-        hideLoading(true);
-        await showDefaultCandidateStep(currentUser || sessionSnapshot, { armOnly: true });
-        return;
-      }
-      await global.__qtsAccountAuth.armWorkerAuth();
-      showJobSection();
-      resetLoginFormView();
-      hideLoading(true);
-      await loadCurrentTab({ preferCache: true, allowExtract: false });
-      updateJobSummary();
-      updateDefaultCandidateUi();
-      updateAutoApplyBarUi();
-      scheduleFitPopup();
+      await showActionScreen(sessionSnapshot);
     } else if (r.success) {
       showAlert(
         'login-alert',
@@ -1330,7 +1329,7 @@ async function doLogin() {
       'login-alert',
       detail.includes('auth module')
         ? detail
-        : `Login error: ${detail}. If this persists, reload the extension and confirm the server is running.`,
+        : `Login error: ${detail}. If this persists, check the public Vercel API deployment.`,
       'error'
     );
   } finally {
@@ -1349,12 +1348,23 @@ async function loadAll(forceRefreshCandidates = false) {
 
 async function switchSourceTab(tabId) {
   targetTabId = tabId;
+  await chrome.storage.local.set({ qtsJobSourceTabId: tabId });
+  chrome.runtime.sendMessage({ type: 'REGISTER_JOB_TAB', tabId }).catch(() => {});
+  await restoreSelectedAction();
   const url = new URL(window.location.href);
   url.searchParams.set('tabId', String(tabId));
   window.history.replaceState(null, '', url.toString());
   document.getElementById('main-alert').innerHTML = '';
   existingJobId = null;
   jobSavedInBackend = false;
+  selectedJobAccountIds.clear();
+  hasManuallyChangedJobAccounts = false;
+  document.getElementById('job-account-assignment')?.classList.add('hidden');
+  currentSource = '';
+  ['f-title', 'f-company', 'f-url', 'f-desc'].forEach((id) => {
+    const field = document.getElementById(id);
+    if (field) field.value = '';
+  });
   await loadCurrentTab({ preferCache: true, allowExtract: false });
   await loadApplyTemplateForTab(tabId);
   updateJobSummary();
@@ -1546,8 +1556,11 @@ async function clearAuthState() {
   await global.__qtsAccountAuth?.clearAuth?.();
   await clearCandidateCache();
   await global.__qtsApplySessionStore?.clearActive?.();
+  const stored = await chrome.storage.local.get(null);
+  const selectedActionKeys = Object.keys(stored)
+    .filter((key) => key === SELECTED_ACTION_KEY || key.startsWith(`${SELECTED_ACTION_KEY}:`));
   await new Promise((resolve) => {
-    chrome.storage.local.remove([AUTO_APPLY_ENABLED_KEY], resolve);
+    chrome.storage.local.remove([AUTO_APPLY_ENABLED_KEY, ...selectedActionKeys], resolve);
   });
   await new Promise((resolve) => {
     chrome.storage.local.remove(['qtsCustomGptConfig', 'qtsCustomGptTabId'], resolve);
@@ -1617,17 +1630,31 @@ async function loadCurrentTab({ preferCache = false, allowExtract = true } = {})
     document.getElementById('f-url').value = currentTabUrl;
 
     const urlCandidates = [currentTabUrl, document.getElementById('f-url').value.trim()];
+    const getJdActive = document.getElementById('btn-get-jd')?.classList.contains('is-selected');
+    let checkedJob = null;
+    const checkedJobUrlKeys = new Set();
 
-    if (preferCache) {
+    if (getJdActive && /^https?:\/\//i.test(currentTabUrl)) {
+      const result = await handleGetJdUrlStatus(tab.id, currentTabUrl);
+      checkedJobUrlKeys.add(normalizeJobUrl(currentTabUrl));
+      if (result.stop) return;
+      checkedJob = result.job;
+      if (checkedJob) {
+        loadExistingJob(checkedJob, { silent: true });
+        renderCandidates();
+      }
+    }
+
+    if (!getJdActive && preferCache) {
       const cachedSaved = await findSavedJobByUrls(urlCandidates, { cacheOnly: true });
       if (cachedSaved) {
         loadExistingJob(cachedSaved, { silent: true });
         renderCandidates();
       }
-    } else {
+    } else if (!getJdActive) {
       const saved = await findSavedJobByUrls(urlCandidates, { showSpinner: true });
       if (saved) {
-        loadExistingJob(saved);
+        loadExistingJob(saved, { silent: true });
         renderCandidates();
         return;
       }
@@ -1643,12 +1670,10 @@ async function loadCurrentTab({ preferCache = false, allowExtract = true } = {})
       }
 
       if (isExtractablePageUrl(currentTabUrl)) {
-        const applied = await applyDetectedJobForTab(tab.id, currentTabUrl, { allowExtract, silent: preferCache });
+        const applied = await applyDetectedJobForTab(tab.id, currentTabUrl, { allowExtract, silent: true });
         if (!applied) {
-          extractFromPage(tab.id, currentTabUrl).catch(() => {});
+          await extractFromPage(tab.id, currentTabUrl, { silent: true });
         }
-      } else {
-        showAlert('main-alert', restrictedPageMessage(currentTabUrl), 'info');
       }
     }
 
@@ -1657,12 +1682,49 @@ async function loadCurrentTab({ preferCache = false, allowExtract = true } = {})
 
     await loadApplyTemplateForTab(tab.id);
 
-    if (preferCache && urlCandidates.some((url) => url && url.startsWith('http'))) {
-      await verifySavedJobOnServer(urlCandidates, { silent: true });
+    const resolvedJobUrls = [
+      currentTabUrl,
+      document.getElementById('f-url')?.value?.trim() || '',
+    ];
+    if (getJdActive && !checkedJob) {
+      for (const url of resolvedJobUrls) {
+        if (!/^https?:\/\//i.test(url)) continue;
+        const key = normalizeJobUrl(url);
+        if (checkedJobUrlKeys.has(key)) continue;
+        const result = await handleGetJdUrlStatus(tab.id, url);
+        checkedJobUrlKeys.add(key);
+        if (result.stop) return;
+        if (result.job) {
+          checkedJob = result.job;
+          loadExistingJob(checkedJob, { silent: true });
+          renderCandidates();
+          break;
+        }
+      }
+      if (!checkedJob && checkedJobUrlKeys.size > 0) {
+        await showPageNotice(tab.id, 'New job', 'new-job');
+      }
+    }
+    if (!getJdActive && resolvedJobUrls.some((url) => url.startsWith('http'))) {
+      await verifySavedJobOnServer(resolvedJobUrls);
     }
   } catch (e) {
     console.error('loadCurrentTab error:', e);
-    showAlert('main-alert', 'Could not read the current page. Try clicking Refresh.', 'error');
+    if (
+      document.getElementById('btn-get-jd')?.classList.contains('is-selected')
+      && targetTabId
+      && /^https?:\/\//i.test(currentTabUrl)
+    ) {
+      try {
+        await showPageNotice(
+          targetTabId,
+          e instanceof Error ? e.message : 'Could not check this job page.',
+          'error'
+        );
+      } catch (noticeError) {
+        console.error('Could not show the URL-check error on the job page:', noticeError);
+      }
+    }
   }
 }
 
@@ -1672,17 +1734,26 @@ async function applyDetectedJobForTab(tabId, pageUrl, { allowExtract = true, sil
   if (detected && detected.url === normalizedPageUrl) {
     if (detected.valid && detected.data) {
       populateForm(detected.data);
-      if (!silent) showAlert('main-alert', DETECT_SUCCESS_MESSAGE, 'success');
+      if (!silent) {
+        const jobLabel = [detected.data.title, detected.data.company].filter(Boolean).join(' — ');
+        showAlert(
+          'main-alert',
+          jobLabel ? `Job details detected: ${jobLabel}. Review before saving.` : 'Job details detected. Review before saving.',
+          'success'
+        );
+      }
       onJobDetected();
       return true;
     }
-    if (!silent) showAlert('main-alert', DETECT_FAIL_MESSAGE, 'fail');
+    if (!silent) {
+      showAlert('main-alert', 'Could not confidently detect the job details. Review the fields and enter or correct them before saving.', 'warn');
+    }
     onJobDetected();
     return true;
   }
 
   if (!allowExtract) return false;
-  await extractFromPage(tabId, pageUrl);
+  await extractFromPage(tabId, pageUrl, { silent });
   return true;
 }
 
@@ -1728,27 +1799,29 @@ async function findSavedJobByUrls(urls, { cacheOnly = false, skipCache = false, 
 
 async function fetchJobByUrl(url) {
   try {
-    const r = await window.api.getJobByUrl(url);
-    if (r.success && r.job) return r.job;
-    if (r._httpStatus && r._httpStatus !== 404) {
-      console.warn('fetchJobByUrl failed:', r.message);
-    }
+    const response = await window.api.getJobs();
+    if (!response.success) throw new Error(response.message || 'Could not check the Job List.');
+    const targetKey = normalizeJobUrl(url);
+    return (response.jobs || []).find((job) => normalizeJobUrl(job.url) === targetKey) || null;
   } catch (e) {
     console.warn('fetchJobByUrl error:', e);
+    throw e;
   }
-  return null;
 }
 
-async function extractFromPage(tabId, pageUrl) {
-  if (!isExtractablePageUrl(pageUrl)) return;
+async function extractFromPage(tabId, pageUrl, { silent = false } = {}) {
+  if (!isExtractablePageUrl(pageUrl)) {
+    if (!silent) showAlert('main-alert', restrictedPageMessage(pageUrl), 'info');
+    return;
+  }
   try {
     const response = await chrome.runtime.sendMessage({ type: 'EXTRACT_JOB', tabId });
     if (response?.error) {
       if (!response.manualOnly) console.warn('Extraction failed:', response.error);
       if (response.manualOnly) {
-        showAlert('main-alert', response.error, 'info');
+        if (!silent) showAlert('main-alert', response.error, 'info');
       } else {
-        showAlert('main-alert', DETECT_FAIL_MESSAGE, 'fail');
+        if (!silent) showAlert('main-alert', response.error || 'Could not detect job details. Review the fields and enter missing information.', 'warn');
         onJobDetected();
       }
       return;
@@ -1756,17 +1829,27 @@ async function extractFromPage(tabId, pageUrl) {
 
     const valid = Boolean(response?.detected);
     if (valid && response?.data) {
-      populateForm(normalizeDetectedJobData(response.data, response.url || pageUrl));
-      showAlert('main-alert', DETECT_SUCCESS_MESSAGE, 'success');
+      const detected = normalizeDetectedJobData(response.data, response.url || pageUrl);
+      populateForm(detected);
+      const jobLabel = [detected.title, detected.company].filter(Boolean).join(' — ');
+      if (!silent) {
+        showAlert('main-alert', jobLabel
+          ? `Job details detected: ${jobLabel}. Review before saving.`
+          : 'Job details detected. Review before saving.', 'success');
+      }
       onJobDetected();
       return;
     }
 
-    showAlert('main-alert', DETECT_FAIL_MESSAGE, 'fail');
+    if (!silent) {
+      showAlert('main-alert', 'Could not confidently detect the job details. Review the fields and enter or correct them before saving.', 'warn');
+    }
     onJobDetected();
   } catch (e) {
     console.warn('Extraction failed:', e);
-    showAlert('main-alert', DETECT_FAIL_MESSAGE, 'fail');
+    if (!silent) {
+      showAlert('main-alert', 'Could not read this page for job details. Check the page and try Refresh, or enter the details manually.', 'error');
+    }
     onJobDetected();
   }
 }
@@ -1777,12 +1860,18 @@ function populateForm(data) {
   if (data.url) document.getElementById('f-url').value = data.url;
   if (data.description) document.getElementById('f-desc').value = data.description;
   currentSource = data.source || '';
+  autoSelectJobAccountsForTitle();
   updateJobSummary();
 }
 
 function loadExistingJob(job, { silent = false } = {}) {
   existingJobId = job.id;
   jobSavedInBackend = true;
+  selectedJobAccountIds = new Set(
+    (job.selected_account_u_ids || job.selectedAccountUserIds || [])
+      .map(Number)
+      .filter((id) => Number.isSafeInteger(id) && id > 0)
+  );
   document.getElementById('f-title').value = job.title || '';
   document.getElementById('f-company').value = job.company || '';
   document.getElementById('f-url').value = job.url || '';
@@ -1790,11 +1879,12 @@ function loadExistingJob(job, { silent = false } = {}) {
   currentSource = job.source || '';
   syncCandidateStatusesFromJob(job.candidateStatuses || []);
   updateJobSummary();
+  onJobDetected();
 
   if (!silent) {
     const appliedCount = Object.values(candidateStatuses).filter(s => s === 'applied').length;
     const editableCount = candidates.length - appliedCount;
-    let msg = 'This job is already saved in the database.';
+    let msg = 'That job URL has already been added.';
     if (appliedCount > 0) {
       msg += ` ${appliedCount} candidate(s) already applied (locked).`;
     }
@@ -1949,6 +2039,171 @@ function collapseAllCandidateCards() {
 function onJobDetected() {
   collapseAllCandidateCards();
   renderCandidates();
+  showJobAccountAssignment();
+}
+
+function showJobAccountAssignment() {
+  const assignmentSection = document.getElementById('job-account-assignment');
+  assignmentSection?.classList.remove('hidden');
+  loadJobAssignmentOptions().catch((error) => {
+    console.error('Could not load Manager Accounts for job assignment:', error);
+  });
+}
+
+async function loadJobAssignmentOptions() {
+  if (jobAssignmentOptionsPromise) return jobAssignmentOptionsPromise;
+  jobAssignmentOptionsPromise = (async () => {
+    const managerId = Number(currentUser?.id);
+    if (currentUser?.role !== 'manager' || !Number.isSafeInteger(managerId) || managerId <= 0) {
+      throw new Error('Sign in as a Manager to load assigned Accounts.');
+    }
+
+    const [accountResponse, categoryResponse] = await Promise.all([
+      window.api.getManagerAccounts(),
+      window.api.getJobCategories(),
+    ]);
+    if (!accountResponse.success) {
+      throw new Error(accountResponse.message || 'Could not load your Accounts.');
+    }
+    if (!categoryResponse.success) {
+      throw new Error(categoryResponse.message || 'Could not load job Categories.');
+    }
+
+    managerJobAccounts = (accountResponse.accounts || [])
+      .filter((account) => (
+        account.role === 'account'
+        && Number(account.parent_user_id) === managerId
+        && account.blocked_date == null
+      ))
+      .map((account) => ({
+        ...account,
+        id: Number(account.u_id),
+        categoryId: Number(account.category_id),
+      }))
+      .filter((account) => Number.isSafeInteger(account.id) && account.id > 0);
+    jobCategories = categoryResponse.categories || [];
+    const activeAccountIds = new Set(managerJobAccounts.map((account) => account.id));
+    selectedJobAccountIds = new Set(
+      [...selectedJobAccountIds].filter((id) => activeAccountIds.has(id))
+    );
+    autoSelectJobAccountsForTitle();
+    renderJobAccountGroups();
+    return true;
+  })();
+
+  try {
+    return await jobAssignmentOptionsPromise;
+  } finally {
+    jobAssignmentOptionsPromise = null;
+  }
+}
+
+function renderJobAccountGroups() {
+  const groupsElement = document.getElementById('job-account-groups');
+  if (!groupsElement) return;
+  const assignmentHint = document.getElementById('job-account-assignment-hint');
+  if (assignmentHint) {
+    const managerLabel = currentUser?.name || currentUser?.username || 'your Manager account';
+    assignmentHint.textContent = `Accounts assigned to ${managerLabel}. Select which should receive this job; Accounts are grouped by Category.`;
+  }
+  if (!managerJobAccounts.length) {
+    groupsElement.innerHTML = '<p class="job-account-assignment-status">No active Accounts are assigned to your Manager account.</p>';
+    updateJobAccountSelectionStatus();
+    return;
+  }
+
+  const categoryNames = new Map(
+    jobCategories.map((category) => [
+      Number(category.category_id),
+      category.category_title || 'Uncategorized',
+    ])
+  );
+  const groupedAccounts = new Map();
+  for (const account of managerJobAccounts) {
+    const categoryId = account.categoryId;
+    const categoryName = categoryNames.get(categoryId) || 'Uncategorized';
+    const key = categoryNames.has(categoryId) ? String(categoryId) : 'uncategorized';
+    if (!groupedAccounts.has(key)) {
+      groupedAccounts.set(key, { name: categoryName, accounts: [] });
+    }
+    groupedAccounts.get(key).accounts.push(account);
+  }
+
+  groupsElement.innerHTML = [...groupedAccounts.values()]
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
+    .map((group) => `
+      <section class="job-account-category">
+        <h4 class="job-account-category-title">${escHtml(group.name)}</h4>
+        ${group.accounts.map((account) => {
+          const accountName = account.name || account.username || `Account ${account.id}`;
+          const loginName = account.username && account.username !== accountName
+            ? `<small>${escHtml(account.username)}</small>`
+            : '';
+          return `
+            <label class="job-account-option">
+              <input type="checkbox" data-job-account-id="${account.id}"${selectedJobAccountIds.has(account.id) ? ' checked' : ''}>
+              <span>${escHtml(accountName)}${loginName}</span>
+            </label>`;
+        }).join('')}
+      </section>`)
+    .join('');
+  updateJobAccountSelectionStatus();
+}
+
+function autoSelectJobAccountsForTitle() {
+  if (existingJobId || hasManuallyChangedJobAccounts || !managerJobAccounts.length) return;
+
+  const titleWords = new Set(
+    (document.getElementById('f-title')?.value || '')
+      .toLowerCase()
+      .match(/[a-z0-9]+/g) || []
+  );
+  const matchingCategoryIds = new Set(
+    jobCategories
+      .filter((category) => {
+        const categoryWords = (category.category_title || '')
+          .toLowerCase()
+          .match(/[a-z0-9]+/g) || [];
+        return categoryWords.length > 0 && categoryWords.every((word) => titleWords.has(word));
+      })
+      .map((category) => Number(category.category_id))
+  );
+
+  selectedJobAccountIds = new Set(
+    managerJobAccounts
+      .filter((account) => matchingCategoryIds.has(account.categoryId))
+      .map((account) => account.id)
+  );
+  renderJobAccountGroups();
+}
+
+function updateJobAccountSelectionStatus() {
+  const status = document.getElementById('job-account-selection-status');
+  if (!status) return;
+  const count = selectedJobAccountIds.size;
+  status.textContent = count
+    ? `${count} Account${count === 1 ? '' : 's'} selected.`
+    : 'No Accounts selected.';
+}
+
+function getSelectedJobAssignments() {
+  const accountsById = new Map(managerJobAccounts.map((account) => [account.id, account]));
+  const selectedAccounts = [...selectedJobAccountIds]
+    .map((id) => accountsById.get(id))
+    .filter(Boolean);
+  if (!selectedAccounts.length) {
+    throw new Error('Select at least one Account for this job.');
+  }
+  const categoryIds = [...new Set(selectedAccounts.map((account) => account.categoryId))]
+    .filter((id) => Number.isSafeInteger(id) && id > 0)
+    .sort((a, b) => a - b);
+  if (!categoryIds.length) {
+    throw new Error('The selected Accounts do not have a valid Category.');
+  }
+  return {
+    categoryIds,
+    selectedAccountUserIds: selectedAccounts.map((account) => account.id),
+  };
 }
 
 async function copyTextToClipboard(text) {
@@ -3176,26 +3431,25 @@ async function doSave() {
   const title = document.getElementById('f-title').value.trim();
   const company = document.getElementById('f-company').value.trim();
   const url = document.getElementById('f-url').value.trim();
-  const description = document.getElementById('f-desc').value.trim();
-
   let valid = true;
   if (!title) { showFieldError('err-title'); valid = false; }
   if (!company) { showFieldError('err-company'); valid = false; }
   if (!url) { showFieldError('err-url'); valid = false; }
   if (!valid) return;
 
-  const candidateStatusesArr = candidates.map(c => ({
-    candidateId: Number(c.id),
-    status: isCandidateLocked(c.id) ? 'applied' : (candidateStatuses[c.id] || 'none'),
-  }));
+  let assignments;
+  try {
+    assignments = getSelectedJobAssignments();
+  } catch (error) {
+    showAlert('main-alert', error.message || 'Select at least one Account for this job.', 'warn');
+    return;
+  }
 
   const payload = {
     title,
     company,
     url,
-    description,
-    ...(currentSource ? { source: currentSource } : {}),
-    candidateStatuses: candidateStatusesArr,
+    ...assignments,
   };
 
   const saveBtn = document.getElementById('btn-save');
@@ -3206,17 +3460,20 @@ async function doSave() {
   try {
     saveBtn.disabled = true;
     if (refreshBtn) refreshBtn.disabled = true;
-    const r = await window.api.upsertJob(payload);
+    const r = wasUpdate
+      ? await window.api.updateJob(existingJobId, payload)
+      : await window.api.createJob(payload);
 
     if (r.success) {
       showAlert('main-alert', wasUpdate ? 'Job updated!' : 'Job saved!', 'success');
       if (r.job) {
         existingJobId = r.job.id;
         jobSavedInBackend = true;
-        syncCandidateStatusesFromJob(r.job.candidateStatuses || []);
+        selectedJobAccountIds = new Set(
+          (r.job.selected_account_u_ids || assignments.selectedAccountUserIds).map(Number)
+        );
+        renderJobAccountGroups();
         currentSource = r.job.source || currentSource;
-        await writeSavedJobToCache(r.job.url || url, r.job);
-        renderCandidates();
         updateJobSummary();
       }
       saveBtn.textContent = 'Update Job';
@@ -3225,7 +3482,7 @@ async function doSave() {
     }
   } catch (e) {
     console.error('doSave error:', e);
-    showAlert('main-alert', 'The local server is not available. Check that it is running.', 'error');
+    showAlert('main-alert', e?.message || 'Could not save the job to your Job List.', 'error');
   } finally {
     saveBtn.disabled = false;
     if (refreshBtn) refreshBtn.disabled = false;
@@ -3246,6 +3503,9 @@ async function doRefresh() {
     candidateAppliedAt = {};
     candidateLocked = {};
     currentSource = '';
+    selectedJobAccountIds.clear();
+    hasManuallyChangedJobAccounts = false;
+    document.getElementById('job-account-assignment')?.classList.add('hidden');
     clearErrors();
     clearAlert('main-alert');
     document.getElementById('btn-save').textContent = 'Save Job';
@@ -3262,25 +3522,51 @@ async function doRefresh() {
 // ---- UI helpers ----
 function showLogin() {
   document.getElementById('login-section').classList.remove('hidden');
+  document.getElementById('action-section').classList.add('hidden');
   document.getElementById('job-section').classList.add('hidden');
   document.getElementById('action-bar').classList.add('hidden');
   clearSession();
   resetLoginFormView();
   scheduleFitPopup();
-  return prepareLoginForm();
+}
+
+async function showActionScreen(user) {
+  await restoreSelectedAction();
+  setSession(user);
+  document.getElementById('session-bar')?.classList.add('hidden');
+  document.getElementById('login-section').classList.add('hidden');
+  document.getElementById('action-section').classList.remove('hidden');
+  document.getElementById('job-section').classList.add('hidden');
+  document.getElementById('action-bar').classList.add('hidden');
+  clearAlert('main-alert');
+  scheduleFitPopup();
+}
+
+async function resumeSelectedMode(user) {
+  const selectedAction = await restoreSelectedAction();
+  if (selectedAction !== 'btn-get-jd') {
+    await showActionScreen(user);
+    return;
+  }
+
+  setSession(user);
+  showJobSection();
+  await loadCurrentTab({ preferCache: true, allowExtract: true });
 }
 
 function showJobSection() {
   document.getElementById('login-section').classList.add('hidden');
+  document.getElementById('action-section').classList.add('hidden');
   document.getElementById('job-section').classList.remove('hidden');
   document.getElementById('action-bar').classList.remove('hidden');
+  showJobAccountAssignment();
   scheduleFitPopup();
 }
 
 let popupToastSeq = 0;
 const popupToastTimers = new WeakMap();
-const TOAST_AUTO_HIDE_MS = 6000;
-const TOAST_MIN_HIDE_MS = 5000;
+const TOAST_AUTO_HIDE_MS = 3000;
+const TOAST_MIN_HIDE_MS = 0;
 const TOAST_MAX_VISIBLE = 8;
 const TOAST_EXIT_MS = 320;
 
@@ -3306,20 +3592,52 @@ function trimPopupToastStack(host) {
   }
 }
 
-function showToast(msg, type = 'info', durationMs = TOAST_AUTO_HIDE_MS) {
-  const host = document.getElementById('qts-toast-host');
-  if (!host) return;
-
+function showToast(msg, type = 'info', durationMs = TOAST_AUTO_HIDE_MS, alertId = null) {
   const toastType = normalizeToastType(type);
   const hideMs = Number.isFinite(durationMs) && durationMs >= TOAST_MIN_HIDE_MS
     ? durationMs
     : TOAST_AUTO_HIDE_MS;
+  const embedded = new URLSearchParams(window.location.search).get('embedded') === '1';
+
+  if (embedded) {
+    if (!targetTabId || !chrome.tabs?.sendMessage) {
+      console.warn('Could not show notification on the job page: no target tab is available.');
+      return;
+    }
+    try {
+      chrome.tabs.sendMessage(targetTabId, {
+        type: 'QTS_SHOW_PAGE_TOAST',
+        message: String(msg || ''),
+        toastType,
+        durationMs: hideMs,
+        alertId,
+      }).then((response) => {
+        if (!response?.ok) {
+          console.warn('Could not show notification on the job page:', response?.error || 'No response.');
+        }
+      }).catch((error) => {
+        console.warn('Could not show notification on the job page:', error);
+      });
+      return;
+    } catch (error) {
+      console.warn('Could not send notification to the job page:', error);
+      return;
+    }
+  }
+
+  renderPopupToast(msg, toastType, hideMs, alertId);
+}
+
+function renderPopupToast(msg, toastType, hideMs, alertId) {
+  const host = document.getElementById('qts-toast-host');
+  if (!host) return;
 
   popupToastSeq += 1;
 
   const toast = document.createElement('div');
   toast.className = `qts-toast qts-toast--${toastType}`;
   toast.setAttribute('role', 'alert');
+  if (alertId) toast.dataset.alertId = alertId;
 
   const indexEl = document.createElement('span');
   indexEl.className = 'qts-toast-index';
@@ -3343,15 +3661,29 @@ function showToast(msg, type = 'info', durationMs = TOAST_AUTO_HIDE_MS) {
 }
 
 function showAlert(id, msg, type = 'info') {
-  showToast(msg, type);
+  showToast(msg, type, TOAST_AUTO_HIDE_MS, id);
   const el = document.getElementById(id);
   if (el) el.innerHTML = '';
 }
 
 function clearAlert(id) {
+  if (
+    new URLSearchParams(window.location.search).get('embedded') === '1'
+    && targetTabId
+    && chrome.tabs?.sendMessage
+  ) {
+    chrome.tabs.sendMessage(targetTabId, {
+      type: 'QTS_CLEAR_PAGE_ALERT',
+      alertId: id,
+    }).catch((error) => {
+      console.warn('Could not clear notification on the job page:', error);
+    });
+  }
   const host = document.getElementById('qts-toast-host');
   if (host) {
-    [...host.children].forEach((toast) => dismissPopupToast(toast));
+    [...host.children]
+      .filter((toast) => toast.dataset.alertId === id)
+      .forEach((toast) => dismissPopupToast(toast));
   }
   const el = document.getElementById(id);
   if (el) el.innerHTML = '';

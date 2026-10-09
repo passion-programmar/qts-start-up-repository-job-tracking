@@ -371,6 +371,14 @@ router.delete('/:id', async (req: NewSchemaAuthRequest, res: Response) => {
       res.status(409).json({ success: false, message: 'This Manager owns jobs and cannot be deleted.' });
       return;
     }
+    const bids = await queryOne<{ count: number }>(
+      'SELECT COUNT(*)::int AS count FROM bids WHERE manager_user_id = $1',
+      [userId]
+    );
+    if (Number(bids?.count ?? 0) > 0) {
+      res.status(409).json({ success: false, message: 'This Manager has bid history and cannot be deleted.' });
+      return;
+    }
   } else if (target.role === 'caller') {
     const interviews = await queryOne<{ count: number }>(
       'SELECT COUNT(*)::int AS count FROM interviews WHERE caller_user_id = $1',

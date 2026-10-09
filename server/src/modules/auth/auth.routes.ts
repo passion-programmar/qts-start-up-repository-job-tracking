@@ -361,8 +361,7 @@ router.get('/extension-status', async (_req: Request, res: Response) => {
   const row = await queryOne<{ count: number }>(`
     SELECT COUNT(*)::int AS count
     FROM admins m
-    INNER JOIN accounts b ON b.manager_id = m.id AND b.is_active = TRUE
-    WHERE m.role = 'manager' AND m.is_active = TRUE
+    WHERE m.role = 'manager'
   `);
   res.json({
     success: true,

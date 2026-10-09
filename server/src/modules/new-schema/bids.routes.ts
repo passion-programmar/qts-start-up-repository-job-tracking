@@ -23,15 +23,15 @@ function bidScope(user: NonNullable<NewSchemaAuthRequest['newSchemaUser']>): {
   if (user.role === 'super') return { clause: '', params: [] };
   if (user.role === 'admin') {
     return {
-      clause: `account.parent_user_id IN (
-        SELECT manager.u_id FROM users manager
-        WHERE manager.role = 'manager' AND manager.parent_user_id = $1
-      ) AND j.u_id = account.parent_user_id`,
+      clause: `manager.parent_user_id = $1 AND b.manager_user_id = manager.u_id`,
       params: [user.id],
     };
   }
   if (user.role === 'manager') {
-    return { clause: 'account.parent_user_id = $1 AND j.u_id = $1', params: [user.id] };
+    return { clause: 'account.parent_user_id = $1 AND b.manager_user_id = $1', params: [user.id] };
+  }
+  if (user.role === 'account') {
+    return { clause: 'b.u_id = $1', params: [user.id] };
   }
   return { clause: 'FALSE', params: [] };
 }
@@ -40,11 +40,12 @@ router.get('/', async (req: NewSchemaAuthRequest, res: Response) => {
   const scope = bidScope(req.newSchemaUser!);
   let query = `
     SELECT b.b_id, b.u_id AS account_user_id, account.name AS account_name,
-           b.j_id AS job_id, j.title AS job_title, j.company, j.url,
-           b.resume_path, b.applied_date, j.u_id AS manager_id
+           b.j_id AS job_id, b.job_title, b.company, b.job_url AS url,
+           b.job_status AS status, b.resume_path, b.applied_date,
+           b.manager_user_id AS manager_id
     FROM bids b
     JOIN users account ON account.u_id = b.u_id AND account.role = 'account'
-    JOIN job_list j ON j.j_id = b.j_id`;
+    JOIN users manager ON manager.u_id = b.manager_user_id AND manager.role = 'manager'`;
   const params = [...scope.params];
   if (scope.clause) query += ` WHERE ${scope.clause}`;
   query += ' ORDER BY b.applied_date DESC, b.b_id DESC';
@@ -64,8 +65,14 @@ router.post('/', async (req: NewSchemaAuthRequest, res: Response) => {
     return;
   }
   const data = parsed.data;
-  const eligible = await queryOne<{ j_id: number; account_user_id: number }>(
-    `SELECT j.j_id, account.u_id AS account_user_id
+  const eligible = await queryOne<{
+    j_id: number;
+    title: string;
+    company: string;
+    url: string;
+    status: 'processing' | 'todo' | 'did' | 'failed';
+  }>(
+    `SELECT j.j_id, j.title, j.company, j.url, j.status
      FROM job_list j
      JOIN users account ON account.u_id = $2 AND account.role = 'account'
        AND account.parent_user_id = j.u_id AND account.blocked_date IS NULL
@@ -86,11 +93,16 @@ router.post('/', async (req: NewSchemaAuthRequest, res: Response) => {
     return;
   }
   const bid = await queryOne<{ b_id: number }>(
-    `INSERT INTO bids (u_id, j_id, resume_path)
-     VALUES ($1, $2, $3)
+    `INSERT INTO bids (
+       u_id, j_id, manager_user_id, job_title, company, job_url, job_status, resume_path
+     )
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
      ON CONFLICT (u_id, j_id) DO NOTHING
      RETURNING b_id`,
-    [data.accountUserId, data.jobId, data.resumePath]
+    [
+      data.accountUserId, data.jobId, user.id, eligible.title,
+      eligible.company, eligible.url, eligible.status, data.resumePath,
+    ]
   );
   if (!bid) {
     res.status(409).json({ success: false, message: 'This Account has already bid on this job.' });
@@ -98,11 +110,11 @@ router.post('/', async (req: NewSchemaAuthRequest, res: Response) => {
   }
   const record = await queryOne(
     `SELECT b.b_id, b.u_id AS account_user_id, account.name AS account_name,
-            b.j_id AS job_id, j.title AS job_title, j.company, j.url,
-            b.resume_path, b.applied_date
+            b.j_id AS job_id, b.job_title, b.company, b.job_url AS url,
+            b.job_status AS status, b.resume_path, b.applied_date,
+            b.manager_user_id AS manager_id
      FROM bids b
      JOIN users account ON account.u_id = b.u_id
-     JOIN job_list j ON j.j_id = b.j_id
      WHERE b.b_id = $1`,
     [bid.b_id]
   );

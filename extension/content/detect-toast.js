@@ -7,9 +7,9 @@
 
   const TOAST_HOST_ID = 'qts-toast-host';
   const STYLE_ID = 'qts-toast-style';
-  const AUTO_HIDE_MS = 6000;
-  const APPLIED_HIDE_MS = 10000;
-  const MIN_HIDE_MS = 5000;
+  const AUTO_HIDE_MS = 3000;
+  const APPLIED_HIDE_MS = 3000;
+  const MIN_HIDE_MS = 0;
   const MAX_VISIBLE = 8;
   const EXIT_MS = 320;
 

@@ -85,7 +85,7 @@ async function apiRequest(method, path, body) {
 
   if (!data.success && !data.message) {
     if (response.status === 404) {
-      data.message = `API route not found (404): ${path}. Restart the server with stop-server.bat then start-server.bat.`;
+      data.message = `API route not found (404): ${path}. Confirm the latest Vercel API deployment is live.`;
     } else {
       data.message = `Request failed (${response.status}).`;
     }
@@ -165,9 +165,9 @@ window.api = {
   setCachedToken,
   clearCachedToken,
   login: (username, password) =>
-    apiRequest('POST', '/api/auth/login', { username, password, extension: true }),
-  logout: () => apiRequest('POST', '/api/auth/logout'),
-  me: () => apiRequest('GET', '/api/auth/me'),
+    apiRequest('POST', '/api/v2/auth/login', { username, password }),
+  logout: () => apiRequest('POST', '/api/v2/auth/logout'),
+  me: () => apiRequest('GET', '/api/v2/auth/me'),
   extensionBootstrap: (accountId) => apiRequest(
     'GET',
     `/api/auth/extension-bootstrap${accountId ? `?accountId=${encodeURIComponent(accountId)}` : ''}`
@@ -176,6 +176,13 @@ window.api = {
   health: () => apiRequest('GET', '/api/health'),
   getCandidates: () => apiRequest('GET', '/api/candidates?active=true'),
   getCandidateStacks: () => apiRequest('GET', '/api/settings/candidate-stacks'),
+  getManagerAccounts: () => apiRequest('GET', '/api/v2/users/accounts'),
+  getJobCategories: () => apiRequest('GET', '/api/v2/categories'),
+  getJobs: () => apiRequest('GET', '/api/v2/jobs'),
+  checkJobByUrl: (url) =>
+    apiRequest('GET', `/api/v2/jobs/check-url?url=${encodeURIComponent(url)}`),
+  createJob: (data) => apiRequest('POST', '/api/v2/jobs', data),
+  updateJob: (id, data) => apiRequest('PUT', `/api/v2/jobs/${encodeURIComponent(id)}`, data),
   getJob: (id) => apiRequest('GET', `/api/jobs/${id}`),
   getJobByUrl: (url) => apiRequest('GET', `/api/jobs/by-url?url=${encodeURIComponent(url)}`),
   upsertJob: (data) => apiRequest('POST', '/api/jobs/upsert', data),

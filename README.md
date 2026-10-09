@@ -49,8 +49,9 @@ Admins create Managers and Callers; Managers create Account profiles.
 
 ## Extension status
 
-The previous Chrome/Edge extension depended on legacy API endpoints that have
-been retired. Do not install or use it with the current public deployment.
+Manager login has been connected to the current API. The extension's job,
+Account, candidate, and application workflows still depend on retired
+endpoints and will be refactored in later steps.
 
 ## Panels
 

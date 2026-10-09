@@ -154,6 +154,7 @@ export interface NewSchemaBid {
   job_title: string;
   company: string;
   url: string;
+  status: 'processing' | 'todo' | 'did' | 'failed';
   resume_path: string | null;
   applied_date: string;
 }

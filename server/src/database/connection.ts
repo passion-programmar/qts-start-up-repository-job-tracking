@@ -223,7 +223,13 @@ async function runMigrations(): Promise<void> {
     CREATE TABLE IF NOT EXISTS bids (
       b_id SERIAL PRIMARY KEY,
       u_id INTEGER NOT NULL REFERENCES users(u_id) ON DELETE RESTRICT,
-      j_id INTEGER NOT NULL REFERENCES job_list(j_id) ON DELETE RESTRICT,
+      j_id INTEGER NOT NULL,
+      manager_user_id INTEGER NOT NULL REFERENCES users(u_id) ON DELETE RESTRICT,
+      job_title TEXT NOT NULL,
+      company TEXT NOT NULL,
+      job_url TEXT NOT NULL,
+      job_status TEXT NOT NULL DEFAULT 'did'
+        CHECK (job_status IN ('processing', 'todo', 'did', 'failed')),
       resume_path TEXT NOT NULL,
       applied_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       UNIQUE (u_id, j_id)
@@ -305,6 +311,42 @@ async function migrateSchema(): Promise<void> {
   if (!(await columnExists('interviews', 'outcome'))) {
     await execute(`ALTER TABLE interviews ADD COLUMN outcome TEXT CHECK (outcome IN ('good', 'bad', 'normal'))`);
   }
+  await execute('ALTER TABLE bids ADD COLUMN IF NOT EXISTS manager_user_id INTEGER REFERENCES users(u_id) ON DELETE RESTRICT');
+  await execute('ALTER TABLE bids ADD COLUMN IF NOT EXISTS job_title TEXT');
+  await execute('ALTER TABLE bids ADD COLUMN IF NOT EXISTS company TEXT');
+  await execute('ALTER TABLE bids ADD COLUMN IF NOT EXISTS job_url TEXT');
+  await execute(`ALTER TABLE bids ADD COLUMN IF NOT EXISTS job_status TEXT
+    CHECK (job_status IN ('processing', 'todo', 'did', 'failed'))`);
+  await execute(`
+    UPDATE bids b SET
+      manager_user_id = j.u_id,
+      job_title = j.title,
+      company = j.company,
+      job_url = j.url,
+      job_status = j.status
+    FROM job_list j
+    WHERE j.j_id = b.j_id AND (
+      b.manager_user_id IS NULL OR b.job_title IS NULL OR b.company IS NULL
+      OR b.job_url IS NULL OR b.job_status IS NULL
+    )
+  `);
+  const incompleteBids = await queryOne<{ count: number | string }>(
+    `SELECT count(*)::int AS count FROM bids
+     WHERE manager_user_id IS NULL OR job_title IS NULL OR company IS NULL
+       OR job_url IS NULL OR job_status IS NULL`
+  );
+  if (Number(incompleteBids?.count ?? 0) > 0) {
+    throw new Error('Cannot migrate bids: one or more bid records have no matching job-list snapshot.');
+  }
+  await execute('ALTER TABLE bids ALTER COLUMN manager_user_id SET NOT NULL');
+  await execute('ALTER TABLE bids ALTER COLUMN job_title SET NOT NULL');
+  await execute('ALTER TABLE bids ALTER COLUMN company SET NOT NULL');
+  await execute('ALTER TABLE bids ALTER COLUMN job_url SET NOT NULL');
+  await execute("ALTER TABLE bids ALTER COLUMN job_status SET DEFAULT 'did'");
+  await execute('ALTER TABLE bids ALTER COLUMN job_status SET NOT NULL');
+  await execute('ALTER TABLE bids DROP CONSTRAINT IF EXISTS bids_j_id_fkey');
+  await execute('CREATE INDEX IF NOT EXISTS idx_bids_manager ON bids(manager_user_id)');
+  await execute('CREATE INDEX IF NOT EXISTS idx_bids_manager_url ON bids(manager_user_id, job_url)');
 }
 
 export async function backupDb(): Promise<string> {

@@ -1,6 +1,6 @@
 import { Router, Response } from 'express';
 import { z } from 'zod';
-import { execute, queryAll, queryOne } from '../../database/connection';
+import { execute, queryAll, queryOne, withTransaction } from '../../database/connection';
 import {
   NewSchemaAuthRequest,
   requireNewSchemaAuth,
@@ -104,6 +104,29 @@ router.get('/', async (req: NewSchemaAuthRequest, res: Response) => {
   query += ' ORDER BY j.get_date DESC, j.j_id DESC';
   const jobs = await queryAll(query, params);
   res.json({ success: true, jobs });
+});
+
+router.get('/check-url', async (req: NewSchemaAuthRequest, res: Response) => {
+  const user = req.newSchemaUser!;
+  if (user.role !== 'manager') {
+    res.status(403).json({ success: false, message: 'Only Managers can check saved job URLs.' });
+    return;
+  }
+  const parsedUrl = z.string().url().max(2000).safeParse(req.query.url);
+  if (!parsedUrl.success) {
+    res.status(400).json({ success: false, message: 'Provide a valid job URL.' });
+    return;
+  }
+
+  const url = normalizeUrl(parsedUrl.data);
+  const [job, bid] = await Promise.all([
+    queryOne(`${jobProjection()} WHERE j.u_id = $1 AND j.url = $2`, [user.id, url]),
+    queryOne<{ b_id: number }>(
+      'SELECT b_id FROM bids WHERE manager_user_id = $1 AND job_url = $2 LIMIT 1',
+      [user.id, url]
+    ),
+  ]);
+  res.json({ success: true, alreadyApplied: Boolean(bid), job: job || null });
 });
 
 router.get('/:id', async (req: NewSchemaAuthRequest, res: Response) => {
@@ -210,15 +233,22 @@ router.put('/:id', async (req: NewSchemaAuthRequest, res: Response) => {
     res.status(409).json({ success: false, message: 'That job URL has already been added.' });
     return;
   }
-  await execute(
-    `UPDATE job_list SET url = $1, company = $2, title = $3, category_ids = $4::int[],
-       selected_account_u_ids = $5::int[], status = COALESCE($6, status)
-     WHERE j_id = $7 AND u_id = $8`,
-    [
-      url, data.company, data.title, data.categoryIds,
-      data.selectedAccountUserIds, data.status ?? null, id, user.id,
-    ]
-  );
+  await withTransaction(async (client) => {
+    await client.query(
+      `UPDATE job_list SET url = $1, company = $2, title = $3, category_ids = $4::int[],
+         selected_account_u_ids = $5::int[], status = COALESCE($6, status)
+       WHERE j_id = $7 AND u_id = $8`,
+      [
+        url, data.company, data.title, data.categoryIds,
+        data.selectedAccountUserIds, data.status ?? null, id, user.id,
+      ]
+    );
+    await client.query(
+      `UPDATE bids SET job_status = COALESCE($1, job_status)
+       WHERE j_id = $2 AND manager_user_id = $3`,
+      [data.status ?? null, id, user.id]
+    );
+  });
   const job = await queryOne(`${jobProjection()} WHERE j.j_id = $1`, [id]);
   res.json({ success: true, job });
 });
@@ -240,14 +270,6 @@ router.delete('/:id', async (req: NewSchemaAuthRequest, res: Response) => {
   );
   if (!existing) {
     res.status(404).json({ success: false, message: 'Job not found in your list.' });
-    return;
-  }
-  const bids = await queryOne<{ count: number }>(
-    'SELECT COUNT(*)::int AS count FROM bids WHERE j_id = $1',
-    [id]
-  );
-  if (Number(bids?.count ?? 0) > 0) {
-    res.status(409).json({ success: false, message: 'This job has bid history and cannot be deleted.' });
     return;
   }
   await execute('DELETE FROM job_list WHERE j_id = $1 AND u_id = $2', [id, user.id]);

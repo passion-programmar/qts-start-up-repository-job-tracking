@@ -271,11 +271,6 @@ function isValidDetectedJob(data, pageUrl) {
   return true;
 }
 
-function getDetectToastAction(pageUrl, entry) {
-  if (entry?.valid) return 'success';
-  return 'fail';
-}
-
 function resolveDetectMode(pageType, pageUrl, data, valid) {
   if (!valid) return 'none';
   if (pageType === 'detail') return 'detail';

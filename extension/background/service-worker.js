@@ -37,28 +37,13 @@ function restrictedPageMessage(url) {
   return 'This page cannot be auto-scraped. Open a job listing in your browser, or enter details manually.';
 }
 
-const CAPTURE_WINDOW_WIDTH = 660;
-const CAPTURE_WINDOW_HEIGHT_RATIO = 0.8;
-const CAPTURE_WINDOW_MIN_HEIGHT = 480;
-let captureWindowId = null;
+const capturePanelOpenPromisesByTab = new Map();
 let lastSourceTabId = null;
 const lastAutoOpenKeyByTab = new Map();
+const autoOpenCapturePanelTimersByTab = new Map();
+const AUTO_OPEN_CAPTURE_DELAY_MS = 3000;
+const CAPTURE_PANEL_FILE = 'content/capture-panel.js';
 const detectGenerationByTab = new Map();
-const detectSuccessToastShownKeys = new Set();
-
-function detectSuccessToastKey(tabId, url) {
-  const normalized = typeof normalizeJobUrl === 'function'
-    ? normalizeJobUrl(url)
-    : String(url || '').trim();
-  return `${tabId}:${normalized}`;
-}
-
-function clearDetectSuccessToastsForTab(tabId) {
-  const prefix = `${tabId}:`;
-  for (const key of detectSuccessToastShownKeys) {
-    if (key.startsWith(prefix)) detectSuccessToastShownKeys.delete(key);
-  }
-}
 
 const EXTRACTOR_FILES = [
   'content/extractors/generic.js',
@@ -776,25 +761,14 @@ async function resolveJobTabIdForCapture(preferredTabId) {
   return null;
 }
 
-async function focusCaptureUi(jobTabId) {
-  if (captureWindowId == null) return false;
+async function closeCapturePanel(jobTabId = lastSourceTabId) {
+  if (!jobTabId) return;
   try {
-    await chrome.windows.update(captureWindowId, { focused: true, drawAttention: true });
-    return true;
-  } catch {
-    captureWindowId = null;
-    return false;
-  }
-}
-
-async function closeCaptureWindow() {
-  if (captureWindowId == null) return;
-  const windowId = captureWindowId;
-  captureWindowId = null;
-  try {
-    await chrome.windows.remove(windowId);
-  } catch {
-    // window may already be closed
+    await chrome.tabs.sendMessage(jobTabId, { type: 'QTS_CLOSE_CAPTURE_PANEL' });
+  } catch (error) {
+    if (!/Receiving end does not exist|Could not establish connection/i.test(error?.message || '')) {
+      throw error;
+    }
   }
 }
 
@@ -811,7 +785,7 @@ async function focusBrowserWindowForTab(tabId) {
 }
 
 async function releaseUiForGptHandoff({ jobTabId, gptTabId } = {}) {
-  await closeCaptureWindow();
+  await closeCapturePanel(jobTabId);
   const focusTabId = gptTabId || await getPinnedGptTabId();
   if (focusTabId) {
     await focusBrowserWindowForTab(focusTabId);
@@ -864,7 +838,6 @@ function startGptPageWatch(tabId, taskId, options = {}) {
       const result = await worker.watchGptTabAfterSend(tabId, taskId, {
         timeoutMs: options.timeoutMs || 180000,
         pollMs: options.pollMs || 1200,
-        defocusWindowId: captureWindowId,
         onStatus: (snap) => {
           if (gptPageWatchJob !== job || job.cancelled) return;
           notifyGptPageStatus(snap);
@@ -963,15 +936,6 @@ async function maybePrewarmCustomGptOnJobPage(url) {
   if (!isJobPageCandidateUrl(url)) return;
   if (!(await isAutoApplyArmed())) return;
   preloadCustomGptTab().catch(() => {});
-}
-
-async function restoreCaptureWindowFocus() {
-  if (captureWindowId == null) return;
-  try {
-    await chrome.windows.update(captureWindowId, { focused: true });
-  } catch {
-    captureWindowId = null;
-  }
 }
 
 async function restoreJobBrowserFocus(jobTabId) {
@@ -1307,15 +1271,18 @@ function disarmJobPageActivity() {
   lastAutoOpenKeyByTab.clear();
   lastAutoPipelineKeyByTab.clear();
   lastApplyMethodDetectKeyByTab.clear();
-  detectSuccessToastShownKeys.clear();
   autoPipelineInFlight.clear();
   detectGenerationByTab.clear();
   stopGptApprovalWatcher();
   stopGptPollAndApply();
 }
 
-async function autoDetectJob(tabId, url, { showAlert = true, forcePipeline = false } = {}) {
-  if (!forcePipeline && !(await isAutoApplyArmed())) return;
+async function autoDetectJob(
+  tabId,
+  url,
+  { forcePipeline = false, autoOpenCapture = false, captureOnly = false } = {}
+) {
+  if (!forcePipeline && !captureOnly && !(await isAutoApplyArmed())) return;
 
   if (!isExtractablePageUrl(url) || isIgnoredSite(url) || isChatGptHostUrl(url)) return;
 
@@ -1344,25 +1311,16 @@ async function autoDetectJob(tabId, url, { showAlert = true, forcePipeline = fal
   prefetchTabContext(tabId).catch(() => {});
   detectApplyTemplateOnTab(tabId, pageUrl).catch(() => {});
 
-  if (showAlert) {
-    const toastAction = getDetectToastAction(pageUrl, entry);
-    if (toastAction === 'success') {
-      const toastKey = detectSuccessToastKey(tabId, pageUrl);
-      if (!detectSuccessToastShownKeys.has(toastKey)) {
-        detectSuccessToastShownKeys.add(toastKey);
-        await showPageDetectAlert(tabId, DETECT_SUCCESS_MESSAGE, 'success', null, {
-          oncePerPage: true,
-        });
-      }
-    } else if (toastAction === 'fail') {
-      await showPageDetectAlert(tabId, DETECT_FAIL_MESSAGE, 'fail');
-    }
+  if (autoOpenCapture && (entry.valid || isLikelyJobDetailUrl(pageUrl))) {
+    scheduleCapturePanelOpen(tabId, pageUrl);
   }
 
   notifyCapturePopup(tabId);
-  maybeStartAutoApplicationPipeline(tabId, pageUrl, entry, {
-    force: Boolean(forcePipeline),
-  }).catch(() => {});
+  if (!captureOnly) {
+    maybeStartAutoApplicationPipeline(tabId, pageUrl, entry, {
+      force: Boolean(forcePipeline),
+    }).catch(() => {});
+  }
 }
 
 async function startAutoApplyOnJobTab(tabId) {
@@ -1384,11 +1342,11 @@ async function startAutoApplyOnJobTab(tabId) {
   lastSourceTabId = tabId;
   await chrome.storage.local.set({ [JOB_SOURCE_TAB_STORAGE_KEY]: tabId });
 
-  await closeCaptureWindow();
+  await closeCapturePanel(tabId);
   await restoreJobBrowserFocus(tabId);
   preloadCustomGptTab().catch(() => {});
   await showPageDetectAlert(tabId, 'QTS: Discovering job details and starting application…', 'info');
-  await autoDetectJob(tabId, tab.url, { showAlert: false, forcePipeline: true });
+  await autoDetectJob(tabId, tab.url, { forcePipeline: true });
 }
 
 async function maybeStartAutoApplicationPipeline(tabId, url, detectedEntry, options = {}) {
@@ -1437,7 +1395,6 @@ async function maybeStartAutoApplicationPipeline(tabId, url, detectedEntry, opti
 }
 
 function notifyCapturePopup(tabId) {
-  if (captureWindowId === null || lastSourceTabId !== tabId) return;
   chrome.runtime.sendMessage({ type: 'JOB_DETECTED_UPDATE', tabId }).catch(() => {});
 }
 
@@ -1470,45 +1427,45 @@ async function runDetectForActiveTab(tabId) {
 function maybeTrackAutoOpen(tabId, url) {
   if (!isJobPageCandidateUrl(url)) return;
   (async () => {
-    if (!(await isAutoApplyArmed())) return;
-    maybePrewarmCustomGptOnJobPage(url);
     const autoKey = `${tabId}:${url}`;
     if (lastAutoOpenKeyByTab.get(tabId) === autoKey) return;
     lastAutoOpenKeyByTab.set(tabId, autoKey);
-    await autoDetectJob(tabId, url, { showAlert: true });
-  })().catch(() => {});
+    const autoApplyArmed = await isAutoApplyArmed();
+    if (autoApplyArmed) maybePrewarmCustomGptOnJobPage(url);
+    await autoDetectJob(tabId, url, {
+      autoOpenCapture: true,
+      captureOnly: !autoApplyArmed,
+    });
+  })().catch((error) => {
+    console.warn('[QTS_Startup] Could not inspect the loaded job page:', error);
+  });
 }
 
-chrome.action.onClicked.addListener((tab) => {
-  if (!tab?.id) return;
+function scheduleCapturePanelOpen(tabId, pageUrl) {
+  const existingTimer = autoOpenCapturePanelTimersByTab.get(tabId);
+  if (existingTimer) clearTimeout(existingTimer);
 
-  (async () => {
-    const tabUrl = tab.url || '';
+  const timer = setTimeout(async () => {
+    if (autoOpenCapturePanelTimersByTab.get(tabId) !== timer) return;
+    autoOpenCapturePanelTimersByTab.delete(tabId);
 
-    if (isCustomGptUrl(tabUrl, tab.title) || await isPinnedGptTab(tab.id)) {
-      const jobTabId = await resolveJobTabIdForCapture(null);
-      if (jobTabId) {
-        await openCaptureWindow(jobTabId);
-      } else if (captureWindowId != null) {
-        await focusCaptureUi();
-      }
-      return;
+    try {
+      const tab = await getTab(tabId);
+      if (!tab?.id || tab.url !== pageUrl) return;
+      await openCapturePanel(tabId);
+    } catch (error) {
+      console.warn('[QTS_Startup] Could not open the detected job panel:', error);
     }
+  }, AUTO_OPEN_CAPTURE_DELAY_MS);
 
-    if (isExtensionOrInternalUrl(tabUrl)) {
-      const jobTabId = await resolveJobTabIdForCapture(null);
-      if (jobTabId) {
-        await openCaptureWindow(jobTabId);
-      }
-      return;
-    }
+  autoOpenCapturePanelTimersByTab.set(tabId, timer);
+}
 
-    await clearPendingGptDispatch();
-    await openCaptureWindow(tab.id, { focus: true });
-  })().catch((err) => {
-    console.warn('[QTS_Startup] Could not open capture window:', err);
-  });
-});
+function cancelScheduledCapturePanelOpen(tabId) {
+  const timer = autoOpenCapturePanelTimersByTab.get(tabId);
+  if (timer) clearTimeout(timer);
+  autoOpenCapturePanelTimersByTab.delete(tabId);
+}
 
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== 'qts-gpt-handoff') return;
@@ -1541,6 +1498,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     disarmJobPageActivity();
     sendResponse({ ok: true });
     return false;
+  }
+  if (msg.type === 'QTS_CLOSE_PAGE_TAB') {
+    const tabId = sender.tab?.id;
+    if (tabId == null) {
+      sendResponse({ ok: false, error: 'The requesting page tab is unavailable.' });
+      return false;
+    }
+    chrome.tabs.remove(tabId)
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => sendResponse({ ok: false, error: error.message || 'Could not close the page tab.' }));
+    return true;
   }
   if (msg.type === 'EXTRACT_JOB') {
     (async () => {
@@ -1597,14 +1565,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.type === 'GET_CURRENT_TAB_URL') {
     (async () => {
-      const jobTabId = await resolveJobTabIdForCapture(msg.tabId || lastSourceTabId);
-      if (jobTabId) {
-        const tab = await getTab(jobTabId);
-        if (tab) {
-          sendResponse({ url: tab.url, title: tab.title, tabId: tab.id });
-          return;
-        }
-      }
       const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
       sendResponse({
         url: activeTab?.url,
@@ -1846,17 +1806,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return false;
   }
 
-  if (msg.type === 'DISMISS_CAPTURE_WINDOW') {
-    (async () => {
-      const stored = await chrome.storage.local.get([JOB_SOURCE_TAB_STORAGE_KEY]);
-      const jobTabId = msg.jobTabId || stored[JOB_SOURCE_TAB_STORAGE_KEY] || lastSourceTabId;
-      await closeCaptureWindow();
-      await restoreJobBrowserFocus(jobTabId);
-      sendResponse({ ok: true });
-    })().catch((e) => sendResponse({ ok: false, error: e?.message || String(e) }));
-    return true;
-  }
-
   if (msg.type === 'RELEASE_UI_FOR_GPT') {
     releaseUiForGptHandoff({ jobTabId: msg.jobTabId || lastSourceTabId, gptTabId: msg.gptTabId })
       .then(() => sendResponse({ ok: true }))
@@ -1955,6 +1904,12 @@ chrome.runtime.onInstalled.addListener(() => {
 
 self.__qtsCustomGpt?.loadCustomGptConfigFromStorage?.().catch(() => {});
 
+chrome.action.onClicked.addListener((tab) => {
+  openCapturePanel(tab?.id, { toggle: true }).catch((error) => {
+    console.error('[QTS_Startup] Could not toggle the QTS panel:', error);
+  });
+});
+
 chrome.tabs.onActivated.addListener(async (activeInfo) => {
   const tab = await getTab(activeInfo.tabId);
   const onPinnedGpt = await isPinnedGptTab(activeInfo.tabId);
@@ -1963,27 +1918,22 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
     runDetectForActiveTab(activeInfo.tabId).catch(() => {});
     prefetchTabContext(activeInfo.tabId).catch(() => {});
   }
-  if (captureWindowId === null) return;
-  if (onPinnedGpt) return;
-  lastSourceTabId = activeInfo.tabId;
-  chrome.runtime.sendMessage({ type: 'SET_SOURCE_TAB', tabId: activeInfo.tabId }).catch(() => {});
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.status === 'loading') {
     lastAutoOpenKeyByTab.delete(tabId);
+    cancelScheduledCapturePanelOpen(tabId);
     lastAutoPipelineKeyByTab.delete(tabId);
     lastApplyMethodDetectKeyByTab.delete(tabId);
-    clearDetectSuccessToastsForTab(tabId);
     return;
   }
 
   const url = changeInfo.url || tab.url;
   if (!url || !isExtractablePageUrl(url)) return;
-  if (changeInfo.status === 'complete' || changeInfo.url) {
+  if (changeInfo.status === 'complete') {
     (async () => {
-      if (!(await isAutoApplyArmed())) return;
-      maybeDetectApplyMethodOnOpen(tabId, url);
+      if (await isAutoApplyArmed()) maybeDetectApplyMethodOnOpen(tabId, url);
       maybeTrackAutoOpen(tabId, url);
     })().catch(() => {});
   }
@@ -2001,8 +1951,6 @@ chrome.webNavigation.onCommitted.addListener((details) => {
     if (details.transitionQualifiers?.includes('reload') || details.transitionType === 'reload') {
       lastAutoOpenKeyByTab.delete(details.tabId);
       lastApplyMethodDetectKeyByTab.delete(details.tabId);
-      clearDetectSuccessToastsForTab(details.tabId);
-      maybeTrackAutoOpen(details.tabId, details.url);
     }
     maybeDetectApplyMethodOnOpen(details.tabId, details.url);
   })().catch(() => {});
@@ -2012,17 +1960,17 @@ chrome.webNavigation.onHistoryStateUpdated.addListener((details) => {
   if (details.frameId !== 0) return;
   if (!isExtractablePageUrl(details.url)) return;
   (async () => {
-    if (!(await isAutoApplyArmed())) return;
-    maybeDetectApplyMethodOnOpen(details.tabId, details.url);
+    if (await isAutoApplyArmed()) maybeDetectApplyMethodOnOpen(details.tabId, details.url);
     maybeTrackAutoOpen(details.tabId, details.url);
   })().catch(() => {});
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   lastAutoOpenKeyByTab.delete(tabId);
+  cancelScheduledCapturePanelOpen(tabId);
+  capturePanelOpenPromisesByTab.delete(tabId);
   lastAutoPipelineKeyByTab.delete(tabId);
   lastApplyMethodDetectKeyByTab.delete(tabId);
-  clearDetectSuccessToastsForTab(tabId);
   autoPipelineInFlight.delete(tabId);
   injectedExtractorTabs.delete(tabId);
   extractorInjectInFlight.delete(tabId);
@@ -2034,10 +1982,6 @@ chrome.tabs.onRemoved.addListener((tabId) => {
       chrome.storage.local.remove(GPT_TAB_STORAGE_KEY);
     }
   });
-});
-
-chrome.windows.onRemoved.addListener((windowId) => {
-  if (windowId === captureWindowId) captureWindowId = null;
 });
 
 function isIgnoredSite(url) {
@@ -2068,138 +2012,44 @@ function isIgnoredSite(url) {
   }
 }
 
-async function maybeOpenCaptureWindow(tabId, url) {
-  if (!isExtractablePageUrl(url) || isIgnoredSite(url)) return;
-
-  const prefs = await chrome.storage.local.get(['autoOpenPopup']);
-  if (prefs.autoOpenPopup === false) return;
-  if (!(await isAutoApplyArmed())) return;
-
-  await openCaptureWindow(tabId, { focus: false });
-}
-
-function captureWindowUrl(tabId) {
-  return chrome.runtime.getURL(`popup/popup.html?tabId=${tabId}`);
-}
-
-async function getCaptureWindowHeight(sourceTabId) {
-  try {
-    const tab = await chrome.tabs.get(sourceTabId);
-    if (tab?.windowId) {
-      const win = await chrome.windows.get(tab.windowId);
-      if (win?.height) {
-        return Math.max(
-          CAPTURE_WINDOW_MIN_HEIGHT,
-          Math.round(win.height * CAPTURE_WINDOW_HEIGHT_RATIO)
-        );
-      }
-    }
-  } catch {
-    // fall through
-  }
-  return Math.max(CAPTURE_WINDOW_MIN_HEIGHT, Math.round(900 * CAPTURE_WINDOW_HEIGHT_RATIO));
-}
-
-async function captureWindowPlacement(sourceTabId) {
-  try {
-    const tab = await chrome.tabs.get(sourceTabId);
-    if (!tab?.windowId) return {};
-    const browserWin = await chrome.windows.get(tab.windowId);
-    const width = browserWin.width || 1200;
-    const left = Math.max(0, (browserWin.left || 0) + width - CAPTURE_WINDOW_WIDTH - 16);
-    const top = Math.max(0, (browserWin.top || 0) + 48);
-    return { left, top };
-  } catch {
-    return {};
-  }
-}
-
-async function focusCaptureWindow(tabId, options = {}) {
-  if (captureWindowId === null) return false;
-  const shouldFocus = options.focus === true;
-  const height = await getCaptureWindowHeight(tabId);
-
-  try {
-    const existing = await chrome.windows.get(captureWindowId, { populate: true });
-    if (!existing) {
-      captureWindowId = null;
-      return false;
-    }
-
-    const popupTab = existing.tabs?.[0];
-    if (popupTab?.id) {
-      const nextUrl = captureWindowUrl(tabId);
-      const currentUrl = popupTab.url || popupTab.pendingUrl || '';
-      if (!currentUrl.includes(`tabId=${tabId}`)) {
-        await chrome.tabs.update(popupTab.id, { url: nextUrl });
-      }
-    }
-
-    await chrome.windows.update(captureWindowId, {
-      focused: shouldFocus,
-      drawAttention: shouldFocus,
-      width: CAPTURE_WINDOW_WIDTH,
-      height,
-      state: 'normal',
-    });
-    lastSourceTabId = tabId;
-    return true;
-  } catch {
-    captureWindowId = null;
-  }
-
-  return false;
-}
-
-async function openCaptureWindow(tabId, options = {}) {
+async function openCapturePanel(tabId, { toggle = false } = {}) {
   const jobTabId = await resolveJobTabIdForCapture(tabId);
   if (!jobTabId) {
-    console.warn('[QTS_Startup] No job tab available for capture window.');
-    return;
+    throw new Error('Open a regular webpage before opening the QTS panel.');
+  }
+  const tab = await getTab(jobTabId);
+  if (!tab?.url || !isExtractablePageUrl(tab.url)) {
+    throw new Error('QTS cannot open on this browser page.');
   }
 
-  const shouldFocus = options.focus === true;
+  const pendingOpen = capturePanelOpenPromisesByTab.get(jobTabId);
+  if (pendingOpen) return pendingOpen;
 
-  if (await isAutoApplyArmed()) {
-    runDetectForActiveTab(jobTabId).catch(() => {});
-    prefetchTabContext(jobTabId).catch(() => {});
-  }
-
-  if (captureWindowId !== null) {
-    try {
-      await chrome.windows.get(captureWindowId);
-    } catch {
-      captureWindowId = null;
-    }
-  }
-
-  if (await focusCaptureWindow(jobTabId, { focus: shouldFocus })) {
+  const opening = (async () => {
     lastSourceTabId = jobTabId;
     await chrome.storage.local.set({ [JOB_SOURCE_TAB_STORAGE_KEY]: jobTabId });
-    if (!shouldFocus) {
-      await focusBrowserWindowForTab(jobTabId);
+    await chrome.scripting.executeScript({
+      target: { tabId: jobTabId },
+      files: [CAPTURE_PANEL_FILE],
+    });
+    const result = await chrome.tabs.sendMessage(jobTabId, {
+      type: toggle ? 'QTS_TOGGLE_CAPTURE_PANEL' : 'QTS_SHOW_CAPTURE_PANEL',
+      tabId: jobTabId,
+    });
+    if (!result?.ok) {
+      throw new Error(result?.error || 'QTS panel did not respond.');
     }
-    return;
-  }
-
-  lastSourceTabId = jobTabId;
-  await chrome.storage.local.set({ [JOB_SOURCE_TAB_STORAGE_KEY]: jobTabId });
-  const placement = await captureWindowPlacement(jobTabId);
-  const height = await getCaptureWindowHeight(jobTabId);
-  const win = await chrome.windows.create({
-    url: captureWindowUrl(jobTabId),
-    type: 'popup',
-    width: CAPTURE_WINDOW_WIDTH,
-    height,
-    focused: shouldFocus,
-    state: 'normal',
-    ...placement,
-  });
-
-  captureWindowId = win.id;
-  if (shouldFocus) {
-    await chrome.windows.update(captureWindowId, { focused: true, drawAttention: true });
-  } else {
-    await focusBrowserWindowForTab(jobTabId);
+    if (await isAutoApplyArmed()) {
+      runDetectForActiveTab(jobTabId).catch(() => {});
+      prefetchTabContext(jobTabId).catch(() => {});
+    }
+  })();
+  capturePanelOpenPromisesByTab.set(jobTabId, opening);
+  try {
+    return await opening;
+  } finally {
+    if (capturePanelOpenPromisesByTab.get(jobTabId) === opening) {
+      capturePanelOpenPromisesByTab.delete(jobTabId);
+    }
   }
 }

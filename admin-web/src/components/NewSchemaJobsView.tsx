@@ -52,7 +52,7 @@ export function NewSchemaJobsView() {
     if (bidResult.success) setBids(bidResult.bids || []);
     else {
       setBids([]);
-      setError('Could not load resume paths.');
+      setError('Could not load bid history.');
     }
     setLoading(false);
   }, [isManager]);
@@ -215,7 +215,7 @@ export function NewSchemaJobsView() {
         {loading ? <div className="text-muted">Loading…</div> : (
           <div className="table-scroll">
             <table>
-              <thead><tr><th>Title</th><th>Company</th><th>Status</th><th>Accounts</th><th>Bids</th><th>Resume paths</th><th>Added</th><th /></tr></thead>
+              <thead><tr><th>Title</th><th>Company</th><th>Status</th><th>Accounts</th><th>Bids</th><th>Added</th><th /></tr></thead>
               <tbody>
                 {visibleJobs.map((job) => (
                   <tr key={job.id}>
@@ -224,16 +224,6 @@ export function NewSchemaJobsView() {
                     <td>{job.status}</td>
                     <td>{job.selected_account_u_ids?.length || 0}</td>
                     <td>{job.bid_count}</td>
-                    <td>
-                      {bids.filter((bid) => bid.job_id === job.id).map((bid) => (
-                        <div key={bid.b_id}>
-                          <span>{bid.account_name}: </span>
-                          <code style={{ whiteSpace: 'normal', overflowWrap: 'anywhere' }}>
-                            {bid.resume_path || 'Not provided'}
-                          </code>
-                        </div>
-                      ))}
-                    </td>
                     <td>{formatDate(job.get_date)}</td>
                     <td className="text-right">
                       {isManager && <button className="btn btn-ghost btn-sm" type="button" onClick={() => beginEdit(job)}>Edit</button>}
@@ -241,7 +231,30 @@ export function NewSchemaJobsView() {
                     </td>
                   </tr>
                 ))}
-                {!visibleJobs.length && <tr><td colSpan={8} className="text-muted">No jobs found.</td></tr>}
+                {!visibleJobs.length && <tr><td colSpan={7} className="text-muted">No jobs found.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+      <div className="card">
+        <h2>Applied Bid History</h2>
+        {loading ? <div className="text-muted">Loading…</div> : (
+          <div className="table-scroll">
+            <table>
+              <thead><tr><th>Account</th><th>Job</th><th>Company</th><th>Status</th><th>Applied</th><th>Resume path</th></tr></thead>
+              <tbody>
+                {bids.map((bid) => (
+                  <tr key={bid.b_id}>
+                    <td>{bid.account_name}</td>
+                    <td><a href={bid.url} target="_blank" rel="noreferrer">{bid.job_title}</a></td>
+                    <td>{bid.company}</td>
+                    <td>{bid.status}</td>
+                    <td>{formatDate(bid.applied_date)}</td>
+                    <td><code style={{ whiteSpace: 'normal', overflowWrap: 'anywhere' }}>{bid.resume_path || 'Not provided'}</code></td>
+                  </tr>
+                ))}
+                {!bids.length && <tr><td colSpan={6} className="text-muted">No bids recorded yet.</td></tr>}
               </tbody>
             </table>
           </div>

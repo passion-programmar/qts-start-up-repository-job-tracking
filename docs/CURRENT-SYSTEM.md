@@ -38,10 +38,10 @@ tables listed above are kept. Legacy tables are not recreated by migrations.
 
 ## Retired workflows
 
-The old Chrome/Edge extension integration, legacy Manager authentication,
-candidate tracking, job-site admissions, Custom GPT application/PDF workflow,
-and legacy settings are not available in the deployed API. The extension
-cannot authenticate against this API.
+The extension's Manager login uses the new-schema API. Its job capture,
+Account selection, candidate tracking, job-site admissions, and Custom GPT
+application/PDF workflows still depend on retired endpoints and are not
+available until those workflows are refactored.
 
 ## Deployment
 

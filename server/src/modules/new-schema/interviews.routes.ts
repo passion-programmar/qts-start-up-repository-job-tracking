@@ -32,11 +32,11 @@ const interviewSelect = `
          i.caller_user_id, caller.name AS caller_name,
          i.interviewer, i.step, i.status, i.outcome, i.created_date, i.comment,
          b.u_id AS account_user_id, account.name AS account_name,
-         j.j_id, j.title AS job_title, j.company
+         b.j_id, b.job_title, b.company
   FROM interviews i
   JOIN bids b ON b.b_id = i.b_id
   JOIN users account ON account.u_id = b.u_id
-  JOIN job_list j ON j.j_id = b.j_id
+  JOIN users manager ON manager.u_id = b.manager_user_id AND manager.role = 'manager'
   JOIN users caller ON caller.u_id = i.caller_user_id
 `;
 
@@ -50,15 +50,12 @@ function scopeForUser(
       clause: `account.parent_user_id IN (
         SELECT manager.u_id FROM users manager
         WHERE manager.role = 'manager' AND manager.parent_user_id = $${paramIndex}
-      ) AND j.u_id = account.parent_user_id`,
+      ) AND b.manager_user_id = account.parent_user_id`,
       params: [user.id],
     };
   }
   if (user.role === 'manager') {
-    return {
-      clause: `account.parent_user_id = $${paramIndex} AND j.u_id = $${paramIndex}`,
-      params: [user.id],
-    };
+    return { clause: `account.parent_user_id = $${paramIndex} AND b.manager_user_id = $${paramIndex}`, params: [user.id] };
   }
   if (user.role === 'caller') {
     return { clause: `i.caller_user_id = $${paramIndex}`, params: [user.id] };
@@ -74,8 +71,7 @@ async function canManageBid(
     `SELECT b.b_id
      FROM bids b
      JOIN users account ON account.u_id = b.u_id AND account.role = 'account'
-     JOIN job_list j ON j.j_id = b.j_id
-     WHERE b.b_id = $1 AND account.parent_user_id = $2 AND j.u_id = $2`,
+     WHERE b.b_id = $1 AND account.parent_user_id = $2 AND b.manager_user_id = $2`,
     [bidId, managerId]
   );
   return Boolean(row);
@@ -105,7 +101,7 @@ async function getAccessibleInterview(
     FROM interviews i
     JOIN bids b ON b.b_id = i.b_id
     JOIN users account ON account.u_id = b.u_id
-    JOIN job_list j ON j.j_id = b.j_id
+    JOIN users manager ON manager.u_id = b.manager_user_id AND manager.role = 'manager'
     WHERE i.i_id = $1`;
   const params: unknown[] = [interviewId];
   if (scope.clause) {

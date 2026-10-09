@@ -164,6 +164,12 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
     params.push(...scope.params);
     paramIndex = scope.nextIndex;
   }
+  if (isAccount(req)) {
+    conditions.push(`NOT EXISTS (
+      SELECT 1 FROM job_list queued_job
+      WHERE queued_job.url = j.normalized_url
+    )`);
+  }
 
   if (conditions.length) query += ' WHERE ' + conditions.join(' AND ');
   query += ' ORDER BY j.created_at DESC';

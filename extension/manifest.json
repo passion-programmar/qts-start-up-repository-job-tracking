@@ -40,6 +40,12 @@
       "run_at": "document_idle"
     }
   ],
+  "web_accessible_resources": [
+    {
+      "resources": ["popup/popup.html"],
+      "matches": ["<all_urls>"]
+    }
+  ],
   "action": {
     "default_title": "QTS_Startup",
     "default_icon": {

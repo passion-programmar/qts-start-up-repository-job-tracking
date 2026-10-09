@@ -40,9 +40,12 @@ const TABLES = {
   },
   bids: {
     label: 'Bids',
-    description: 'Account applications recorded against Manager job listings.',
-    columns: ['b_id', 'u_id', 'j_id', 'resume_path', 'applied_date'],
-    searchColumns: ['resume_path'],
+    description: 'Durable Account applications with job details retained independently of the job list.',
+    columns: [
+      'b_id', 'u_id', 'j_id', 'manager_user_id', 'job_title', 'company',
+      'job_url', 'job_status', 'resume_path', 'applied_date',
+    ],
+    searchColumns: ['job_title', 'company', 'job_url', 'job_status', 'resume_path'],
     orderBy: 'b_id',
   },
   interviews: {
