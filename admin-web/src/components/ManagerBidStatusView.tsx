@@ -20,6 +20,7 @@ export function ManagerBidStatusView() {
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [resettingJobId, setResettingJobId] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -50,6 +51,35 @@ export function ManagerBidStatusView() {
     void load();
   }, [load]);
 
+  async function resetFailedJob(row: NewSchemaJobAccountStatus) {
+    if (resettingJobId !== null) return;
+    const confirmed = window.confirm(
+      `Reset "${row.job_title}" for ${row.account_name} to To do? It will be eligible for Apply again.`
+    );
+    if (!confirmed) return;
+
+    setResettingJobId(row.job_id);
+    setError('');
+    try {
+      const response = await api<{ success: boolean; message?: string }>(
+        'PATCH',
+        `/api/v2/jobs/${encodeURIComponent(String(row.job_id))}/status`,
+        { status: 'todo' }
+      );
+      if (!response.success) {
+        setError(response.message || 'Could not reset the failed job.');
+        return;
+      }
+      setRows((current) => current.map((item) =>
+        item.job_id === row.job_id ? { ...item, status: 'todo' } : item
+      ));
+    } catch (resetError) {
+      setError(resetError instanceof Error ? resetError.message : 'Could not reset the failed job.');
+    } finally {
+      setResettingJobId(null);
+    }
+  }
+
   const visibleRows = useMemo(() => {
     const needle = search.trim().toLowerCase();
     if (!needle) return rows;
@@ -75,12 +105,12 @@ export function ManagerBidStatusView() {
       </div>
       <div className="card">
         <h2>Applications by Account and Job</h2>
-        <p className="text-muted">Each Account has a separate job row. Status changes from To do to Processing, Applied, or Failed.</p>
+        <p className="text-muted">Each Account has a separate job row. Reset a failed row to To do to make it eligible for Apply again.</p>
         {loading ? <div className="text-muted">Loading…</div> : (
           <div className="table-scroll">
             <table>
               <thead><tr>
-                <th>Account</th><th>Job</th><th>Application type</th><th>Company</th><th>Status</th>
+                <th>Account</th><th>Job</th><th>Application type</th><th>Company</th><th>Status</th><th>Actions</th>
               </tr></thead>
               <tbody>
                 {visibleRows.map((row) => (
@@ -90,9 +120,21 @@ export function ManagerBidStatusView() {
                     <td>{applicationTypeLabel(row.application_type)}</td>
                     <td>{row.company}</td>
                     <td>{STATUS_LABELS[row.status]}</td>
+                    <td>
+                      {row.status === 'failed' && (
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          type="button"
+                          disabled={resettingJobId !== null}
+                          onClick={() => { void resetFailedJob(row); }}
+                        >
+                          {resettingJobId === row.job_id ? 'Resetting…' : 'Reset to To do'}
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 ))}
-                {!visibleRows.length && <tr><td colSpan={5} className="text-muted">No Account-specific job rows found.</td></tr>}
+                {!visibleRows.length && <tr><td colSpan={6} className="text-muted">No Account-specific job rows found.</td></tr>}
               </tbody>
             </table>
           </div>

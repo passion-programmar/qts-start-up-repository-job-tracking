@@ -97,6 +97,76 @@ function confirmGetJobDetails() {
   });
 }
 
+async function confirmApplyAccount() {
+  const dialog = document.getElementById('apply-account-confirmation');
+  const options = document.getElementById('apply-account-options');
+  const confirmButton = document.getElementById('btn-confirm-apply-account');
+  if (!dialog || !options || !confirmButton) {
+    throw new Error('Apply Account selection is unavailable. Reload the extension.');
+  }
+
+  const response = await chrome.runtime.sendMessage({ type: 'GET_MANAGER_APPLY_ACCOUNTS' });
+  if (!response?.ok) {
+    throw new Error(response?.error || 'Could not load your Accounts.');
+  }
+
+  options.replaceChildren();
+  confirmButton.disabled = true;
+  const accounts = Array.isArray(response.accounts) ? response.accounts : [];
+  if (!accounts.length) {
+    const empty = document.createElement('p');
+    empty.className = 'get-jd-confirmation-message';
+    empty.textContent = 'No active Accounts are assigned to you.';
+    options.append(empty);
+  }
+
+  for (const account of accounts) {
+    const accountId = Number(account.account_user_id);
+    const totalCount = Number(account.total_count) || 0;
+    const didCount = Number(account.did_count) || 0;
+    const availableCount = Number(account.available_count) || 0;
+    const busy = Boolean(account.is_busy);
+    const disabled = busy || availableCount === 0 || !Number.isSafeInteger(accountId);
+    const label = document.createElement('label');
+    label.className = `apply-account-option${disabled ? ' is-disabled' : ''}`;
+
+    const radio = document.createElement('input');
+    radio.type = 'radio';
+    radio.name = 'apply-account-choice';
+    radio.value = String(accountId);
+    radio.disabled = disabled;
+    radio.addEventListener('change', () => {
+      confirmButton.disabled = false;
+    });
+
+    const detail = document.createElement('span');
+    const name = document.createElement('span');
+    name.className = 'apply-account-option-name';
+    name.textContent = `${account.account_name || 'Account'} — ${totalCount} (${didCount} did)`;
+    const status = document.createElement('span');
+    status.className = 'apply-account-option-status';
+    status.textContent = busy
+      ? 'An Apply run is already in progress'
+      : availableCount > 0
+        ? `${availableCount} supported todo ${availableCount === 1 ? 'job' : 'jobs'}`
+        : 'No supported todo jobs';
+    detail.append(name, status);
+    label.append(radio, detail);
+    options.append(label);
+  }
+
+  return new Promise((resolve) => {
+    dialog.addEventListener('close', () => {
+      const selected = dialog.returnValue === 'start'
+        ? options.querySelector('input[name="apply-account-choice"]:checked')
+        : null;
+      const accountId = selected ? Number(selected.value) : null;
+      resolve(Number.isSafeInteger(accountId) && accountId > 0 ? accountId : null);
+    }, { once: true });
+    dialog.showModal();
+  });
+}
+
 async function hydrateApplySessionStore() {
   const store = global.__qtsApplySessionStore;
   if (!store?.hydrate) return;
@@ -460,12 +530,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   });
   document.getElementById('btn-apply').addEventListener('click', async () => {
+    clearAlert('action-alert');
     try {
       await selectAction('btn-apply');
       if (currentUser?.role !== 'manager') {
         throw new Error('Only a Manager can start a job from the assigned job list.');
       }
       requireManagerCustomGpt();
+      const accountUserId = await confirmApplyAccount();
+      if (!accountUserId) {
+        return;
+      }
       let sourceId = targetTabId;
       if (!sourceId) {
         const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
@@ -476,12 +551,13 @@ document.addEventListener('DOMContentLoaded', async () => {
       const response = await chrome.runtime.sendMessage({
         type: 'START_MANAGER_JOB_QUEUE',
         sourceTabId: sourceId,
+        accountUserId,
       });
       if (!response?.ok) {
         throw new Error(response?.error || 'Could not start Apply.');
       }
     } catch (e) {
-      showAlert('main-alert', e?.message || 'Could not start Apply.', 'error');
+      showAlert('action-alert', e?.message || 'Could not start Apply.', 'error');
     }
   });
   document.getElementById('btn-custom-apply').addEventListener('click', async () => {
@@ -1934,7 +2010,7 @@ async function findSavedJobByUrls(urls, { cacheOnly = false, skipCache = false, 
 
 async function fetchJobByUrl(url) {
   try {
-    const response = await window.api.checkJobUrl(url);
+    const response = await window.api.checkJobByUrl(url);
     if (!response.success) throw new Error(response.message || 'Could not check the Job List.');
     return response.job || null;
   } catch (e) {
@@ -3600,7 +3676,7 @@ async function doSave() {
     saveBtn.disabled = true;
     if (refreshBtn) refreshBtn.disabled = true;
     if (!wasUpdate) {
-      const checked = await window.api.checkJobUrl(url);
+      const checked = await window.api.checkJobByUrl(url);
       if (!checked.success) throw new Error(checked.message || 'Could not check whether this job is already saved.');
       if (checked.job) {
         const selectedBeforeLookup = new Set(assignments.selectedAccountUserIds);

@@ -57,11 +57,12 @@ tables listed above are kept. Legacy tables are not recreated by migrations.
   the GPT URL is not shown in the Manager page or extension. The extension
   blocks its GPT Apply actions when no GPT is assigned and tells the Manager
   to contact an Admin.
-- The extension popup's Apply action selects an available application handler,
-  then atomically claims one compatible `todo` Account-specific job row,
-  changes its status to `processing`, and opens the saved job URL. A confirmed application
-  changes that row to `did`; an application failure changes it to `failed`
-  and the extension continues with the next `todo` row.
+- The extension popup's Apply action shows active Manager Accounts with all-status
+  job totals and completed (`did`) counts. It applies only the selected Account's
+  supported `todo` rows, one at a time. The server enforces one active Apply run
+  per Account across extension windows and devices. A confirmed application
+  changes its row to `did`; an application failure changes it to `failed`, then
+  the extension continues with the selected Account's next supported `todo` row.
 - Workable is the first site-specific application handler. Each job row stores
   its application type, and the queue claims only types supported by an
   installed handler; additional site handlers can be added independently.
@@ -80,7 +81,9 @@ tables listed above are kept. Legacy tables are not recreated by migrations.
   is changed to `did`. A row that is not `todo` cannot be removed by unchecking
   its Account.
 - The Manager Bid Status and Jobs pages display each Account-specific job row
-  and its `todo`, `processing`, `did`, or `failed` status.
+  and its `todo`, `processing`, `did`, or `failed` status. Managers can reset a
+  `failed` row to `todo` from either page to make it eligible for another Apply
+  run; the reset is blocked while that Account has an active Apply run.
 
 ## Retired workflows
 

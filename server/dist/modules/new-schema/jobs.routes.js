@@ -201,15 +201,48 @@ router.post('/claim-next', async (req, res) => {
     }
     const parsedBody = zod_1.z.object({
         url: zod_1.z.string().url().max(2000).optional(),
+        accountUserId: zod_1.z.number().int().positive(),
+        applyRunId: zod_1.z.string().uuid(),
         supportedTypes: zod_1.z.array(zod_1.z.string().regex(/^[a-z0-9.-]{1,253}$/i)).min(1).max(20),
     }).safeParse(req.body || {});
     if (!parsedBody.success) {
-        res.status(400).json({ success: false, message: 'Provide supported application types and an optional current job URL.' });
+        res.status(400).json({ success: false, message: 'Provide an Account, Apply run ID, supported application types, and an optional current job URL.' });
         return;
     }
     const requestedUrl = parsedBody.data.url ? (0, normalize_url_1.normalizeUrl)(parsedBody.data.url) : null;
     const supportedTypes = parsedBody.data.supportedTypes;
+    const { accountUserId: accountId, applyRunId } = parsedBody.data;
     const claim = await (0, connection_1.withTransaction)(async (tx) => {
+        const accountResult = await tx.query(`SELECT u_id FROM users
+       WHERE u_id = $1 AND parent_user_id = $2
+         AND role = 'account' AND blocked_date IS NULL
+       FOR UPDATE`, [accountId, user.id]);
+        if (!accountResult.rows.length)
+            return { invalidAccount: true };
+        const activeJob = await tx.query(`SELECT job.j_id
+       FROM job_list job
+       JOIN job_account_assignments assignment ON assignment.j_id = job.j_id
+       WHERE job.u_id = $1 AND assignment.account_user_id = $2
+         AND job.status = 'processing'
+       LIMIT 1`, [user.id, accountId]);
+        if (activeJob.rows.length)
+            return { busy: true };
+        const existingRun = await tx.query(`SELECT run_id, (last_activity_at > NOW() - INTERVAL '24 hours') AS is_active
+       FROM account_apply_runs
+       WHERE account_user_id = $1
+       FOR UPDATE`, [accountId]);
+        const activeRun = existingRun.rows[0];
+        if (activeRun
+            && activeRun.run_id !== applyRunId
+            && activeRun.is_active) {
+            return { busy: true };
+        }
+        await tx.query(`INSERT INTO account_apply_runs (account_user_id, manager_user_id, run_id, last_activity_at)
+       VALUES ($1, $2, $3, NOW())
+       ON CONFLICT (account_user_id) DO UPDATE
+       SET manager_user_id = EXCLUDED.manager_user_id,
+           run_id = EXCLUDED.run_id,
+           last_activity_at = NOW()`, [accountId, user.id, applyRunId]);
         const candidate = await tx.query(`SELECT job.j_id, job.title, job.company, job.url, job.application_type, job.status,
               assignment.account_user_id, account.name AS account_name
        FROM job_list job
@@ -218,21 +251,28 @@ router.post('/claim-next', async (req, res) => {
          AND account.role = 'account' AND account.parent_user_id = job.u_id
          AND account.blocked_date IS NULL
        WHERE job.u_id = $1 AND job.status = 'todo'
+         AND assignment.account_user_id = $4
          AND job.application_type = ANY($2::text[])
          AND ($3::text IS NULL OR job.url = $3)
        ORDER BY CASE WHEN $3::text IS NOT NULL AND job.url = $3 THEN 0 ELSE 1 END,
                 job.get_date DESC, job.j_id DESC
        LIMIT 1
-       FOR UPDATE OF job SKIP LOCKED`, [user.id, supportedTypes, requestedUrl]);
+       FOR UPDATE OF job SKIP LOCKED`, [user.id, supportedTypes, requestedUrl, accountId]);
         const row = candidate.rows[0];
-        if (!row)
-            return null;
+        if (!row) {
+            await tx.query('DELETE FROM account_apply_runs WHERE account_user_id = $1 AND run_id = $2', [accountId, applyRunId]);
+            return { empty: true };
+        }
         const changed = await tx.query(`UPDATE job_list SET status = 'processing'
        WHERE j_id = $1 AND u_id = $2 AND status = 'todo'
        RETURNING j_id`, [row.j_id, user.id]);
-        if (!changed.rows.length)
-            return null;
+        if (!changed.rows.length) {
+            await tx.query('DELETE FROM account_apply_runs WHERE account_user_id = $1 AND run_id = $2', [accountId, applyRunId]);
+            return { empty: true };
+        }
         return {
+            claimed: true,
+            applyRunId,
             job: {
                 id: Number(row.j_id),
                 title: row.title,
@@ -243,7 +283,22 @@ router.post('/claim-next', async (req, res) => {
             account: { id: Number(row.account_user_id), name: row.account_name },
         };
     });
-    res.json({ success: true, claimed: Boolean(claim), ...(claim || {}) });
+    if ('invalidAccount' in claim) {
+        res.status(404).json({ success: false, message: 'Selected Account is not active or is not assigned to you.' });
+        return;
+    }
+    if ('busy' in claim) {
+        res.status(409).json({
+            success: false,
+            message: 'This Account already has an application in progress. Finish or resolve it before starting another Apply run.',
+        });
+        return;
+    }
+    if ('empty' in claim) {
+        res.json({ success: true, claimed: false });
+        return;
+    }
+    res.json({ success: true, ...claim });
 });
 router.get('/statuses', async (req, res) => {
     if (req.newSchemaUser?.role !== 'manager') {
@@ -260,6 +315,87 @@ router.get('/statuses', async (req, res) => {
      WHERE job.u_id = $1
      ORDER BY job.get_date DESC, job.j_id DESC`, [req.newSchemaUser.id]);
     res.json({ success: true, jobs: rows });
+});
+router.get('/apply-accounts', async (req, res) => {
+    const user = req.newSchemaUser;
+    if (user.role !== 'manager') {
+        res.status(403).json({ success: false, message: 'Only Managers can choose an Account for Apply.' });
+        return;
+    }
+    const typesParam = typeof req.query.supportedTypes === 'string'
+        ? req.query.supportedTypes.split(',').filter(Boolean)
+        : [];
+    const parsedTypes = zod_1.z.array(zod_1.z.string().regex(/^[a-z0-9.-]{1,253}$/i)).min(1).max(20).safeParse(typesParam);
+    if (!parsedTypes.success) {
+        res.status(400).json({ success: false, message: 'Provide the application types supported by this extension.' });
+        return;
+    }
+    const accounts = await (0, connection_1.queryAll)(`SELECT account.u_id AS account_user_id, account.name AS account_name,
+            COUNT(job.j_id)::int AS total_count,
+            COUNT(job.j_id) FILTER (WHERE job.status = 'did')::int AS did_count,
+            COUNT(job.j_id) FILTER (WHERE job.status = 'processing')::int AS processing_count,
+            COUNT(job.j_id) FILTER (
+              WHERE job.status = 'todo'
+                AND job.application_type = ANY($2::text[])
+            )::int AS available_count,
+            (
+              COUNT(job.j_id) FILTER (WHERE job.status = 'processing') > 0
+              OR EXISTS (
+                SELECT 1 FROM account_apply_runs active_run
+                WHERE active_run.account_user_id = account.u_id
+                  AND active_run.last_activity_at > NOW() - INTERVAL '24 hours'
+              )
+            ) AS is_busy
+     FROM users account
+     LEFT JOIN job_account_assignments assignment
+       ON assignment.account_user_id = account.u_id
+     LEFT JOIN job_list job ON job.j_id = assignment.j_id AND job.u_id = account.parent_user_id
+     WHERE account.u_id IS NOT NULL AND account.role = 'account'
+       AND account.parent_user_id = $1 AND account.blocked_date IS NULL
+     GROUP BY account.u_id, account.name
+     ORDER BY account.name, account.u_id`, [user.id, parsedTypes.data]);
+    res.json({ success: true, accounts });
+});
+router.post('/apply-runs/release', async (req, res) => {
+    const user = req.newSchemaUser;
+    if (user.role !== 'manager') {
+        res.status(403).json({ success: false, message: 'Only Managers can release an Apply run.' });
+        return;
+    }
+    const parsed = zod_1.z.object({
+        accountUserId: zod_1.z.number().int().positive(),
+        applyRunId: zod_1.z.string().uuid(),
+    }).safeParse(req.body || {});
+    if (!parsed.success) {
+        res.status(400).json({ success: false, message: 'Provide a valid Account and Apply run ID.' });
+        return;
+    }
+    const result = await (0, connection_1.withTransaction)(async (tx) => {
+        const account = await tx.query(`SELECT u_id FROM users
+       WHERE u_id = $1 AND parent_user_id = $2 AND role = 'account'
+       FOR UPDATE`, [parsed.data.accountUserId, user.id]);
+        if (!account.rows.length)
+            return { invalidAccount: true };
+        const activeJob = await tx.query(`SELECT job.j_id FROM job_list job
+       JOIN job_account_assignments assignment ON assignment.j_id = job.j_id
+       WHERE job.u_id = $1 AND assignment.account_user_id = $2
+         AND job.status = 'processing'
+       LIMIT 1`, [user.id, parsed.data.accountUserId]);
+        if (activeJob.rows.length)
+            return { busy: true };
+        await tx.query(`DELETE FROM account_apply_runs
+       WHERE account_user_id = $1 AND manager_user_id = $2 AND run_id = $3`, [parsed.data.accountUserId, user.id, parsed.data.applyRunId]);
+        return { released: true };
+    });
+    if ('invalidAccount' in result) {
+        res.status(404).json({ success: false, message: 'Selected Account is not assigned to you.' });
+        return;
+    }
+    if ('busy' in result) {
+        res.status(409).json({ success: false, message: 'The Account still has a job in progress; its Apply run cannot be released.' });
+        return;
+    }
+    res.json({ success: true, released: result.released });
 });
 router.get('/:id/application-context', async (req, res) => {
     if (req.newSchemaUser?.role !== 'manager') {
@@ -341,13 +477,24 @@ router.patch('/:id/status', async (req, res) => {
         return;
     }
     const jobId = Number.parseInt(req.params.id, 10);
-    const parsed = zod_1.z.object({ status: zod_1.z.enum(['did', 'failed']) }).safeParse(req.body);
+    const parsed = zod_1.z.object({
+        status: zod_1.z.enum(['todo', 'did', 'failed']),
+        applyRunId: zod_1.z.string().uuid().optional(),
+    }).safeParse(req.body);
     if (!Number.isSafeInteger(jobId) || jobId <= 0 || !parsed.success) {
-        res.status(400).json({ success: false, message: 'Provide a valid terminal job status.' });
+        res.status(400).json({ success: false, message: 'Provide a valid job status.' });
         return;
     }
     const managerId = req.newSchemaUser.id;
     const updated = await (0, connection_1.withTransaction)(async (tx) => {
+        const assignmentResult = await tx.query(`SELECT assignment.account_user_id
+       FROM job_account_assignments assignment
+       JOIN job_list job ON job.j_id = assignment.j_id
+       WHERE job.j_id = $1 AND job.u_id = $2`, [jobId, managerId]);
+        const accountId = assignmentResult.rows[0]?.account_user_id;
+        if (!accountId)
+            return { notFound: true };
+        await tx.query('SELECT u_id FROM users WHERE u_id = $1 AND role = \'account\' FOR UPDATE', [accountId]);
         const jobResult = await tx.query(`SELECT job.j_id, job.u_id, job.title, job.company, job.url, job.status,
               assignment.account_user_id
        FROM job_list job
@@ -360,9 +507,41 @@ router.patch('/:id/status', async (req, res) => {
         if (job.status === parsed.data.status) {
             return { notFound: false, status: parsed.data.status };
         }
+        if (parsed.data.status === 'todo') {
+            if (job.status !== 'failed') {
+                return { conflict: true, status: job.status };
+            }
+            const activeRun = await tx.query(`SELECT 1
+         WHERE EXISTS (
+           SELECT 1 FROM account_apply_runs
+           WHERE account_user_id = $1
+             AND last_activity_at > NOW() - INTERVAL '24 hours'
+         )
+         OR EXISTS (
+           SELECT 1 FROM job_list active_job
+           JOIN job_account_assignments active_assignment
+             ON active_assignment.j_id = active_job.j_id
+           WHERE active_job.u_id = $2
+             AND active_assignment.account_user_id = $1
+             AND active_job.status = 'processing'
+         )`, [accountId, managerId]);
+            if (activeRun.rows.length)
+                return { busy: true };
+            await tx.query(`UPDATE job_list SET status = 'todo' WHERE j_id = $1 AND u_id = $2`, [jobId, managerId]);
+            await tx.query(`DELETE FROM gpt_application_tasks WHERE job_id = $1 AND status = 'failed'`, [jobId]);
+            return { notFound: false, status: 'todo' };
+        }
         if (job.status !== 'processing')
             return { conflict: true, status: job.status };
         await tx.query(`UPDATE job_list SET status = $1 WHERE j_id = $2 AND u_id = $3`, [parsed.data.status, jobId, managerId]);
+        if (parsed.data.applyRunId) {
+            await tx.query(`UPDATE account_apply_runs SET last_activity_at = NOW()
+         WHERE account_user_id = $1 AND manager_user_id = $2 AND run_id = $3`, [job.account_user_id, managerId, parsed.data.applyRunId]);
+        }
+        else {
+            await tx.query(`DELETE FROM account_apply_runs
+         WHERE account_user_id = $1 AND manager_user_id = $2`, [job.account_user_id, managerId]);
+        }
         if (parsed.data.status === 'did') {
             await tx.query(`INSERT INTO bids (
            u_id, j_id, manager_user_id, job_title, company, job_url, job_status, resume_path
@@ -387,8 +566,15 @@ router.patch('/:id/status', async (req, res) => {
     if ('conflict' in updated) {
         res.status(409).json({
             success: false,
-            message: `This job row is ${updated.status}; only processing rows can be closed.`,
+            message: `This job row is ${updated.status}; only failed rows can be reset to todo, and only processing rows can be closed.`,
             status: updated.status,
+        });
+        return;
+    }
+    if ('busy' in updated) {
+        res.status(409).json({
+            success: false,
+            message: 'This Account has an active Apply run. Wait for it to finish before resetting a failed row.',
         });
         return;
     }

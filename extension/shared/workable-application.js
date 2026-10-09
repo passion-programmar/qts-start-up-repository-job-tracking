@@ -32,6 +32,11 @@
     }).catch(() => {});
   }
 
+  function lastProgress(tabId, message, type = 'info') {
+    if (!tabId || !message) return;
+    notify(tabId, message, type);
+  }
+
   async function readRun(tabId) {
     const stored = await chrome.storage.local.get(stateKey);
     return stored[stateKey]?.[tabId] || null;
@@ -59,7 +64,11 @@
 
   async function setJobStatus(run, status) {
     if (run.status === status) return;
-    await request('PATCH', `/api/v2/jobs/${run.jobId}/status`, { status });
+    await request(
+      'PATCH',
+      `/api/v2/jobs/${run.jobId}/status`,
+      { status, ...(run.applyRunId ? { applyRunId: run.applyRunId } : {}) }
+    );
     run.status = status;
     await saveRun(run.tabId, run);
   }
@@ -245,10 +254,10 @@
       return;
     }
     notify(run.tabId, `Account ${run.accountName}: ${reason}`, 'error');
-    await beginNext(run.tabId);
+    await beginNext(run.tabId, run.accountId, run.applyRunId);
   }
 
-  async function beginNext(tabId) {
+  async function beginNext(tabId, accountId, applyRunId) {
     await clearRun(tabId);
     const tab = await chrome.tabs.get(tabId).catch(() => null);
     if (!tab) return;
@@ -258,7 +267,7 @@
       return;
     }
     try {
-      await startNext(tabId);
+      await startNext(tabId, accountId, applyRunId);
     } catch (error) {
       notify(tabId, `Application status was saved, but QTS could not load the next job: ${error.message}`, 'error');
     }
@@ -401,6 +410,7 @@
       tabId,
       jobId,
       accountId,
+      applyRunId: claim.applyRunId,
       jobUrl: claim.job.url,
       accountName: claim.account.name,
       status: 'processing',
@@ -431,7 +441,7 @@
         return;
       }
       notify(tabId, `Workable confirmed submission for ${run.accountName}.`, 'success');
-      await beginNext(tabId);
+      await beginNext(tabId, run.accountId, run.applyRunId);
     } else if (message.outcome === 'failed') {
       await failAndContinue(run, message.reason || 'Workable reported a submission error.');
     }

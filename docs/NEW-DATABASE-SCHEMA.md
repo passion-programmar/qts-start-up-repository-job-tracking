@@ -146,6 +146,20 @@ The `(j_id, account_user_id)` pair and `(j_id, position)` are each unique. The
 job row's status is the application state, and the Manager Jobs table displays
 each Account-specific row and its current status.
 
+### `account_apply_runs`
+
+Stores the active extension Apply run for an Account. A Manager can have only
+one active run for an Account at a time, even across extension windows and
+devices. Successful claims refresh the run's activity timestamp; a run with no
+activity for 24 hours can be replaced once the Account has no `processing` job.
+
+| Column | Type | Rules and purpose |
+|---|---|---|
+| `account_user_id` | Integer | Primary key and foreign key to `users.u_id`; enforces one run per Account |
+| `manager_user_id` | Integer | Required foreign key to the owning Manager |
+| `run_id` | UUID | Identifies one extension Apply sequence |
+| `last_activity_at` | Timestamp with time zone | Updated during claims and job status changes; used to expire abandoned runs |
+
 ### `bids`
 
 Records an Account user's application/bid on a job. Job details are not copied
@@ -257,7 +271,10 @@ deployments.
 Every Manager/job URL/Account combination has one `job_list` row and one
 `job_account_assignments` row. The `job_list.status` value is the application
 source of truth: `todo` → `processing` → `did` on confirmed submission, or
-`failed` when an application fails. `application_type` identifies the site
+`failed` when an application fails. A Manager can reset `failed` → `todo` to
+retry a row after addressing the cause; resets are rejected while its Account
+has an active Apply run and discard the failed GPT task so the retry starts
+cleanly. `application_type` identifies the site
 handler; Workable is the first supported type, and unsupported types stay
 queued until a compatible handler is available. Claiming a row is transactional.
 The GPT task references the Account-specific `job_list.j_id` directly; there is
@@ -366,11 +383,19 @@ legacy data:
 - `/api/v2/categories` and `/api/v2/settings` apply Super-only writes.
 - `/api/v2/jobs` lets Managers manage their own jobs and selected Account
   profiles; Admins can read jobs owned by their Managers and Super can read all.
-- `/api/v2/jobs/claim-next` accepts the extension's supported application types
+- `/api/v2/jobs/apply-accounts` returns each active Account's total and `did`
+  row counts, plus queue availability and active-run state.
+- `/api/v2/jobs/claim-next` accepts the selected Account, Apply run ID, and the
+  extension's supported application types; it serializes claims per Account
   and atomically claims the next matching `todo` Account-specific row, setting
   it to `processing`. A confirmed
   submission sets the row to `did` and creates its Bid; failure sets it to
   `failed`.
+- `/api/v2/jobs/apply-runs/release` releases an Apply run after a startup error
+  when no job for that Account remains in `processing`.
+- `PATCH /api/v2/jobs/:id/status` lets the extension close a `processing` row
+  as `did` or `failed`, and lets its Manager reset a `failed` row to `todo`.
+  Other manual status transitions are rejected.
 - `/api/v2/gpt-application-tasks/jobs/:jobId` creates or resumes the GPT task
   directly from the processing job row and its one assigned Account.
 - `/api/v2/manager-application-profile` is Manager-only and reads or writes
@@ -396,8 +421,10 @@ and can submit outcomes; Managers can manage their jobs, Account profiles,
 interviews, and scoped analytics; Admins and Super users have scoped staff and
 reporting views.
 For the extension's Manager workflow, Get JD saves Account-specific rows to
-`/api/v2/jobs`, and Apply claims a `todo` row using `/api/v2/jobs/claim-next`;
-it does not use application-attempt or legacy candidate/session records.
+`/api/v2/jobs`. Apply prompts the Manager to select one Account, shows each
+Account's total rows and `did` count, and claims only that Account's supported
+`todo` rows using `/api/v2/jobs/claim-next`; it does not use
+application-attempt or legacy candidate/session records.
 Workable is the first supported site-specific handler for this automated
 application flow. Other application types can be added without changing the
 Account-specific job-row/status model.

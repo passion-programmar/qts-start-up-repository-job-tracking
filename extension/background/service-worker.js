@@ -1328,11 +1328,17 @@ const JOB_APPLICATION_HANDLERS = {
   },
 };
 
-async function startManagerJobQueue(sourceTabId, { preferCurrentUrl = true } = {}) {
+async function startManagerJobQueue(
+  sourceTabId,
+  { preferCurrentUrl = true, accountUserId, applyRunId } = {}
+) {
   const worker = self.__qtsGptWorkerHandoff;
   const api = self.__qtsApiWorker;
   if (!api?.workerApiRequest) {
     throw new Error('QTS extension workflow helpers are unavailable.');
+  }
+  if (!Number.isSafeInteger(Number(accountUserId)) || Number(accountUserId) <= 0 || !applyRunId) {
+    throw new Error('Choose a valid Account before starting Apply.');
   }
   const supportedHandlers = Object.entries(JOB_APPLICATION_HANDLERS)
     .filter(([, handler]) => !handler.unavailableReason());
@@ -1359,6 +1365,8 @@ async function startManagerJobQueue(sourceTabId, { preferCurrentUrl = true } = {
     '/api/v2/jobs/claim-next',
     {
       supportedTypes: supportedHandlers.map(([type]) => type),
+      accountUserId: Number(accountUserId),
+      applyRunId,
       ...(currentJobUrl ? { url: currentJobUrl } : {}),
     }
   );
@@ -1370,7 +1378,7 @@ async function startManagerJobQueue(sourceTabId, { preferCurrentUrl = true } = {
     await focusBrowserWindowForTab(sourceTabId);
     await chrome.tabs.update(sourceTabId, { active: true });
     await setJobQueueBadge(sourceTabId, '', '#2563eb');
-    await showPageDetectAlert(sourceTabId, 'No supported job rows with status todo are available.', 'info', 8000);
+    await showPageDetectAlert(sourceTabId, 'No supported todo jobs are available for the selected Account.', 'info', 8000);
     return { ok: true, claimed: false };
   }
 
@@ -1425,6 +1433,14 @@ async function startManagerJobQueue(sourceTabId, { preferCurrentUrl = true } = {
         }
       }
     }
+    const released = await api.workerApiRequest(
+      'POST',
+      '/api/v2/jobs/apply-runs/release',
+      { accountUserId: Number(accountUserId), applyRunId }
+    );
+    if (!released.success) {
+      console.error('[QTS Apply] Could not release the Account Apply run:', released.message);
+    }
     throw error;
   }
 
@@ -1445,13 +1461,25 @@ async function startManagerJobQueue(sourceTabId, { preferCurrentUrl = true } = {
         console.error('[QTS Apply] Could not release the failed job row:', discardError);
       }
     }
+    const released = await api.workerApiRequest(
+      'POST',
+      '/api/v2/jobs/apply-runs/release',
+      { accountUserId: Number(accountUserId), applyRunId }
+    );
+    if (!released.success) {
+      console.error('[QTS Apply] Could not release the Account Apply run:', released.message);
+    }
     throw error;
   }
   return { ok: true, claimed: true, jobTabId };
 }
 
-self.__qtsStartNextApplication = (tabId) =>
-  startManagerJobQueue(tabId, { preferCurrentUrl: false });
+self.__qtsStartNextApplication = (tabId, accountUserId, applyRunId) =>
+  startManagerJobQueue(tabId, {
+    preferCurrentUrl: false,
+    accountUserId,
+    applyRunId,
+  });
 
 async function isAutoApplyArmed() {
   return Boolean(await self.__qtsAutoApplicationPipeline?.isExtensionOperational?.());
@@ -1694,8 +1722,38 @@ chrome.runtime.onConnect.addListener((port) => {
 });
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.type === 'GET_MANAGER_APPLY_ACCOUNTS') {
+    const api = self.__qtsApiWorker;
+    if (!api?.workerApiRequest) {
+      sendResponse({ ok: false, error: 'QTS extension workflow helpers are unavailable.' });
+      return false;
+    }
+    const supportedTypes = Object.entries(JOB_APPLICATION_HANDLERS)
+      .filter(([, handler]) => !handler.unavailableReason())
+      .map(([type]) => type);
+    if (!supportedTypes.length) {
+      sendResponse({ ok: false, error: 'No job application handlers are available.' });
+      return false;
+    }
+    api.workerApiRequest(
+      'GET',
+      `/api/v2/jobs/apply-accounts?supportedTypes=${encodeURIComponent(supportedTypes.join(','))}`
+    ).then((result) => {
+      if (!result.success) {
+        sendResponse({ ok: false, error: result.message || 'Could not load your Accounts.' });
+        return;
+      }
+      sendResponse({ ok: true, accounts: result.accounts || [] });
+    }).catch((error) => {
+      sendResponse({ ok: false, error: error?.message || 'Could not load your Accounts.' });
+    });
+    return true;
+  }
   if (msg.type === 'START_MANAGER_JOB_QUEUE') {
-    startManagerJobQueue(Number(msg.sourceTabId))
+    startManagerJobQueue(Number(msg.sourceTabId), {
+      accountUserId: Number(msg.accountUserId),
+      applyRunId: crypto.randomUUID(),
+    })
       .then((result) => sendResponse(result))
       .catch(async (error) => {
         const message = error?.message || 'Could not start Apply.';

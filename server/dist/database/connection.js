@@ -235,6 +235,14 @@ async function runMigrations() {
       UNIQUE (j_id, position)
     )
   `);
+    await execute(`
+    CREATE TABLE IF NOT EXISTS account_apply_runs (
+      account_user_id INTEGER PRIMARY KEY REFERENCES users(u_id) ON DELETE CASCADE,
+      manager_user_id INTEGER NOT NULL REFERENCES users(u_id) ON DELETE CASCADE,
+      run_id UUID NOT NULL,
+      last_activity_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
     await withTransaction(async (tx) => {
         await tx.query('LOCK TABLE job_list IN ACCESS EXCLUSIVE MODE');
         const legacyColumn = await tx.query(`SELECT EXISTS (

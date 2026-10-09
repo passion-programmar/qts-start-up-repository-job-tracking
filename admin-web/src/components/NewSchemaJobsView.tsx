@@ -26,6 +26,7 @@ export function NewSchemaJobsView() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [deletingJobId, setDeletingJobId] = useState<number | null>(null);
+  const [resettingJobId, setResettingJobId] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -113,6 +114,35 @@ export function NewSchemaJobsView() {
     }
   }
 
+  async function resetFailedJob(job: NewSchemaJob) {
+    if (resettingJobId !== null) return;
+    const confirmed = window.confirm(
+      `Reset "${job.title}" for ${job.selected_accounts?.[0]?.name || 'this Account'} to To do? It will be eligible for Apply again.`
+    );
+    if (!confirmed) return;
+
+    setResettingJobId(job.id);
+    setError(null);
+    try {
+      const result = await api<{ success: boolean; message?: string; status?: NewSchemaJob['status'] }>(
+        'PATCH',
+        `/api/v2/jobs/${encodeURIComponent(String(job.id))}/status`,
+        { status: 'todo' }
+      );
+      if (!result.success) {
+        setError(result.message || 'Could not reset the failed job.');
+        return;
+      }
+      setJobs((current) => current.map((item) =>
+        item.id === job.id ? { ...item, status: 'todo' } : item
+      ));
+    } catch (resetError) {
+      setError(resetError instanceof Error ? resetError.message : 'Could not reset the failed job.');
+    } finally {
+      setResettingJobId(null);
+    }
+  }
+
   return (
     <>
       {error && <div className="alert alert-error">{error}</div>}
@@ -128,7 +158,7 @@ export function NewSchemaJobsView() {
         <div className="card">
           <h2>My job list</h2>
           <p className="text-muted">
-            Each Account has its own job row. Only To do rows can be removed; processed rows are retained.
+            Each Account has its own job row. Failed rows can be reset to To do for another Apply attempt; only To do rows can be removed.
           </p>
           {loading ? <div className="text-muted">Loading…</div> : (
             <div className="table-scroll">
@@ -156,10 +186,20 @@ export function NewSchemaJobsView() {
                       <td>{job.bid_count}</td>
                       <td>{formatDate(job.get_date)}</td>
                       <td>
+                        {job.status === 'failed' && (
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            type="button"
+                            disabled={resettingJobId !== null || deletingJobId !== null}
+                            onClick={() => { void resetFailedJob(job); }}
+                          >
+                            {resettingJobId === job.id ? 'Resetting…' : 'Reset to To do'}
+                          </button>
+                        )}
                         <button
                           className="btn btn-danger btn-sm"
                           type="button"
-                          disabled={deletingJobId !== null || job.status !== 'todo'}
+                          disabled={deletingJobId !== null || resettingJobId !== null || job.status !== 'todo'}
                           onClick={() => { void removeJob(job); }}
                         >
                           {deletingJobId === job.id ? 'Removing…' : 'Delete'}

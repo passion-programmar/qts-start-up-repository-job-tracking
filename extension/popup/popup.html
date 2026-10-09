@@ -296,6 +296,67 @@
       justify-content: flex-end;
       gap: 8px;
     }
+    #apply-account-confirmation {
+      width: min(420px, calc(100% - 40px));
+      max-height: min(620px, calc(100vh - 40px));
+      overflow: auto;
+      padding: 22px;
+      border: 1px solid #e2e8f0;
+      border-radius: 14px;
+      color: #0f172a;
+      box-shadow: 0 16px 40px rgba(15, 23, 42, 0.24);
+    }
+    #apply-account-confirmation::backdrop {
+      background: rgba(15, 23, 42, 0.48);
+    }
+    .apply-account-options {
+      display: grid;
+      gap: 8px;
+      max-height: 300px;
+      overflow-y: auto;
+      margin: 0 0 18px;
+    }
+    .apply-account-option {
+      display: grid;
+      grid-template-columns: 18px minmax(0, 1fr);
+      align-items: start;
+      gap: 10px;
+      padding: 11px 12px;
+      border: 1px solid #cbd5e1;
+      border-radius: 10px;
+      cursor: pointer;
+    }
+    .apply-account-option:has(input:checked) {
+      border-color: #00a884;
+      background: #f0fdf4;
+    }
+    .apply-account-option.is-disabled {
+      cursor: not-allowed;
+      opacity: 0.65;
+      background: #f8fafc;
+    }
+    .apply-account-option input {
+      margin: 3px 0 0;
+      accent-color: #008f70;
+    }
+    .apply-account-option-name {
+      display: block;
+      font-size: 13px;
+      font-weight: 700;
+      line-height: 1.4;
+    }
+    .apply-account-option-status {
+      display: block;
+      margin-top: 3px;
+      color: #64748b;
+      font-size: 11px;
+      line-height: 1.4;
+    }
+    .apply-account-confirmation-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
     .job-mode-actions {
       display: flex;
       align-items: center;
@@ -427,6 +488,7 @@
         <div class="action-card">
           <h2 class="action-title">Job Application</h2>
           <p class="action-subtitle">Select an action for the current job page.</p>
+          <div id="action-alert" aria-live="polite"></div>
           <div class="action-buttons">
             <button class="btn btn-primary" id="btn-get-jd" type="button" aria-pressed="false">Get JD</button>
             <button class="btn btn-primary" id="btn-apply" type="button" aria-pressed="false">Apply</button>
@@ -445,6 +507,18 @@
       <form method="dialog" class="get-jd-confirmation-actions">
         <button class="btn btn-ghost" type="submit" value="no">No</button>
         <button class="btn btn-primary" type="submit" value="yes">Yes</button>
+      </form>
+    </dialog>
+
+    <dialog id="apply-account-confirmation" aria-labelledby="apply-account-confirmation-title">
+      <h2 class="get-jd-confirmation-title" id="apply-account-confirmation-title">Choose an Account</h2>
+      <p class="get-jd-confirmation-message">
+        Apply will process supported jobs for one Account at a time. Counts include all job statuses.
+      </p>
+      <div id="apply-account-options" class="apply-account-options" role="radiogroup" aria-label="Manager Accounts"></div>
+      <form method="dialog" class="apply-account-confirmation-actions">
+        <button class="btn btn-ghost" type="submit" value="cancel">Cancel</button>
+        <button class="btn btn-primary" id="btn-confirm-apply-account" type="submit" value="start" disabled>Apply selected Account</button>
       </form>
     </dialog>
 
