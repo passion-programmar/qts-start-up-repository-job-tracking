@@ -28,6 +28,8 @@ The API retains only the new-schema tables:
 - `manager_custom_application_answers`
 - `account_application_profiles`
 - `application_attempts`
+- `gpt_application_tasks`
+- `gpt_application_task_documents`
 - `custom_gpts`
 - `manager_custom_gpt_assignments`
 
@@ -65,15 +67,20 @@ tables listed above are kept. Legacy tables are not recreated by migrations.
   attempt update. Get JD creates and updates jobs in this same Manager-owned
   list; Manager Apply does not use the legacy candidate/application-session
   pipeline.
-- The browser extension processes assigned Accounts sequentially on supported
-  Workable job pages. It fills the Account profile, PDF resume, and recognized
-  Manager answers, then waits for review in Manual mode. A Bid is created only
-  when Workable confirms submission, in the same transaction that closes the
-  attempt. Auto mode submits only when required fields have known answers.
-  Unknown required questions are marked Failed; CAPTCHA/security checks are
-  never bypassed and require manual completion. An unclear submission result
-  remains in Needs review and is not retried. Other job sites are not yet
+- The GPT-assisted Manager Apply workflow processes assigned Accounts
+  sequentially on Workable. It creates a site-neutral GPT task for each
+  application attempt, captures the job description and each application page,
+  and sends the task to the Manager's assigned Custom GPT. The GPT can answer
+  only from supplied Account and Manager facts; uncertain, consent, legal, and
+  security-verification fields require manual review. Requested resumes and
+  cover letters are stored with the application as generated PDFs. Safe
+  Next/Continue steps may proceed automatically, but the final job-site Submit
+  action always remains manual. Copied candidate/resume context is cleared when
+  an attempt ends or after 30 days of inactivity. Other job sites are not yet
   supported by this Manager Apply pipeline.
+- A Bid is created only when Workable confirms submission, in the same
+  transaction that closes the attempt. An unclear submission result remains in
+  Needs review and is not retried.
 - The Manager Bid Status page shows each assigned Account's status and keeps
   past attempt history visible if an Account is later unassigned from a job.
 - The existing Manager → Jobs table shows each job once and lists its assigned
@@ -81,11 +88,10 @@ tables listed above are kept. Legacy tables are not recreated by migrations.
 
 ## Retired workflows
 
-The extension's Manager login uses the new-schema API. Super-managed Custom GPT
-assignments are not yet connected to task-context retrieval or generated
-application answers/documents in the new-schema job/Account workflow. Workable
-is the first supported job-site form automation flow; other sites and the
-retired Custom GPT application/PDF workflow are not part of that pipeline.
+The extension's Manager login uses the new-schema API. The retired
+candidate/application-session and direct legacy GPT application/PDF workflows
+are not part of the active Manager → Apply pipeline. Workable is its first
+supported job-site connector.
 
 ## Deployment
 

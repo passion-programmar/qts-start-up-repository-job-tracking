@@ -1,36 +1,44 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://qts-job-tracking.local/schemas/gpt-application-package.json",
-  "title": "QTS GPT Application Package",
-  "description": "Payload for POST /api/application-tasks/{taskId}/package. taskId is in the URL path. When getTaskContext.fileFields is non-empty, include resume JSON (resume-document.schema.json) tailored to jobContext.jobDescription.",
+  "title": "QTS GPT Application Answer Package",
+  "description": "Request body for POST /api/v2/gpt-application-tasks/{taskId}/package. Submit answers and unresolved fields for the current page only.",
   "type": "object",
   "required": ["answers"],
+  "additionalProperties": false,
   "properties": {
     "answers": {
       "type": "array",
+      "maxItems": 150,
+      "items": { "$ref": "#/$defs/answer" }
+    },
+    "unresolvedFields": {
+      "type": "array",
+      "maxItems": 150,
       "items": {
         "type": "object",
-        "required": ["stableFieldId", "answer"],
+        "required": ["stableFieldId", "question", "reason"],
+        "additionalProperties": false,
         "properties": {
-          "stableFieldId": { "type": "string" },
-          "answer": { "type": "string" }
+          "stableFieldId": { "type": "string", "minLength": 1, "maxLength": 300 },
+          "question": { "type": "string", "maxLength": 1000 },
+          "reason": { "type": "string", "maxLength": 1000 }
         }
       }
     },
     "resume": { "$ref": "resume-document.schema.json" },
     "coverLetter": { "$ref": "cover-letter-document.schema.json" },
-    "remainingFields": {
-      "type": "array",
-      "description": "Optional extra field fills (checkboxes, selects) GPT decided",
-      "items": {
-        "type": "object",
-        "required": ["stableFieldId", "answer"],
-        "properties": {
-          "stableFieldId": { "type": "string" },
-          "answer": { "type": "string" }
-        }
+    "notes": { "type": "string", "maxLength": 2000 }
+  },
+  "$defs": {
+    "answer": {
+      "type": "object",
+      "required": ["stableFieldId", "answer"],
+      "additionalProperties": false,
+      "properties": {
+        "stableFieldId": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "answer": { "type": "string", "maxLength": 10000 }
       }
-    },
-    "notes": { "type": "string" }
+    }
   }
 }

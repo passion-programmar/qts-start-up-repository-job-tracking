@@ -145,6 +145,54 @@ async function workerFetchAccountResumeBase64(accountId) {
   }
 }
 
+async function workerFetchGptTaskDocumentBase64(taskId, documentType) {
+  const { token, serverUrl } = await workerReadAuth();
+  if (!token) return { success: false, message: 'Not logged in.' };
+  if (!['resume', 'cover_letter'].includes(documentType)) {
+    return { success: false, message: 'Unsupported generated document type.' };
+  }
+
+  try {
+    const response = await fetch(
+      `${serverUrl}/api/v2/gpt-application-tasks/${encodeURIComponent(taskId)}/documents/${documentType}`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (!response.ok) {
+      let message = `Generated document download failed (${response.status}).`;
+      try {
+        const error = await response.json();
+        if (error.message) message = error.message;
+      } catch {
+        // Preserve the HTTP status message for non-JSON failures.
+      }
+      return { success: false, message };
+    }
+
+    const blob = await response.blob();
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    let binary = '';
+    const chunkSize = 0x8000;
+    for (let index = 0; index < bytes.length; index += chunkSize) {
+      binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+    }
+    const disposition = response.headers.get('Content-Disposition') || '';
+    const match = disposition.match(/filename="?([^";]+)"?/i);
+    return {
+      success: true,
+      fileName: match?.[1] || `${documentType}.pdf`,
+      mimeType: blob.type || 'application/pdf',
+      base64: btoa(binary),
+    };
+  } catch (error) {
+    return {
+      success: false,
+      message: error instanceof Error
+        ? `Cannot download generated document: ${error.message}`
+        : 'Cannot download generated document from server.',
+    };
+  }
+}
+
 function workerParseApplicationId(taskId) {
   const match = String(taskId || '').match(/^task_(\d+)$/i);
   return match ? Number(match[1]) : null;
@@ -232,6 +280,7 @@ if (typeof self !== 'undefined') {
     workerApiRequest,
     workerFetchDocumentBase64,
     workerFetchAccountResumeBase64,
+    workerFetchGptTaskDocumentBase64,
     workerParseApplicationId,
     workerInferFileDocumentType,
     workerCheckDefaultCandidateApplied,

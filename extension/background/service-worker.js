@@ -1239,6 +1239,17 @@ async function dispatchCustomGptTask(taskId, prompt, jobTabId, options = {}) {
   }
 }
 
+self.__qtsDispatchActiveApplicationTask = async ({ taskId, jobTabId }) => {
+  const result = await dispatchCustomGptTask(taskId, null, jobTabId, {
+    pollAndApply: false,
+    focus: true,
+  });
+  if (!result?.handoff?.sent) {
+    throw new Error(result?.handoff?.error || 'Could not send the application task to the assigned Custom GPT.');
+  }
+  return result;
+};
+
 async function injectDetectToast(tabId) {
   try {
     const [{ result: hasToast }] = await chrome.scripting.executeScript({

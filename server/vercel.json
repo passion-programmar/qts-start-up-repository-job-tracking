@@ -1,3 +1,9 @@
 {
-  "framework": "express"
+  "framework": "express",
+  "crons": [
+    {
+      "path": "/api/v2/gpt-application-tasks/cleanup",
+      "schedule": "0 3 * * *"
+    }
+  ]
 }

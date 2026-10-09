@@ -10,8 +10,8 @@ Browser ──► Vercel web app ──► Vercel API functions ──► Neon
 
 The web app proxies API requests to the API deployment. The deployed system
 uses the new-schema tables only. The extension supports the new Manager login
-and the Workable application flow; other job sites and the retired Custom GPT
-application/PDF workflow are not part of this implementation.
+and the GPT-assisted Workable application flow; other job sites and the retired
+Custom GPT application/PDF workflow are not part of this implementation.
 
 Vercel deployment updates the web app and API only. The browser extension is a
 separate deliverable; update or reload the unpacked extension from the
@@ -43,6 +43,8 @@ separate deliverable; update or reload the unpacked extension from the
    | `ADMIN_WEB_URL` | `https://YOUR-WEB-APP.vercel.app/login` |
    | `AUTO_OPEN_BROWSER` | `false` |
    | `HOST` | `0.0.0.0` |
+   | `GPT_ACTION_API_KEY` | A strong random secret shared only with the Custom GPT Action |
+   | `CRON_SECRET` | A separate strong random secret for Vercel scheduled cleanup |
 
    Only the initial Super account password is needed to seed the first login.
    Super creates Admin accounts; Admins create Managers and Callers; Managers
@@ -50,6 +52,12 @@ separate deliverable; update or reload the unpacked extension from the
 
 4. Deploy. The first API request initializes the Neon schema and seeds accounts.
 5. Test `https://YOUR-API-PROJECT.vercel.app/api/health`.
+6. Configure the Custom GPT Action using
+   [docs/openapi/custom-gpt-application-actions.yaml](docs/openapi/custom-gpt-application-actions.yaml)
+   and the same `GPT_ACTION_API_KEY` as Bearer authentication. The GPT
+   instructions and setup checklist are in
+   [docs/CUSTOM-GPT-SETUP.md](docs/CUSTOM-GPT-SETUP.md). Redeploy the API after
+   changing either environment variable.
 
 Before deploying a release that runs database migrations, create and verify a
 recoverable production database backup. The first API request after deployment
@@ -57,7 +65,8 @@ removes retired legacy tables using `CASCADE`; this permanently deletes their
 contents and dependent objects. The active tables retained include
 `categories`, `users`, `job_list`, `bids`, `interviews`, `app_settings`,
 `prompts`, Manager application-answer tables, Account application profiles,
-and Job–Account application attempts.
+Job–Account application attempts, GPT application tasks, and generated task
+documents. The API's daily cleanup cron requires `CRON_SECRET`.
 Use Neon's pooled connection string to keep database connections within the
 provider's limits.
 

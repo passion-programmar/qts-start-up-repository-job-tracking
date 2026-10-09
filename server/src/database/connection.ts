@@ -406,6 +406,37 @@ async function runMigrations(): Promise<void> {
     )
   `);
   await execute(`
+    CREATE TABLE IF NOT EXISTS gpt_application_tasks (
+      task_id TEXT PRIMARY KEY,
+      attempt_id INTEGER NOT NULL UNIQUE REFERENCES application_attempts(attempt_id) ON DELETE CASCADE,
+      status TEXT NOT NULL DEFAULT 'waiting_for_page'
+        CHECK (status IN ('waiting_for_page', 'waiting_for_gpt', 'ready', 'failed', 'completed')),
+      page_number INTEGER NOT NULL DEFAULT 0 CHECK (page_number >= 0),
+      task_context JSONB NOT NULL DEFAULT '{}'::jsonb,
+      package JSONB NOT NULL DEFAULT '{}'::jsonb,
+      answers JSONB NOT NULL DEFAULT '[]'::jsonb,
+      resume_text TEXT,
+      resume_text_expires_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      last_activity_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await execute(`
+    CREATE TABLE IF NOT EXISTS gpt_application_task_documents (
+      task_id TEXT NOT NULL REFERENCES gpt_application_tasks(task_id) ON DELETE CASCADE,
+      document_type TEXT NOT NULL CHECK (document_type IN ('resume', 'cover_letter')),
+      file_name TEXT NOT NULL,
+      content BYTEA NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (task_id, document_type)
+    )
+  `);
+  await execute(`
+    ALTER TABLE gpt_application_tasks
+    ADD COLUMN IF NOT EXISTS answers JSONB NOT NULL DEFAULT '[]'::jsonb
+  `);
+  await execute(`
     INSERT INTO account_application_profiles (account_user_id, first_name, last_name)
     SELECT u.u_id,
            split_part(trim(u.name), ' ', 1),
@@ -447,6 +478,7 @@ async function runMigrations(): Promise<void> {
   await execute('CREATE INDEX IF NOT EXISTS idx_manager_custom_answers_manager ON manager_custom_application_answers(manager_user_id)');
   await execute('CREATE INDEX IF NOT EXISTS idx_account_application_profiles_account ON account_application_profiles(account_user_id)');
   await execute('CREATE INDEX IF NOT EXISTS idx_application_attempts_manager ON application_attempts(manager_user_id, updated_date DESC)');
+  await execute('CREATE INDEX IF NOT EXISTS idx_gpt_application_tasks_resume_expiry ON gpt_application_tasks(resume_text_expires_at) WHERE resume_text IS NOT NULL');
 
   await migrateSchema();
   await execute(`
@@ -585,6 +617,7 @@ async function runLogicalBackup(destination: string): Promise<void> {
     'custom_gpts', 'manager_custom_gpt_assignments',
     'manager_application_profiles', 'manager_salary_answers', 'manager_custom_application_answers',
     'account_application_profiles', 'application_attempts',
+    'gpt_application_tasks', 'gpt_application_task_documents',
   ] as const;
   const lines: string[] = [
     `-- ${APP_NAME} PostgreSQL logical backup`,

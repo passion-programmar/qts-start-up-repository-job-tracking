@@ -352,7 +352,7 @@ router.patch('/:jobId/:accountId', async (req: NewSchemaAuthRequest, res: Respon
       );
     }
     const result = await tx.query(
-      `SELECT j_id AS job_id, account_user_id, status, failure_reason, manager_note,
+      `SELECT attempt_id, j_id AS job_id, account_user_id, status, failure_reason, manager_note,
               started_at, submitted_at, updated_date
        FROM application_attempts
        WHERE j_id = $1 AND account_user_id = $2 AND manager_user_id = $3`,
@@ -360,6 +360,17 @@ router.patch('/:jobId/:accountId', async (req: NewSchemaAuthRequest, res: Respon
     );
     return result.rows[0];
   });
+  if (update.status === 'submitted' || update.status === 'failed') {
+    await execute(
+      `UPDATE gpt_application_tasks
+       SET status = $2,
+           task_context = jsonb_build_object('jobContext', COALESCE(task_context->'jobContext', '{}'::jsonb)),
+           resume_text = NULL, resume_text_expires_at = NULL,
+           last_activity_at = NOW(), updated_at = NOW()
+       WHERE attempt_id = $1`,
+      [Number((attempt as { attempt_id?: number })?.attempt_id), update.status === 'failed' ? 'failed' : 'completed']
+    );
+  }
   res.json({ success: true, attempt });
 });
 

@@ -59,6 +59,22 @@ function writePdf(build: (doc: PDFKit.PDFDocument) => void, outputPath: string):
   });
 }
 
+function writePdfBuffer(build: (doc: PDFKit.PDFDocument) => void): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ margin: 54, size: 'A4' });
+    const chunks: Buffer[] = [];
+    doc.on('data', (chunk: Buffer) => chunks.push(chunk));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+    try {
+      build(doc);
+      doc.end();
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
+
 function contactLine(doc: PDFKit.PDFDocument, parts: string[]) {
   const line = parts.filter(Boolean).join('  |  ');
   if (line) {
@@ -73,8 +89,7 @@ function sectionHeading(doc: PDFKit.PDFDocument, title: string) {
   doc.moveDown(0.35);
 }
 
-export async function renderResumePdf(resume: ResumeDocumentInput, outputPath: string): Promise<void> {
-  await writePdf((doc) => {
+function buildResume(doc: PDFKit.PDFDocument, resume: ResumeDocumentInput): void {
     const { candidate, targetRole, targetCompany, summary, sections } = resume;
 
     doc.fontSize(20).fillColor('#0f172a').text(candidate.fullName, { align: 'center' });
@@ -121,14 +136,17 @@ export async function renderResumePdf(resume: ResumeDocumentInput, outputPath: s
         doc.moveDown(0.25);
       }
     }
-  }, outputPath);
 }
 
-export async function renderCoverLetterPdf(
-  coverLetter: CoverLetterDocumentInput,
-  outputPath: string
-): Promise<void> {
-  await writePdf((doc) => {
+export async function renderResumePdf(resume: ResumeDocumentInput, outputPath: string): Promise<void> {
+  await writePdf((doc) => buildResume(doc, resume), outputPath);
+}
+
+export function renderResumePdfBuffer(resume: ResumeDocumentInput): Promise<Buffer> {
+  return writePdfBuffer((doc) => buildResume(doc, resume));
+}
+
+function buildCoverLetter(doc: PDFKit.PDFDocument, coverLetter: CoverLetterDocumentInput): void {
     const {
       candidate,
       targetRole,
@@ -166,7 +184,17 @@ export async function renderCoverLetterPdf(
     );
     doc.moveDown(0.3);
     doc.text(`Re: ${targetRole} at ${targetCompany}`);
-  }, outputPath);
+}
+
+export async function renderCoverLetterPdf(
+  coverLetter: CoverLetterDocumentInput,
+  outputPath: string
+): Promise<void> {
+  await writePdf((doc) => buildCoverLetter(doc, coverLetter), outputPath);
+}
+
+export function renderCoverLetterPdfBuffer(coverLetter: CoverLetterDocumentInput): Promise<Buffer> {
+  return writePdfBuffer((doc) => buildCoverLetter(doc, coverLetter));
 }
 
 export function safePdfFileName(base: string): string {

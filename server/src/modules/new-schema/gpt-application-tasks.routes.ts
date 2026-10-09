@@ -1,0 +1,644 @@
+import { randomUUID } from 'node:crypto';
+import { NextFunction, Request, Response, Router } from 'express';
+import { z } from 'zod';
+import { execute, queryAll, queryOne } from '../../database/connection';
+import {
+  renderCoverLetterPdfBuffer,
+  renderResumePdfBuffer,
+  safePdfFileName,
+} from '../../services/application-document-pdf';
+import { extractPdfText } from '../../services/pdf-text-extraction';
+import {
+  CoverLetterDocumentSchema,
+  ResumeDocumentSchema,
+} from '../document-builder/document.schemas';
+import { NewSchemaAuthRequest, requireNewSchemaAuth } from '../../middleware/new-schema-auth';
+import { config } from '../../config/env';
+
+const router = Router();
+const taskIdSchema = z.string().regex(/^task_[0-9a-f-]{36}$/i);
+
+const pageFieldSchema = z.object({
+  stableFieldId: z.string().min(1).max(300),
+  label: z.string().max(1000),
+  fieldType: z.string().max(100),
+  fieldKey: z.string().max(300).optional(),
+  documentSlot: z.enum(['resume', 'cover_letter']).optional(),
+  required: z.boolean(),
+  options: z.array(z.string().max(500)).max(100).optional(),
+  placeholder: z.string().max(1000).optional(),
+  currentValue: z.string().max(5000).optional(),
+}).strict();
+
+const pageContextSchema = z.object({
+  pageUrl: z.string().url().max(2000),
+  pageTitle: z.string().max(500),
+  pageNumber: z.number().int().min(1).max(50),
+  fields: z.array(pageFieldSchema).max(150),
+  jobDescription: z.string().max(50000).optional(),
+}).strict();
+
+const createTaskSchema = z.object({
+  sourcePlatform: z.string().trim().min(1).max(100).optional(),
+  jobDescription: z.string().trim().max(50000).optional(),
+}).strict();
+
+const taskPackageSchema = z.object({
+  answers: z.array(z.object({
+    stableFieldId: z.string().min(1).max(300),
+    answer: z.string().max(10000),
+  }).strict()).max(150),
+  unresolvedFields: z.array(z.object({
+    stableFieldId: z.string().min(1).max(300),
+    question: z.string().max(1000),
+    reason: z.string().max(1000),
+  }).strict()).max(150).optional(),
+  resume: ResumeDocumentSchema.optional(),
+  coverLetter: CoverLetterDocumentSchema.optional(),
+  notes: z.string().max(2000).optional(),
+}).strict();
+
+type TaskRow = {
+  task_id: string;
+  attempt_id: number;
+  manager_user_id: number;
+  status: string;
+  page_number: number;
+  task_context: Record<string, unknown>;
+  package: Record<string, unknown>;
+  answers: Array<{ stableFieldId: string; answer: string }>;
+  resume_text: string | null;
+  resume_text_expires_at: Date | string | null;
+};
+
+function isManager(req: NewSchemaAuthRequest, res: Response): boolean {
+  if (req.newSchemaUser?.role === 'manager') return true;
+  res.status(403).json({ success: false, message: 'Only Managers can manage GPT application tasks.' });
+  return false;
+}
+
+function actionKeyConfigured(res: Response): boolean {
+  if (config.gptActionApiKey) return true;
+  res.status(503).json({
+    success: false,
+    message: 'Custom GPT Action authentication is not configured on the server.',
+  });
+  return false;
+}
+
+function requireGptActionKey(req: Request, res: Response, next: NextFunction): void {
+  if (!actionKeyConfigured(res)) return;
+  const header = req.headers.authorization;
+  if (!header?.startsWith('Bearer ') || header.slice(7) !== config.gptActionApiKey) {
+    res.status(401).json({ success: false, message: 'Invalid Custom GPT Action key.' });
+    return;
+  }
+  next();
+}
+
+async function loadTask(taskId: string): Promise<TaskRow | null> {
+  return queryOne<TaskRow>(
+    `SELECT task.task_id, task.attempt_id, attempt.manager_user_id, task.status,
+            task.page_number, task.task_context, task.package, task.answers, task.resume_text,
+            task.resume_text_expires_at
+     FROM gpt_application_tasks task
+     JOIN application_attempts attempt ON attempt.attempt_id = task.attempt_id
+     WHERE task.task_id = $1`,
+    [taskId]
+  );
+}
+
+async function loadManagerTask(
+  req: NewSchemaAuthRequest,
+  res: Response,
+  taskId: string
+): Promise<TaskRow | null> {
+  if (!taskIdSchema.safeParse(taskId).success) {
+    res.status(400).json({ success: false, message: 'Provide a valid task ID.' });
+    return null;
+  }
+  const task = await loadTask(taskId);
+  if (!task || task.manager_user_id !== req.newSchemaUser?.id) {
+    res.status(404).json({ success: false, message: 'GPT application task not found.' });
+    return null;
+  }
+  return task;
+}
+
+function taskContextParts(context: Record<string, unknown>) {
+  return {
+    jobContext: context.jobContext || {},
+    candidate: context.candidate || {},
+    managerAnswers: context.managerAnswers || {},
+    page: context.page || null,
+  };
+}
+
+router.post('/attempts/:attemptId', requireNewSchemaAuth, async (req: NewSchemaAuthRequest, res: Response) => {
+  if (!isManager(req, res)) return;
+  if (!actionKeyConfigured(res)) return;
+  const attemptId = Number.parseInt(req.params.attemptId, 10);
+  if (!Number.isSafeInteger(attemptId) || attemptId <= 0) {
+    res.status(400).json({ success: false, message: 'Provide a valid application attempt ID.' });
+    return;
+  }
+  const createOptions = createTaskSchema.safeParse(req.body || {});
+  if (!createOptions.success) {
+    res.status(400).json({ success: false, message: 'Provide valid job task details.' });
+    return;
+  }
+
+  const context = await queryOne<Record<string, unknown>>(
+    `SELECT attempt.attempt_id, attempt.manager_user_id, attempt.status,
+            job.j_id, job.title AS job_title, job.company, job.url,
+            account.u_id AS account_id, account.name AS account_name,
+            account.email, account.phone, account.address, account.city,
+            account.country, account.sex, account.birthday,
+            profile.first_name, profile.last_name, profile.resume_content,
+            profile.education, profile.work_experience,
+            manager.managed_country, manager_profile.authorized_to_work,
+            manager_profile.authorization_status, manager_profile.sponsorship_required,
+            manager_profile.authorization_expires_on, manager_profile.relocation_willing,
+            manager_profile.relocation_details, manager_profile.notice_period_value,
+            manager_profile.notice_period_unit, manager_profile.notice_period_text
+     FROM application_attempts attempt
+     JOIN job_list job ON job.j_id = attempt.j_id
+     JOIN users account ON account.u_id = attempt.account_user_id AND account.role = 'account'
+     LEFT JOIN account_application_profiles profile ON profile.account_user_id = account.u_id
+     JOIN users manager ON manager.u_id = attempt.manager_user_id AND manager.role = 'manager'
+     LEFT JOIN manager_application_profiles manager_profile ON manager_profile.manager_user_id = manager.u_id
+     WHERE attempt.attempt_id = $1 AND attempt.manager_user_id = $2`,
+    [attemptId, req.newSchemaUser!.id]
+  );
+  if (!context || !['in_progress', 'needs_review'].includes(String(context.status))) {
+    res.status(404).json({ success: false, message: 'Active application attempt not found.' });
+    return;
+  }
+
+  const resumeBytes = context.resume_content;
+  let resumeText = '';
+  if (resumeBytes != null) {
+    try {
+      resumeText = await extractPdfText(Buffer.isBuffer(resumeBytes) ? resumeBytes : Buffer.from(resumeBytes as Uint8Array));
+    } catch (error) {
+      res.status(422).json({
+        success: false,
+        message: error instanceof Error ? error.message : 'Could not extract text from the saved resume PDF.',
+      });
+      return;
+    }
+  }
+
+  const [salaryAnswers, customAnswers] = await Promise.all([
+    queryAll(
+      `SELECT currency, minimum_amount, maximum_amount, pay_period, answer_text
+       FROM manager_salary_answers WHERE manager_user_id = $1 ORDER BY salary_answer_id`,
+      [req.newSchemaUser!.id]
+    ),
+    queryAll(
+      `SELECT topic, question, answer
+       FROM manager_custom_application_answers WHERE manager_user_id = $1 ORDER BY custom_answer_id`,
+      [req.newSchemaUser!.id]
+    ),
+  ]);
+  const taskContext = {
+    jobContext: {
+      jobId: context.j_id,
+      jobTitle: context.job_title,
+      company: context.company,
+      jobUrl: context.url,
+      platform: createOptions.data.sourcePlatform || new URL(String(context.url)).hostname.toLowerCase(),
+      ...(createOptions.data.jobDescription
+        ? { jobDescription: createOptions.data.jobDescription }
+        : {}),
+    },
+    candidate: {
+      accountId: context.account_id,
+      fullName: context.account_name,
+      firstName: context.first_name,
+      lastName: context.last_name,
+      email: context.email,
+      phone: context.phone,
+      address: context.address,
+      city: context.city,
+      country: context.country,
+      sex: context.sex,
+      birthday: context.birthday,
+      education: context.education || [],
+      workExperience: context.work_experience || [],
+    },
+    managerAnswers: {
+      managedCountry: context.managed_country,
+      authorizedToWork: context.authorized_to_work,
+      authorizationStatus: context.authorization_status,
+      sponsorshipRequired: context.sponsorship_required,
+      authorizationExpiresOn: context.authorization_expires_on,
+      relocationWilling: context.relocation_willing,
+      relocationDetails: context.relocation_details,
+      noticePeriodValue: context.notice_period_value,
+      noticePeriodUnit: context.notice_period_unit,
+      noticePeriodText: context.notice_period_text,
+      salaryAnswers,
+      customAnswers,
+    },
+  };
+  const taskId = `task_${randomUUID()}`;
+  const expiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+  const inserted = await queryOne<{ task_id: string; status: string }>(
+    `INSERT INTO gpt_application_tasks (
+       task_id, attempt_id, task_context, resume_text, resume_text_expires_at
+     ) VALUES ($1, $2, $3::jsonb, $4, $5)
+     ON CONFLICT (attempt_id) DO NOTHING
+     RETURNING task_id, status`,
+    [taskId, attemptId, JSON.stringify(taskContext), resumeText || null, resumeText ? expiry : null]
+  );
+  const existing = inserted || await queryOne<{ task_id: string; status: string }>(
+    `SELECT task_id, status FROM gpt_application_tasks WHERE attempt_id = $1`,
+    [attemptId]
+  );
+  if (!existing) {
+    res.status(500).json({ success: false, message: 'Could not create the GPT application task.' });
+    return;
+  }
+  if (!inserted) {
+    await execute(
+      `UPDATE gpt_application_tasks
+       SET task_context = jsonb_set(
+             jsonb_set(
+               jsonb_set(
+                 task_context,
+                 '{jobContext}',
+                 COALESCE(task_context->'jobContext', '{}'::jsonb) || $2::jsonb,
+                 true
+               ),
+               '{candidate}', $3::jsonb, true
+             ),
+             '{managerAnswers}', $4::jsonb, true
+           ),
+           resume_text = CASE
+             WHEN resume_text IS NULL OR resume_text_expires_at IS NULL OR resume_text_expires_at <= NOW()
+               THEN $5
+             ELSE resume_text
+           END,
+           resume_text_expires_at = CASE
+             WHEN resume_text IS NULL OR resume_text_expires_at IS NULL OR resume_text_expires_at <= NOW()
+               THEN CASE WHEN $5::text IS NULL THEN NULL ELSE NOW() + INTERVAL '30 days' END
+             ELSE resume_text_expires_at
+           END,
+           last_activity_at = NOW(), updated_at = NOW()
+       WHERE task_id = $1`,
+      [
+        existing.task_id,
+        JSON.stringify(taskContext.jobContext),
+        JSON.stringify(taskContext.candidate),
+        JSON.stringify(taskContext.managerAnswers),
+        resumeText,
+      ]
+    );
+  }
+
+  res.status(inserted ? 201 : 200).json({
+    success: true,
+    taskId: existing.task_id,
+    status: existing.status,
+    resumeTextAvailable: Boolean(resumeText),
+  });
+});
+
+router.put('/:taskId/page', requireNewSchemaAuth, async (req: NewSchemaAuthRequest, res: Response) => {
+  if (!isManager(req, res)) return;
+  const task = await loadManagerTask(req, res, req.params.taskId);
+  if (!task) return;
+  if (task.status === 'completed' || task.status === 'failed') {
+    res.status(409).json({ success: false, message: 'This GPT application task is already closed.' });
+    return;
+  }
+  const parsed = pageContextSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({
+      success: false,
+      message: 'Provide a valid application page context.',
+      errors: parsed.error.issues.map((issue) => ({
+        field: issue.path.join('.'),
+        message: issue.message,
+      })),
+    });
+    return;
+  }
+
+  const previousContext = task.task_context || {};
+  const previousJob = (previousContext.jobContext || {}) as Record<string, unknown>;
+  const page = parsed.data;
+  const jobDescription = page.jobDescription?.trim() || String(previousJob.jobDescription || '').trim();
+  const nextContext = {
+    ...previousContext,
+    jobContext: { ...previousJob, jobDescription },
+    page: { ...page, jobDescription: undefined },
+  };
+  await execute(
+    `UPDATE gpt_application_tasks
+     SET task_context = $2::jsonb, page_number = $3, package = '{}'::jsonb,
+         status = 'waiting_for_gpt', last_activity_at = NOW(), updated_at = NOW(),
+         resume_text_expires_at = CASE WHEN resume_text IS NULL THEN NULL ELSE NOW() + INTERVAL '30 days' END
+     WHERE task_id = $1`,
+    [task.task_id, JSON.stringify(nextContext), page.pageNumber]
+  );
+  res.json({ success: true, taskId: task.task_id, status: 'waiting_for_gpt', pageNumber: page.pageNumber });
+});
+
+router.get('/:taskId/context', requireGptActionKey, async (req, res: Response) => {
+  const taskId = String(req.params.taskId || '');
+  if (!taskIdSchema.safeParse(taskId).success) {
+    res.status(400).json({ success: false, message: 'Provide a valid task ID.' });
+    return;
+  }
+  const task = await loadTask(taskId);
+  if (!task) {
+    res.status(404).json({ success: false, message: 'GPT application task not found.' });
+    return;
+  }
+  if (task.status !== 'waiting_for_gpt') {
+    res.status(409).json({ success: false, message: 'No application page is currently waiting for a GPT response.' });
+    return;
+  }
+  const { jobContext, candidate, managerAnswers, page } = taskContextParts(task.task_context);
+  if (!String((jobContext as Record<string, unknown>).jobDescription || '').trim()) {
+    res.status(409).json({ success: false, message: 'The job description has not been captured yet.' });
+    return;
+  }
+  await execute(
+    `UPDATE gpt_application_tasks
+     SET last_activity_at = NOW(), updated_at = NOW(),
+         resume_text_expires_at = CASE WHEN resume_text IS NULL THEN NULL ELSE NOW() + INTERVAL '30 days' END
+     WHERE task_id = $1`,
+    [taskId]
+  );
+  res.json({
+    success: true,
+    taskId,
+    pageNumber: task.page_number,
+    jobContext,
+    candidate,
+    managerAnswers,
+    resumeText: task.resume_text || '',
+    previousAnswers: task.answers,
+    page,
+  });
+});
+
+router.post('/:taskId/package', requireGptActionKey, async (req, res: Response) => {
+  const taskId = String(req.params.taskId || '');
+  if (!taskIdSchema.safeParse(taskId).success) {
+    res.status(400).json({ success: false, message: 'Provide a valid task ID.' });
+    return;
+  }
+  const task = await loadTask(taskId);
+  if (!task) {
+    res.status(404).json({ success: false, message: 'GPT application task not found.' });
+    return;
+  }
+  if (task.status !== 'waiting_for_gpt') {
+    res.status(409).json({ success: false, message: 'This task is not waiting for a GPT response.' });
+    return;
+  }
+  const parsed = taskPackageSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({
+      success: false,
+      message: 'Provide a valid answer package.',
+      errors: parsed.error.issues.map((issue) => ({
+        field: issue.path.join('.'),
+        message: issue.message,
+      })),
+    });
+    return;
+  }
+  const page = (task.task_context.page || {}) as { fields?: Array<{ stableFieldId: string }> };
+  const validFieldIds = new Set((page.fields || []).map((field) => field.stableFieldId));
+  const answerIds = new Set<string>();
+  for (const answer of parsed.data.answers) {
+    if (!validFieldIds.has(answer.stableFieldId)) {
+      res.status(400).json({
+        success: false,
+        message: `Answer references a field that is not on the current page: ${answer.stableFieldId}`,
+      });
+      return;
+    }
+    if (answerIds.has(answer.stableFieldId)) {
+      res.status(400).json({
+        success: false,
+        message: `Answer package contains a duplicate field: ${answer.stableFieldId}`,
+      });
+      return;
+    }
+    answerIds.add(answer.stableFieldId);
+  }
+
+  const unresolved = parsed.data.unresolvedFields || [];
+  const mergedAnswers = new Map(
+    (task.answers || []).map((answer) => [answer.stableFieldId, answer.answer])
+  );
+  for (const answer of parsed.data.answers) {
+    mergedAnswers.set(answer.stableFieldId, answer.answer);
+  }
+  const allAnswers = [...mergedAnswers].map(([stableFieldId, answer]) => ({
+    stableFieldId,
+    answer,
+  }));
+  const packageData = {
+    answers: parsed.data.answers,
+    unresolvedFields: unresolved,
+    notes: parsed.data.notes || '',
+    documents: {
+      resume: Boolean(parsed.data.resume),
+      coverLetter: Boolean(parsed.data.coverLetter),
+    },
+  };
+  if (!parsed.data.answers.length && !unresolved.length && !parsed.data.resume && !parsed.data.coverLetter) {
+    res.status(400).json({ success: false, message: 'Package must include answers, documents, or unresolved fields.' });
+    return;
+  }
+  const pageFields = (page.fields || []) as Array<{ fieldType?: string; documentSlot?: 'resume' | 'cover_letter'; required?: boolean }>;
+  const requestedDocuments = new Set(
+    pageFields.filter((field) => field.fieldType === 'file')
+      .map((field) => field.documentSlot || 'resume')
+  );
+  if (parsed.data.resume && !requestedDocuments.has('resume')) {
+    res.status(400).json({ success: false, message: 'Resume JSON was not requested by a file field on the current page.' });
+    return;
+  }
+  if (parsed.data.coverLetter && !requestedDocuments.has('cover_letter')) {
+    res.status(400).json({ success: false, message: 'Cover letter JSON was not requested by a file field on the current page.' });
+    return;
+  }
+  if (pageFields.some((field) => field.fieldType === 'file' && field.required) &&
+      [...requestedDocuments].some((type) =>
+        pageFields.some((field) => field.fieldType === 'file' && field.required
+          && (field.documentSlot || 'resume') === type)
+          && (type === 'resume' ? !parsed.data.resume : !parsed.data.coverLetter)
+      )) {
+    res.status(400).json({ success: false, message: 'The package is missing JSON for a required document upload on this page.' });
+    return;
+  }
+
+  const documents: Array<{ type: 'resume' | 'cover_letter'; fileName: string; content: Buffer }> = [];
+  if (parsed.data.resume) {
+    documents.push({
+      type: 'resume',
+      fileName: `${safePdfFileName(parsed.data.resume.candidate.fullName)}_Resume.pdf`,
+      content: await renderResumePdfBuffer(parsed.data.resume),
+    });
+  }
+  if (parsed.data.coverLetter) {
+    documents.push({
+      type: 'cover_letter',
+      fileName: `${safePdfFileName(parsed.data.coverLetter.candidate.fullName)}_Cover_Letter.pdf`,
+      content: await renderCoverLetterPdfBuffer(parsed.data.coverLetter),
+    });
+  }
+
+  for (const document of documents) {
+    await execute(
+      `INSERT INTO gpt_application_task_documents (task_id, document_type, file_name, content)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (task_id, document_type)
+       DO UPDATE SET file_name = EXCLUDED.file_name, content = EXCLUDED.content, updated_at = NOW()`,
+      [taskId, document.type, document.fileName, document.content]
+    );
+  }
+  await execute(
+    `UPDATE gpt_application_tasks
+     SET package = $2::jsonb, answers = $3::jsonb, status = 'ready',
+         last_activity_at = NOW(), updated_at = NOW(),
+         resume_text_expires_at = CASE WHEN resume_text IS NULL THEN NULL ELSE NOW() + INTERVAL '30 days' END
+     WHERE task_id = $1 AND status = 'waiting_for_gpt'`,
+    [taskId, JSON.stringify(packageData), JSON.stringify(allAnswers)]
+  );
+  res.json({
+    success: true,
+    taskId,
+    status: 'ready',
+    pageNumber: task.page_number,
+    answersStored: parsed.data.answers.length,
+    unresolvedCount: unresolved.length,
+    documents: packageData.documents,
+  });
+});
+
+router.get('/:taskId/status', requireGptActionKey, async (req, res: Response) => {
+  const taskId = String(req.params.taskId || '');
+  if (!taskIdSchema.safeParse(taskId).success) {
+    res.status(400).json({ success: false, message: 'Provide a valid task ID.' });
+    return;
+  }
+  const task = await loadTask(taskId);
+  if (!task) {
+    res.status(404).json({ success: false, message: 'GPT application task not found.' });
+    return;
+  }
+  await execute(
+    `UPDATE gpt_application_tasks SET last_activity_at = NOW(), updated_at = NOW(),
+       resume_text_expires_at = CASE WHEN resume_text IS NULL THEN NULL ELSE NOW() + INTERVAL '30 days' END
+     WHERE task_id = $1`,
+    [taskId]
+  );
+  res.json({
+    success: true,
+    taskId,
+    status: task.status,
+    pageNumber: task.page_number,
+    answers: task.answers,
+    package: task.package,
+  });
+});
+
+router.get('/:taskId/extension-status', requireNewSchemaAuth, async (req: NewSchemaAuthRequest, res: Response) => {
+  if (!isManager(req, res)) return;
+  const task = await loadManagerTask(req, res, req.params.taskId);
+  if (!task) return;
+  await execute(
+    `UPDATE gpt_application_tasks
+     SET last_activity_at = NOW(), updated_at = NOW(),
+         resume_text_expires_at = CASE WHEN resume_text IS NULL THEN NULL ELSE NOW() + INTERVAL '30 days' END
+     WHERE task_id = $1`,
+    [task.task_id]
+  );
+  res.json({
+    success: true,
+    taskId: task.task_id,
+    status: task.status,
+    pageNumber: task.page_number,
+    jobContext: task.task_context.jobContext || {},
+    answers: task.answers,
+    package: task.package,
+  });
+});
+
+router.get('/:taskId/documents/:documentType', requireNewSchemaAuth, async (req: NewSchemaAuthRequest, res: Response) => {
+  if (!isManager(req, res)) return;
+  const task = await loadManagerTask(req, res, req.params.taskId);
+  if (!task) return;
+  const documentType = req.params.documentType;
+  if (documentType !== 'resume' && documentType !== 'cover_letter') {
+    res.status(400).json({ success: false, message: 'Document type must be resume or cover_letter.' });
+    return;
+  }
+  const document = await queryOne<{ file_name: string; content: Buffer }>(
+    `SELECT file_name, content FROM gpt_application_task_documents
+     WHERE task_id = $1 AND document_type = $2`,
+    [task.task_id, documentType]
+  );
+  if (!document) {
+    res.status(404).json({ success: false, message: 'Generated document not found.' });
+    return;
+  }
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="${document.file_name.replace(/["\\\r\n]/g, '_')}"`);
+  res.send(document.content);
+});
+
+router.post('/:taskId/finish', requireNewSchemaAuth, async (req: NewSchemaAuthRequest, res: Response) => {
+  if (!isManager(req, res)) return;
+  const task = await loadManagerTask(req, res, req.params.taskId);
+  if (!task) return;
+  const result = await execute(
+    `UPDATE gpt_application_tasks
+     SET status = 'completed',
+         task_context = jsonb_build_object('jobContext', COALESCE(task_context->'jobContext', '{}'::jsonb)),
+         resume_text = NULL, resume_text_expires_at = NULL,
+         last_activity_at = NOW(), updated_at = NOW()
+     FROM application_attempts attempt
+     WHERE gpt_application_tasks.task_id = $1
+       AND gpt_application_tasks.status <> 'failed'
+       AND attempt.attempt_id = gpt_application_tasks.attempt_id
+       AND attempt.status IN ('submitted', 'failed')`,
+    [task.task_id]
+  );
+  if (!result.rowCount) {
+    res.status(409).json({ success: false, message: 'Finish the application attempt before closing its GPT task.' });
+    return;
+  }
+  res.json({ success: true, taskId: task.task_id, status: 'completed' });
+});
+
+router.post('/cleanup', async (req, res: Response) => {
+  const cronSecret = process.env.CRON_SECRET;
+  if (!cronSecret) {
+    res.status(503).json({ success: false, message: 'Scheduled cleanup authentication is not configured.' });
+    return;
+  }
+  if (req.headers.authorization !== `Bearer ${cronSecret}`) {
+    res.status(401).json({ success: false, message: 'Invalid scheduled cleanup credential.' });
+    return;
+  }
+  const result = await execute(
+    `UPDATE gpt_application_tasks
+     SET task_context = jsonb_build_object('jobContext', COALESCE(task_context->'jobContext', '{}'::jsonb)),
+         resume_text = NULL, resume_text_expires_at = NULL, updated_at = NOW()
+     WHERE last_activity_at <= NOW() - INTERVAL '30 days'
+       AND (resume_text IS NOT NULL OR task_context ? 'candidate')`
+  );
+  res.json({ success: true, expiredTaskContextsCleared: result.rowCount || 0 });
+});
+
+export default router;

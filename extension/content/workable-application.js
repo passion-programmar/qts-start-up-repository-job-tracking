@@ -12,9 +12,28 @@
     .replace(/[^\p{L}\p{N}]+/gu, ' ')
     .trim();
 
+  function formSignature() {
+    const controls = [...document.querySelectorAll('input:not([type="hidden"]), textarea, select')]
+      .filter(visible)
+      .map((element) => `${element.name || element.id || ''}:${element.type || 'control'}:${labelFor(element)}`)
+      .join('|');
+    const pageMarkers = [...document.querySelectorAll(
+      'main h1, main h2, main h3, form legend, [aria-current="step"], [role="progressbar"]'
+    )]
+      .filter(visible)
+      .map((element) => clean(element.innerText || element.getAttribute('aria-valuenow')))
+      .filter(Boolean)
+      .join('|');
+    return `${pageMarkers}::${controls}`.slice(0, 8000);
+  }
+
   function pageReady() {
     if (!chrome?.runtime?.id) return;
-    chrome.runtime.sendMessage({ type: 'QTS_WORKABLE_PAGE_READY', url: location.href }).catch(() => {});
+    chrome.runtime.sendMessage({
+      type: 'QTS_WORKABLE_PAGE_READY',
+      url: location.href,
+      pageSignature: formSignature(),
+    }).catch(() => {});
   }
 
   function isRequired(element) {
@@ -56,6 +75,142 @@
       if (text) return text;
     }
     return labelFor(element);
+  }
+
+  function isManualReviewQuestion(label) {
+    return /\b(terms and conditions|terms of service|privacy policy|gdpr|consent|marketing|equal opportunity|disability self identification|veteran status|background check authorization|certify that)\b/i
+      .test(label);
+  }
+
+  function extractJobDescription() {
+    const candidates = [
+      ...document.querySelectorAll(
+        '[data-ui*="job-description"], [data-testid*="job-description"], [class*="JobDescription"], [class*="job-description"], main article, [role="main"]'
+      ),
+    ]
+      .filter(visible)
+      .map((element) => clean(element.innerText))
+      .filter((text) => text.length >= 100);
+
+    for (const script of document.querySelectorAll('script[type="application/ld+json"]')) {
+      try {
+        const parsed = JSON.parse(script.textContent || '');
+        const entries = Array.isArray(parsed) ? parsed : [parsed];
+        for (const entry of entries) {
+          const description = typeof entry?.description === 'string' ? clean(entry.description) : '';
+          if (description.length >= 100) candidates.push(description);
+        }
+      } catch {
+        // Ignore invalid structured data and continue with visible page content.
+      }
+    }
+
+    const description = candidates.sort((a, b) => b.length - a.length)[0] || '';
+    return description.slice(0, 50000);
+  }
+
+  function scanApplicationPage(pageNumber) {
+    const controls = [...document.querySelectorAll('input:not([type="hidden"]), textarea, select')]
+      .filter(visible);
+    const fields = [];
+    const manualReviewFields = [];
+    const seen = new Set();
+    let index = 0;
+
+    for (const control of controls) {
+      const isChoice = control instanceof HTMLInputElement
+        && (control.type === 'radio' || control.type === 'checkbox');
+      const groupName = isChoice ? (control.name || `${control.type}:${control.id}`) : '';
+      if (isChoice && seen.has(groupName)) continue;
+      if (isChoice) seen.add(groupName);
+
+      const label = isChoice ? questionForChoice(control) : labelFor(control);
+      if (!label || isManualReviewQuestion(label)) {
+        if (label && isManualReviewQuestion(label)) {
+          manualReviewFields.push(label);
+        }
+        continue;
+      }
+
+      const controlsInField = isChoice
+        ? controls.filter((item) => item instanceof HTMLInputElement
+          && (item.type === 'radio' || item.type === 'checkbox')
+          && (item.name || `${item.type}:${item.id}`) === groupName)
+        : [control];
+      const first = controlsInField[0];
+      const identity = String(first.name || first.id || label).trim();
+      const stableFieldId = `workable:${location.pathname}:${identity}:${index++}`
+        .slice(0, 300);
+      const fieldType = first.type === 'file'
+        ? 'file'
+        : isChoice
+          ? (first.type === 'checkbox' ? 'checkbox' : 'radio')
+          : first instanceof HTMLSelectElement
+            ? 'select'
+            : first instanceof HTMLTextAreaElement
+              ? 'textarea'
+              : String(first.type || 'text');
+      const options = isChoice
+        ? controlsInField.map((item) => labelFor(item) || String(item.value || ''))
+        : first instanceof HTMLSelectElement
+          ? [...first.options].filter((option) => option.value).map((option) => clean(option.textContent))
+          : undefined;
+      const documentSlot = fieldType === 'file' && /cover letter|cover_letter/i.test(label)
+        ? 'cover_letter'
+        : fieldType === 'file'
+          ? 'resume'
+          : undefined;
+
+      fields.push({
+        stableFieldId,
+        label: label.slice(0, 1000),
+        fieldType,
+        fieldKey: identity.slice(0, 300),
+        ...(documentSlot ? { documentSlot } : {}),
+        required: controlsInField.some(isRequired),
+        ...(options?.length ? { options: options.slice(0, 100) } : {}),
+        ...(clean(first.getAttribute('placeholder'))
+          ? { placeholder: clean(first.getAttribute('placeholder')).slice(0, 1000) }
+          : {}),
+      });
+    }
+
+    const captchaPresent = Boolean(document.querySelector(
+      'iframe[src*="turnstile"], iframe[src*="recaptcha"], .cf-turnstile, input[name*="turnstile"], input[name*="recaptcha"]'
+    ));
+    const pageDescription = extractJobDescription();
+    return {
+      pageUrl: location.href,
+      pageTitle: clean(document.title).slice(0, 500),
+      pageNumber,
+      pageSignature: formSignature(),
+      fields,
+      jobDescription: pageDescription || undefined,
+      manualReviewFields: [...new Set(manualReviewFields)],
+      captchaPresent,
+    };
+  }
+
+  async function clickNextPage() {
+    if (document.querySelector(
+      'iframe[src*="turnstile"], iframe[src*="recaptcha"], .cf-turnstile, input[name*="turnstile"], input[name*="recaptcha"]'
+    )) {
+      return { ok: false, paused: true, reason: 'Security verification found; complete it manually.' };
+    }
+    const next = [...document.querySelectorAll('button, [role="button"]')]
+      .filter(visible)
+      .find((element) => /^(next|continue|continue to next step|save and continue)$/i.test(clean(element.innerText)));
+    if (!next) return { ok: true, hasNext: false };
+    const previousUrl = location.href;
+    const previousSignature = formSignature();
+    next.click();
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      await sleep(250);
+      if (location.href !== previousUrl || formSignature() !== previousSignature) {
+        return { ok: true, hasNext: true, url: location.href };
+      }
+    }
+    return { ok: true, hasNext: false, pageUnchanged: true };
   }
 
   function isApplicationForm() {
@@ -285,11 +440,39 @@
   }
 
   async function fillForm(payload) {
-    const { account, managerAnswers, resume, submissionMode } = payload;
+    const {
+      account,
+      managerAnswers,
+      resume,
+      documents = {},
+      answers = [],
+      pageFields = [],
+      manualReviewFields = [],
+      gptPackage = false,
+      submissionMode,
+    } = payload;
     const failures = [];
     if (!isApplicationForm()) {
       return { ok: false, failures: ['Workable application form did not open.'] };
     }
+
+    const answerById = new Map(answers.map((item) => [item.stableFieldId, item.answer]));
+    const pageFieldByKey = new Map();
+    for (const field of pageFields) {
+      const answer = answerById.get(field.stableFieldId);
+      if (answer == null) continue;
+      const key = String(field.fieldKey || field.label || '');
+      if (!pageFieldByKey.has(key)) pageFieldByKey.set(key, []);
+      pageFieldByKey.get(key).push(answer);
+    }
+    const answerForGptField = (element, label) => {
+      const key = String(element.name || element.id || label || '');
+      const values = pageFieldByKey.get(key) || pageFieldByKey.get(label) || [];
+      return values.length ? values.shift() : null;
+    };
+    const isManualReviewField = (label) => manualReviewFields.some(
+      (item) => normalizedQuestion(item) === normalizedQuestion(label)
+    );
 
     const phoneCountry = await updatePhoneCountry(account);
     if (!phoneCountry.ok) failures.push('Could not select the Account phone country.');
@@ -311,20 +494,29 @@
         continue;
       }
       if (control.type === 'file') {
-        if (!resume?.base64 && control.required) failures.push('Required resume is missing from the Account profile.');
-        else if (resume?.base64) {
-          const binary = atob(resume.base64);
+        const fieldKey = String(control.name || control.id || labelFor(control) || '');
+        const descriptor = pageFields.find((field) =>
+          String(field.fieldKey || field.label || '') === fieldKey
+        );
+        const slot = descriptor?.documentSlot
+          || (/cover letter/i.test(labelFor(control)) ? 'cover_letter' : 'resume');
+        const file = documents[slot] || (!gptPackage && slot === 'resume' ? resume : null);
+        if (!file?.base64 && control.required) {
+          failures.push(`Required ${slot === 'cover_letter' ? 'cover letter' : 'resume'} document is missing.`);
+        } else if (file?.base64) {
+          const binary = atob(file.base64);
           const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
-          const file = new File([bytes], resume.fileName || 'resume.pdf', { type: 'application/pdf' });
+          const upload = new File([bytes], file.fileName || 'resume.pdf', { type: 'application/pdf' });
           const transfer = new DataTransfer();
-          transfer.items.add(file);
+          transfer.items.add(upload);
           control.files = transfer.files;
           control.dispatchEvent(new Event('change', { bubbles: true }));
         }
         continue;
       }
       const question = labelFor(control);
-      const answer = answerForQuestion(question, managerAnswers);
+      if (isManualReviewField(question)) continue;
+      const answer = answerForQuestion(question, managerAnswers) ?? answerForGptField(control, question);
       if (answer != null) {
         if (!setControlValue(control, answer)) failures.push(`Could not fill required answer: ${question}.`);
       } else if (isRequired(control) && !control.value) {
@@ -335,7 +527,10 @@
     for (const group of radioGroups.values()) {
       const first = group[0];
       const question = questionForChoice(first);
-      const answer = mapAccountField(first, account) ?? answerForQuestion(question, managerAnswers);
+      if (isManualReviewField(question)) continue;
+      const answer = mapAccountField(first, account)
+        ?? answerForQuestion(question, managerAnswers)
+        ?? answerForGptField(first, question);
       if (answer != null && !applyRadioOrCheckbox(group, answer)) {
         failures.push(`Could not select an answer for: ${question || 'required choice'}.`);
       } else if (answer == null && group.some(isRequired) &&
@@ -463,6 +658,20 @@
       );
       return true;
     }
+    if (message.type === 'QTS_WORKABLE_CAPTURE_JOB') {
+      sendResponse({ ok: true, jobDescription: extractJobDescription() });
+      return false;
+    }
+    if (message.type === 'QTS_WORKABLE_SCAN_PAGE') {
+      sendResponse({ ok: true, page: scanApplicationPage(Number(message.pageNumber) || 1) });
+      return false;
+    }
+    if (message.type === 'QTS_WORKABLE_NEXT_PAGE') {
+      clickNextPage().then(sendResponse).catch((error) =>
+        sendResponse({ ok: false, error: error.message || 'Could not continue to the next application page.' })
+      );
+      return true;
+    }
     if (message.type === 'QTS_WORKABLE_FILL') {
       fillForm(message.payload).then(sendResponse).catch((error) =>
         sendResponse({ ok: false, failures: [error.message || 'Workable form fill failed.'] })
@@ -485,9 +694,20 @@
   if (document.readyState === 'complete') notify();
   else window.addEventListener('load', notify, { once: true });
   let previousUrl = location.href;
+  let previousSignature = formSignature();
+  let pageChangeTimer = null;
   new MutationObserver(() => {
-    if (location.href === previousUrl) return;
-    previousUrl = location.href;
-    notify();
+    if (location.href !== previousUrl) {
+      previousUrl = location.href;
+      notify();
+      return;
+    }
+    clearTimeout(pageChangeTimer);
+    pageChangeTimer = setTimeout(() => {
+      const signature = formSignature();
+      if (signature === previousSignature || !isApplicationForm()) return;
+      previousSignature = signature;
+      pageReady();
+    }, 400);
   }).observe(document.documentElement, { childList: true, subtree: true });
 })();

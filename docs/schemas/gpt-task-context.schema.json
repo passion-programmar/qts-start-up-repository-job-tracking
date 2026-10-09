@@ -1,79 +1,91 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://qts-job-tracking.local/schemas/gpt-task-context.json",
-  "title": "QTS GPT Task Context",
-  "description": "Response shape from GET /api/application-tasks/{taskId}/context (getTaskContext Action).",
+  "title": "QTS GPT Application Task Context",
+  "description": "Response from GET /api/v2/gpt-application-tasks/{taskId}/context.",
   "type": "object",
-  "required": ["success", "taskId", "applicationId", "jobContext", "candidate", "fileFields"],
+  "required": [
+    "success",
+    "taskId",
+    "pageNumber",
+    "jobContext",
+    "candidate",
+    "managerAnswers",
+    "resumeText",
+    "previousAnswers",
+    "page"
+  ],
   "properties": {
     "success": { "type": "boolean" },
-    "taskId": { "type": "string", "pattern": "^task_\\d+$" },
-    "applicationId": { "type": "integer" },
-    "gptTaskStatus": { "type": "string" },
+    "taskId": { "type": "string", "pattern": "^task_[0-9a-fA-F-]{36}$" },
+    "pageNumber": { "type": "integer" },
     "jobContext": {
       "type": "object",
-      "required": ["jobDescription"],
       "properties": {
+        "jobId": { "type": "integer" },
         "jobTitle": { "type": "string" },
         "company": { "type": "string" },
-        "jobDescription": {
-          "type": "string",
-          "description": "Full job description text — primary input for tailoring resume PDF JSON"
-        },
         "jobUrl": { "type": "string", "format": "uri" },
-        "platform": { "type": "string" }
-      }
+        "platform": { "type": "string" },
+        "jobDescription": { "type": "string" }
+      },
+      "additionalProperties": true
     },
     "candidate": {
       "type": "object",
-      "properties": {
-        "name": { "type": "string" },
-        "email": { "type": "string" },
-        "phone": { "type": "string" },
-        "linkedinUrl": { "type": "string" },
-        "stack": { "type": "string" }
-      }
+      "description": "Saved Account profile, education, and work history.",
+      "additionalProperties": true
     },
-    "pendingAiFields": {
+    "managerAnswers": {
+      "type": "object",
+      "description": "Manager-saved authorization, salary, and custom answers.",
+      "additionalProperties": true
+    },
+    "resumeText": {
+      "type": "string",
+      "description": "Text extracted from the saved resume PDF when available."
+    },
+    "previousAnswers": {
       "type": "array",
-      "items": { "$ref": "file-upload-field.schema.json" }
+      "items": { "$ref": "#/$defs/answer" }
     },
-    "fileFields": {
-      "type": "array",
-      "description": "File upload inputs on the form — GPT must generate matching document JSON",
-      "items": { "$ref": "file-upload-field.schema.json" }
-    },
-    "documentGeneration": {
-      "type": "object",
-      "properties": {
-        "resume": { "$ref": "#/$defs/documentGenerationSpec" },
-        "coverLetter": { "$ref": "#/$defs/documentGenerationSpec" }
-      }
-    },
-    "documentRequirements": {
-      "type": "object",
-      "properties": {
-        "resumeRequired": { "type": "boolean" },
-        "coverLetterRecommended": { "type": "boolean" }
-      }
-    },
-    "packageSchema": {
-      "type": "object",
-      "properties": {
-        "schemaId": { "type": "string", "const": "gpt-application-package.schema.json" },
-        "$id": { "type": "string" }
-      }
-    }
+    "page": { "$ref": "#/$defs/page" }
   },
   "$defs": {
-    "documentGenerationSpec": {
+    "answer": {
       "type": "object",
-      "required": ["required", "schemaId", "packageKey", "instructions"],
+      "required": ["stableFieldId", "answer"],
       "properties": {
+        "stableFieldId": { "type": "string" },
+        "answer": { "type": "string" }
+      }
+    },
+    "field": {
+      "type": "object",
+      "required": ["stableFieldId", "label", "fieldType", "required"],
+      "properties": {
+        "stableFieldId": { "type": "string" },
+        "label": { "type": "string" },
+        "fieldType": { "type": "string" },
+        "fieldKey": { "type": "string" },
+        "documentSlot": { "type": "string", "enum": ["resume", "cover_letter"] },
         "required": { "type": "boolean" },
-        "schemaId": { "type": "string" },
-        "packageKey": { "type": "string", "enum": ["resume", "coverLetter"] },
-        "instructions": { "type": "string" }
+        "options": { "type": "array", "items": { "type": "string" } },
+        "placeholder": { "type": "string" },
+        "currentValue": { "type": "string" }
+      }
+    },
+    "page": {
+      "type": "object",
+      "required": ["pageUrl", "pageTitle", "pageNumber", "fields"],
+      "properties": {
+        "pageUrl": { "type": "string", "format": "uri" },
+        "pageTitle": { "type": "string" },
+        "pageNumber": { "type": "integer" },
+        "fields": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/field" }
+        }
       }
     }
   }
