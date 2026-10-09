@@ -18,9 +18,12 @@ type NavItem = {
 
 const NAV_ITEMS: NavItem[] = [
   { href: '/jobs', label: '💼 Jobs', page: 'jobs', modes: ['admin', 'manager'] },
+  { href: '/bid-status', label: '📋 Bid Status', page: 'bid-status', modes: ['manager'] },
   { href: '/analytics', label: '📊 Analytics', page: 'analytics', modes: ['admin', 'manager'] },
   { href: '/database', label: '🗄️ Database', page: 'database', modes: ['admin'], roles: ['super'] },
+  { href: '/application-profiles', label: '📝 Application Profiles', page: 'application-profiles', modes: ['admin'], roles: ['super'] },
   { href: '/accounts', label: '👤 Account Profiles', page: 'accounts', modes: ['manager'] },
+  { href: '/application-profile', label: '📝 Application Answers', page: 'application-profile', modes: ['manager'] },
   { href: '/people', label: '👥 People', page: 'people', modes: ['admin'] },
   { href: '/categories', label: '🏷️ Categories', page: 'categories', modes: ['admin'] },
   { href: '/interviews', label: '📅 Interviews', page: 'interviews', modes: ['admin', 'manager', 'caller'] },
@@ -38,6 +41,9 @@ const PAGE_TITLES: Record<string, string> = {
   categories: 'Categories',
   interviews: 'Interview Process',
   settings: 'Settings',
+  'application-profiles': 'Manager Application Profiles',
+  'application-profile': 'Application Answers',
+  'bid-status': 'Bid Status',
 };
 
 function resolvePage(pathname: string, base: string): string {

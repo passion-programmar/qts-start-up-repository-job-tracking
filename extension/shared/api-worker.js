@@ -93,6 +93,58 @@ async function workerFetchDocumentBase64(applicationId, docType) {
   }
 }
 
+async function workerFetchAccountResumeBase64(accountId) {
+  const { token, serverUrl } = await workerReadAuth();
+  if (!token) return { success: false, message: 'Not logged in.' };
+
+  try {
+    const response = await fetch(`${serverUrl}/api/v2/users/${accountId}/resume`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) {
+      if (response.status === 401) {
+        const auth = qtsRoot.__qtsAccountAuth;
+        await auth?.handleAuthExpired?.();
+        chrome.runtime.sendMessage({ type: 'AUTH_SESSION_EXPIRED' }).catch(() => {});
+        return { success: false, message: 'Session expired. Please log in again.' };
+      }
+      let message = `Resume download failed (${response.status}).`;
+      try {
+        const error = await response.json();
+        if (error.message) message = error.message;
+      } catch {
+        // Non-JSON response; preserve the HTTP status message.
+      }
+      return { success: false, message };
+    }
+    const blob = await response.blob();
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    let binary = '';
+    const chunkSize = 0x8000;
+    for (let index = 0; index < bytes.length; index += chunkSize) {
+      binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+    }
+    const disposition = response.headers.get('Content-Disposition') || '';
+    const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+    const match = disposition.match(/filename="?([^";]+)"?/i);
+    let fileName = match?.[1] || 'resume.pdf';
+    if (utf8Match?.[1]) {
+      try {
+        fileName = decodeURIComponent(utf8Match[1]);
+      } catch {
+        return { success: false, message: 'The saved resume filename is invalid.' };
+      }
+    }
+    return {
+      success: true,
+      fileName,
+      base64: btoa(binary),
+    };
+  } catch {
+    return { success: false, message: 'Cannot download the Account resume from the server.' };
+  }
+}
+
 function workerParseApplicationId(taskId) {
   const match = String(taskId || '').match(/^task_(\d+)$/i);
   return match ? Number(match[1]) : null;
@@ -179,6 +231,7 @@ if (typeof self !== 'undefined') {
   self.__qtsApiWorker = {
     workerApiRequest,
     workerFetchDocumentBase64,
+    workerFetchAccountResumeBase64,
     workerParseApplicationId,
     workerInferFileDocumentType,
     workerCheckDefaultCandidateApplied,

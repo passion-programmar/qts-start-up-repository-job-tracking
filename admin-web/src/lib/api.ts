@@ -65,3 +65,33 @@ export async function api<T = unknown>(
 
   return data;
 }
+
+export async function uploadPdf(
+  path: string,
+  file: File
+): Promise<{ success: boolean; message?: string }> {
+  const token = getToken();
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/pdf',
+        'X-Resume-Filename': encodeURIComponent(file.name),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: file,
+    });
+  } catch {
+    return { success: false, message: 'Cannot connect to the API server.' };
+  }
+  let data: { success?: boolean; message?: string };
+  try {
+    data = await response.json();
+  } catch {
+    return { success: false, message: `Resume upload failed (${response.status}).` };
+  }
+  return response.ok && data.success
+    ? { success: true }
+    : { success: false, message: data.message || `Resume upload failed (${response.status}).` };
+}

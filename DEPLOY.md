@@ -9,8 +9,13 @@ Browser ──► Vercel web app ──► Vercel API functions ──► Neon
 ```
 
 The web app proxies API requests to the API deployment. The deployed system
-uses the new-schema tables only; the older extension, candidates, auto-apply,
-and legacy account workflows are not part of this deployment.
+uses the new-schema tables only. The extension supports the new Manager login
+and the Workable application flow; other job sites and the retired Custom GPT
+application/PDF workflow are not part of this implementation.
+
+Vercel deployment updates the web app and API only. The browser extension is a
+separate deliverable; update or reload the unpacked extension from the
+`extension` directory to use its Workable adapter.
 
 ## 1. Create a Neon database
 
@@ -46,10 +51,13 @@ and legacy account workflows are not part of this deployment.
 4. Deploy. The first API request initializes the Neon schema and seeds accounts.
 5. Test `https://YOUR-API-PROJECT.vercel.app/api/health`.
 
-The first API request after this release is deployed removes the retired
-legacy tables and keeps only the new-schema data tables (`categories`, `users`,
-`job_list`, `bids`, `interviews`, and `app_settings`). This permanently deletes
-the retired-table data.
+Before deploying a release that runs database migrations, create and verify a
+recoverable production database backup. The first API request after deployment
+removes retired legacy tables using `CASCADE`; this permanently deletes their
+contents and dependent objects. The active tables retained include
+`categories`, `users`, `job_list`, `bids`, `interviews`, `app_settings`,
+`prompts`, Manager application-answer tables, Account application profiles,
+and Job–Account application attempts.
 Use Neon's pooled connection string to keep database connections within the
 provider's limits.
 

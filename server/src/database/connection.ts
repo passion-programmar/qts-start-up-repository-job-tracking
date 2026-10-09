@@ -264,6 +264,89 @@ async function runMigrations(): Promise<void> {
     )
   `);
 
+  await execute('ALTER TABLE users ADD COLUMN IF NOT EXISTS managed_country TEXT');
+  await execute(`
+    CREATE TABLE IF NOT EXISTS manager_application_profiles (
+      manager_user_id INTEGER PRIMARY KEY REFERENCES users(u_id) ON DELETE CASCADE,
+      authorized_to_work BOOLEAN,
+      authorization_status TEXT,
+      sponsorship_required BOOLEAN,
+      authorization_expires_on DATE,
+      relocation_willing BOOLEAN,
+      relocation_details TEXT,
+      notice_period_value INTEGER CHECK (notice_period_value IS NULL OR notice_period_value >= 0),
+      notice_period_unit TEXT CHECK (notice_period_unit IS NULL OR notice_period_unit IN ('days', 'weeks', 'months')),
+      notice_period_text TEXT,
+      updated_date TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await execute(`
+    CREATE TABLE IF NOT EXISTS manager_salary_answers (
+      salary_answer_id SERIAL PRIMARY KEY,
+      manager_user_id INTEGER NOT NULL REFERENCES users(u_id) ON DELETE CASCADE,
+      currency TEXT NOT NULL CHECK (currency ~ '^[A-Z]{3}$'),
+      minimum_amount NUMERIC(14, 2),
+      maximum_amount NUMERIC(14, 2),
+      pay_period TEXT NOT NULL CHECK (pay_period IN ('hour', 'day', 'week', 'month', 'year')),
+      answer_text TEXT,
+      CHECK (minimum_amount IS NULL OR minimum_amount >= 0),
+      CHECK (maximum_amount IS NULL OR maximum_amount >= 0),
+      CHECK (minimum_amount IS NULL OR maximum_amount IS NULL OR maximum_amount >= minimum_amount)
+    )
+  `);
+  await execute(`
+    CREATE TABLE IF NOT EXISTS manager_custom_application_answers (
+      custom_answer_id SERIAL PRIMARY KEY,
+      manager_user_id INTEGER NOT NULL REFERENCES users(u_id) ON DELETE CASCADE,
+      topic TEXT NOT NULL,
+      question TEXT NOT NULL,
+      answer TEXT NOT NULL
+    )
+  `);
+  await execute(`
+    CREATE TABLE IF NOT EXISTS account_application_profiles (
+      account_user_id INTEGER PRIMARY KEY REFERENCES users(u_id) ON DELETE CASCADE,
+      first_name TEXT NOT NULL,
+      last_name TEXT NOT NULL,
+      resume_file_name TEXT,
+      resume_content BYTEA,
+      education JSONB NOT NULL DEFAULT '[]'::jsonb,
+      work_experience JSONB NOT NULL DEFAULT '[]'::jsonb,
+      updated_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CHECK (resume_content IS NULL OR octet_length(resume_content) <= 4194304),
+      CHECK ((resume_content IS NULL) = (resume_file_name IS NULL))
+    )
+  `);
+  await execute(`
+    CREATE TABLE IF NOT EXISTS application_attempts (
+      attempt_id SERIAL PRIMARY KEY,
+      manager_user_id INTEGER NOT NULL REFERENCES users(u_id) ON DELETE RESTRICT,
+      j_id INTEGER NOT NULL REFERENCES job_list(j_id) ON DELETE RESTRICT,
+      account_user_id INTEGER NOT NULL REFERENCES users(u_id) ON DELETE RESTRICT,
+      status TEXT NOT NULL CHECK (status IN ('in_progress', 'needs_review', 'submitted', 'failed')),
+      failure_reason TEXT,
+      manager_note TEXT,
+      started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      submitted_at TIMESTAMPTZ,
+      updated_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (j_id, account_user_id)
+    )
+  `);
+  await execute(`
+    INSERT INTO account_application_profiles (account_user_id, first_name, last_name)
+    SELECT u.u_id,
+           split_part(trim(u.name), ' ', 1),
+           COALESCE(NULLIF(substr(trim(u.name), length(split_part(trim(u.name), ' ', 1)) + 2), ''), split_part(trim(u.name), ' ', 1))
+    FROM users u
+    WHERE u.role = 'account'
+    ON CONFLICT (account_user_id) DO NOTHING
+  `);
+  await execute(`
+    INSERT INTO app_settings (setting_name, setting_value)
+    VALUES ('application_submission_mode', 'manual')
+    ON CONFLICT (setting_name) DO NOTHING
+  `);
+
   await execute(`
     CREATE TABLE IF NOT EXISTS prompts (
       prompt_id SERIAL PRIMARY KEY,
@@ -287,8 +370,21 @@ async function runMigrations(): Promise<void> {
   await execute('CREATE INDEX IF NOT EXISTS idx_interviews_bid ON interviews(b_id)');
   await execute('CREATE INDEX IF NOT EXISTS idx_interviews_caller ON interviews(caller_user_id)');
   await execute('CREATE INDEX IF NOT EXISTS idx_interviews_outcome_date ON interviews(outcome, interview_date)');
+  await execute('CREATE INDEX IF NOT EXISTS idx_manager_salary_answers_manager ON manager_salary_answers(manager_user_id)');
+  await execute('CREATE INDEX IF NOT EXISTS idx_manager_custom_answers_manager ON manager_custom_application_answers(manager_user_id)');
+  await execute('CREATE INDEX IF NOT EXISTS idx_account_application_profiles_account ON account_application_profiles(account_user_id)');
+  await execute('CREATE INDEX IF NOT EXISTS idx_application_attempts_manager ON application_attempts(manager_user_id, updated_date DESC)');
 
   await migrateSchema();
+  await execute(`
+    INSERT INTO application_attempts (
+      manager_user_id, j_id, account_user_id, status, submitted_at, started_at
+    )
+    SELECT b.manager_user_id, b.j_id, b.u_id, 'submitted', b.applied_date, b.applied_date
+    FROM bids b
+    JOIN job_list j ON j.j_id = b.j_id
+    ON CONFLICT (j_id, account_user_id) DO NOTHING
+  `);
 
   await execute(`
     DROP TABLE IF EXISTS
@@ -411,7 +507,11 @@ function runPgDump(destination: string): Promise<void> {
 }
 
 async function runLogicalBackup(destination: string): Promise<void> {
-  const tables = ['categories', 'users', 'job_list', 'bids', 'interviews', 'app_settings', 'prompts'] as const;
+  const tables = [
+    'categories', 'users', 'job_list', 'bids', 'interviews', 'app_settings', 'prompts',
+    'manager_application_profiles', 'manager_salary_answers', 'manager_custom_application_answers',
+    'account_application_profiles', 'application_attempts',
+  ] as const;
   const lines: string[] = [
     `-- ${APP_NAME} PostgreSQL logical backup`,
     `-- Generated: ${new Date().toISOString()}`,

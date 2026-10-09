@@ -36,6 +36,13 @@ router.put('/', async (req: NewSchemaAuthRequest, res: Response) => {
     return;
   }
   for (const [name, value] of Object.entries(parsed.data.settings)) {
+    if (name.trim() === 'application_submission_mode' && value !== 'manual' && value !== 'auto') {
+      res.status(400).json({
+        success: false,
+        message: 'Application submission mode must be manual or auto.',
+      });
+      return;
+    }
     await execute(
       `INSERT INTO app_settings (setting_name, setting_value, updated_by, updated_date)
        VALUES ($1, $2, $3, NOW())

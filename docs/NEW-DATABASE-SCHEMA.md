@@ -4,11 +4,11 @@ This document describes the new schema currently created by the database
 initialization code in `server/src/database/connection.ts`. It is the target
 model for the planned server and frontend rebuild.
 
-The schema currently creates seven tables: `users`, `bids`, `interviews`,
-`job_list`, `categories`, `app_settings`, and `prompts`. The proposed `news`
-table is deferred. These tables currently coexist with the legacy schema; the
-current application still uses the legacy tables, and no existing data has
-been migrated or deleted.
+The active new schema creates `users`, `bids`, `interviews`, `job_list`,
+`categories`, `app_settings`, `prompts`, Manager application-answer tables,
+Account application profiles, and Job–Account application attempts. Startup
+removes the retired legacy tables after migrations complete. The current
+public application uses the new schema.
 
 ## Relationship overview
 
@@ -67,6 +67,7 @@ in.
 | `birthday` | Date | Required for Account; nullable for other roles |
 | `phone` | Text | Required for Account; nullable for other roles |
 | `country` | Text | Required for Account; nullable for other roles |
+| `managed_country` | Text | Optional country managed by a Manager; used to scope that Manager's reusable application answers |
 | `city` | Text | Required for Account; nullable for other roles |
 | `blocked_date` | Timestamp with time zone | `NULL` means not blocked; when blocked, stores the block time |
 | `category_id` | Integer | Required for Account, references `categories.category_id`; must be `NULL` for other roles |
@@ -208,6 +209,41 @@ prompts through the Super-only database management screen.
 
 The table stores prompt content only; consuming these prompts in automation
 is outside the scope of this schema change.
+
+### Manager application answers
+
+`manager_application_profiles` stores a Manager's shared country-level
+answers for work authorization, authorization status and expiry, sponsorship,
+relocation, and notice period. `manager_salary_answers` stores multiple
+entries per Manager with a three-letter currency code, optional minimum and
+maximum amounts, pay period, and optional reusable text. Currency values are
+not converted automatically. `manager_custom_application_answers` stores
+Manager-defined reusable employer questions, answers, and topics.
+
+Managers can edit their own data; Super can manage any Manager's data.
+Dependent rows are deleted if their Manager is deleted. The global
+`application_submission_mode` setting is seeded as `manual`. The browser
+extension consumes it for supported Workable application forms: Manual fills
+and waits for Manager review, while Auto submits only when all required answers
+are known. CAPTCHA is never bypassed; uncertain outcomes remain in
+`needs_review` and are not retried.
+
+### Account application profiles
+
+`account_application_profiles` stores each Account's first and last name,
+durable PDF resume bytes and filename, structured education records, and
+structured work-experience records. Resume uploads are limited to PDF files up
+to 4 MB. Resume content is stored in PostgreSQL so it persists across Vercel
+deployments.
+
+### Job–Account application attempts
+
+`application_attempts` tracks one attempt per Job and Account, with statuses
+`in_progress`, `needs_review`, `submitted`, or `failed`, plus a failure reason,
+optional Manager note, and timestamps. Attempts are unique per Job–Account
+pair and terminal failures cannot be restarted. Successful submissions also
+create the corresponding `bids` row. Attempt history remains available on the
+Manager Bid Status page when an Account is later unassigned from the job.
 
 ## Relationship details
 
