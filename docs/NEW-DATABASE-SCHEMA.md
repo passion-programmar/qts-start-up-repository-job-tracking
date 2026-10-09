@@ -4,11 +4,11 @@ This document describes the new schema currently created by the database
 initialization code in `server/src/database/connection.ts`. It is the target
 model for the planned server and frontend rebuild.
 
-The schema currently creates six tables: `users`, `bids`, `interviews`,
-`job_list`, `categories`, and `app_settings`. The proposed `news` table is
-deferred. These tables currently coexist with the legacy schema; the current
-application still uses the legacy tables, and no existing data has been
-migrated or deleted.
+The schema currently creates seven tables: `users`, `bids`, `interviews`,
+`job_list`, `categories`, `app_settings`, and `prompts`. The proposed `news`
+table is deferred. These tables currently coexist with the legacy schema; the
+current application still uses the legacy tables, and no existing data has
+been migrated or deleted.
 
 ## Relationship overview
 
@@ -23,13 +23,12 @@ migrated or deleted.
 │       users       │────▶│    users    │
 │ parent_user_id    │     │ category_id │
 └──────┬───────┬────┘     └─────────────┘
-       │       │
-       │       └──────────────┐
-       ▼                      ▼
-┌──────────────┐       ┌──────────────┐
-│   job_list   │       │ app_settings │
-│ manager u_id │       │ updated_by   │
-└──────┬───────┘       └──────────────┘
+       │       ├──────────────┐
+       ▼       ▼              ▼
+┌──────────────┐       ┌──────────────┐       ┌──────────────┐
+│   job_list   │       │ app_settings │       │   prompts    │
+│ manager u_id │       │ updated_by   │       │ audit users   │
+└──────┬───────┘       └──────────────┘       └──────────────┘
        │ 1
        │
        │ many
@@ -192,6 +191,24 @@ these values; that permission is enforced by the server, not by the table.
 This table is named `app_settings` to avoid a collision with the legacy
 `settings` table while both schemas coexist.
 
+### `prompts`
+
+Stores reusable prompt templates. Super users can create, edit, and delete
+prompts through the Super-only database management screen.
+
+| Column | Type | Rules and purpose |
+|---|---|---|
+| `prompt_id` | Integer | Primary key, generated automatically |
+| `prompt_name` | Text | Required and unique name for the prompt |
+| `prompt_content` | Text | Required prompt template content; limited to 50,000 characters by the management API |
+| `created_by` | Integer | Optional foreign key to the User who created it; cleared if that User is deleted |
+| `updated_by` | Integer | Optional foreign key to the User who last updated it; cleared if that User is deleted |
+| `created_date` | Timestamp with time zone | Required; defaults to the creation time |
+| `updated_date` | Timestamp with time zone | Required; defaults to the creation time and updated when the prompt changes |
+
+The table stores prompt content only; consuming these prompts in automation
+is outside the scope of this schema change.
+
 ## Relationship details
 
 - **Users → Users:** one parent User can have multiple child Users; each
@@ -207,12 +224,13 @@ This table is named `app_settings` to avoid a collision with the legacy
   interview records.
 - **Users → App Settings:** one User may be recorded as the last updater of
   many settings.
+- **Users → Prompts:** one User may create or update many prompts.
 
 ## Array-based job assignments
 
-To keep the proposed schema to the requested six tables, `job_list` stores
-`category_ids` and `selected_account_u_ids` as PostgreSQL integer arrays
-instead of using separate join tables. PostgreSQL can index these arrays with
+To avoid separate job assignment tables, `job_list` stores `category_ids` and
+`selected_account_u_ids` as PostgreSQL integer arrays. PostgreSQL can index
+these arrays with
 GIN indexes, but it cannot enforce a foreign key for each array element.
 
 Therefore, server code must validate that:
@@ -292,10 +310,10 @@ legacy data:
 - `/api/v2/analytics` provides role-scoped bid and interview counts grouped by
   day, week, month, or year, with Manager and Account breakdowns for Admins and
   Super users.
-- `/api/v2/database` provides Super-only, read-only browsing of an explicit
-  allowlist of legacy and new-schema business tables, with search and
-  pagination. Credential hashes, settings, and application-session data are
-  deliberately excluded.
+- `/api/v2/database` provides Super-only browsing and record management for an
+  explicit allowlist of business tables, including prompts, with search and
+  pagination. Credential hashes and application-session data are deliberately
+  excluded.
 
 The role-based frontend now uses the versioned APIs for login, first-login
 password changes, staff and Account management, jobs, interviews, categories,

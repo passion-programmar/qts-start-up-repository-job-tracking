@@ -145,6 +145,21 @@ const TABLES = {
       updated_date: { type: 'datetime' },
     },
   },
+  prompts: {
+    label: 'Prompts',
+    description: 'Reusable prompt templates managed by Super users.',
+    columns: [
+      'prompt_id', 'prompt_name', 'prompt_content', 'created_by', 'updated_by',
+      'created_date', 'updated_date',
+    ],
+    searchColumns: ['prompt_name', 'prompt_content'],
+    orderBy: 'prompt_id',
+    primaryKey: 'prompt_id',
+    fields: {
+      prompt_name: { type: 'text', required: true, maxLength: 200 },
+      prompt_content: { type: 'text', required: true, maxLength: 50000 },
+    },
+  },
 } as const;
 
 type TableName = keyof typeof TABLES;
@@ -416,6 +431,10 @@ router.post('/tables/:table', async (req: NewSchemaAuthRequest, res: Response, n
       delete values.password;
     }
     if (table === 'app_settings') values.updated_by = req.newSchemaUser!.id;
+    if (table === 'prompts') {
+      values.created_by = req.newSchemaUser!.id;
+      values.updated_by = req.newSchemaUser!.id;
+    }
 
     const columns = Object.keys(values);
     const placeholders = columns.map((_column, index) => `$${index + 1}`);
@@ -490,6 +509,10 @@ router.put('/tables/:table/:id', async (req: NewSchemaAuthRequest, res: Response
       delete values.password;
     }
     if (table === 'app_settings') {
+      values.updated_by = req.newSchemaUser!.id;
+      values.updated_date = new Date().toISOString();
+    }
+    if (table === 'prompts') {
       values.updated_by = req.newSchemaUser!.id;
       values.updated_date = new Date().toISOString();
     }

@@ -264,6 +264,18 @@ async function runMigrations(): Promise<void> {
     )
   `);
 
+  await execute(`
+    CREATE TABLE IF NOT EXISTS prompts (
+      prompt_id SERIAL PRIMARY KEY,
+      prompt_name TEXT NOT NULL UNIQUE,
+      prompt_content TEXT NOT NULL,
+      created_by INTEGER REFERENCES users(u_id) ON DELETE SET NULL,
+      updated_by INTEGER REFERENCES users(u_id) ON DELETE SET NULL,
+      created_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_date TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
   await execute('CREATE INDEX IF NOT EXISTS idx_users_parent ON users(parent_user_id)');
   await execute('CREATE INDEX IF NOT EXISTS idx_users_role_parent ON users(role, parent_user_id)');
   await execute('CREATE INDEX IF NOT EXISTS idx_users_category ON users(category_id)');
@@ -399,7 +411,7 @@ function runPgDump(destination: string): Promise<void> {
 }
 
 async function runLogicalBackup(destination: string): Promise<void> {
-  const tables = ['categories', 'users', 'job_list', 'bids', 'interviews', 'app_settings'] as const;
+  const tables = ['categories', 'users', 'job_list', 'bids', 'interviews', 'app_settings', 'prompts'] as const;
   const lines: string[] = [
     `-- ${APP_NAME} PostgreSQL logical backup`,
     `-- Generated: ${new Date().toISOString()}`,

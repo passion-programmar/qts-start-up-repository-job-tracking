@@ -399,13 +399,14 @@ export function NewSchemaDatabaseView() {
                     checked={Boolean(recordDraft[field.name])}
                     onChange={(event) => updateValue(event.target.checked)}
                   />
-                ) : field.type === 'integer-array' ? (
+                ) : field.type === 'integer-array' || field.name === 'prompt_content' ? (
                   <textarea
                     id={`database-field-${field.name}`}
                     required={isRequired}
-                    value={String(recordDraft[field.name] ?? '[]')}
+                    value={String(recordDraft[field.name] ?? (field.type === 'integer-array' ? '[]' : ''))}
                     onChange={(event) => updateValue(event.target.value)}
-                    placeholder="[1, 2]"
+                    maxLength={field.maxLength}
+                    placeholder={field.type === 'integer-array' ? '[1, 2]' : undefined}
                   />
                 ) : (
                   <input
