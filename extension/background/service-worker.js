@@ -41,6 +41,8 @@ const capturePanelOpenPromisesByTab = new Map();
 let lastSourceTabId = null;
 const lastAutoOpenKeyByTab = new Map();
 const autoOpenCapturePanelTimersByTab = new Map();
+const autoOpenCapturePanelUrlsByTab = new Map();
+const openedCapturePanelUrlsByTab = new Map();
 const AUTO_OPEN_CAPTURE_DELAY_MS = 3000;
 const CAPTURE_PANEL_FILE = 'content/capture-panel.js';
 const detectGenerationByTab = new Map();
@@ -1430,6 +1432,9 @@ function maybeTrackAutoOpen(tabId, url) {
     const autoKey = `${tabId}:${url}`;
     if (lastAutoOpenKeyByTab.get(tabId) === autoKey) return;
     lastAutoOpenKeyByTab.set(tabId, autoKey);
+    if (isLikelyJobDetailUrl(url)) {
+      scheduleCapturePanelOpen(tabId, url, 0);
+    }
     const autoApplyArmed = await isAutoApplyArmed();
     if (autoApplyArmed) maybePrewarmCustomGptOnJobPage(url);
     await autoDetectJob(tabId, url, {
@@ -1441,22 +1446,28 @@ function maybeTrackAutoOpen(tabId, url) {
   });
 }
 
-function scheduleCapturePanelOpen(tabId, pageUrl) {
+function scheduleCapturePanelOpen(tabId, pageUrl, delayMs = AUTO_OPEN_CAPTURE_DELAY_MS) {
+  if (openedCapturePanelUrlsByTab.get(tabId) === pageUrl) return;
+  if (autoOpenCapturePanelUrlsByTab.get(tabId) === pageUrl) return;
+
   const existingTimer = autoOpenCapturePanelTimersByTab.get(tabId);
   if (existingTimer) clearTimeout(existingTimer);
+  autoOpenCapturePanelUrlsByTab.set(tabId, pageUrl);
 
   const timer = setTimeout(async () => {
     if (autoOpenCapturePanelTimersByTab.get(tabId) !== timer) return;
     autoOpenCapturePanelTimersByTab.delete(tabId);
+    autoOpenCapturePanelUrlsByTab.delete(tabId);
 
     try {
       const tab = await getTab(tabId);
       if (!tab?.id || tab.url !== pageUrl) return;
       await openCapturePanel(tabId);
+      openedCapturePanelUrlsByTab.set(tabId, pageUrl);
     } catch (error) {
       console.warn('[QTS_Startup] Could not open the detected job panel:', error);
     }
-  }, AUTO_OPEN_CAPTURE_DELAY_MS);
+  }, delayMs);
 
   autoOpenCapturePanelTimersByTab.set(tabId, timer);
 }
@@ -1465,6 +1476,7 @@ function cancelScheduledCapturePanelOpen(tabId) {
   const timer = autoOpenCapturePanelTimersByTab.get(tabId);
   if (timer) clearTimeout(timer);
   autoOpenCapturePanelTimersByTab.delete(tabId);
+  autoOpenCapturePanelUrlsByTab.delete(tabId);
 }
 
 chrome.runtime.onConnect.addListener((port) => {
@@ -1924,6 +1936,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.status === 'loading') {
     lastAutoOpenKeyByTab.delete(tabId);
     cancelScheduledCapturePanelOpen(tabId);
+    openedCapturePanelUrlsByTab.delete(tabId);
     lastAutoPipelineKeyByTab.delete(tabId);
     lastApplyMethodDetectKeyByTab.delete(tabId);
     return;
@@ -1968,6 +1981,7 @@ chrome.webNavigation.onHistoryStateUpdated.addListener((details) => {
 chrome.tabs.onRemoved.addListener((tabId) => {
   lastAutoOpenKeyByTab.delete(tabId);
   cancelScheduledCapturePanelOpen(tabId);
+  openedCapturePanelUrlsByTab.delete(tabId);
   capturePanelOpenPromisesByTab.delete(tabId);
   lastAutoPipelineKeyByTab.delete(tabId);
   lastApplyMethodDetectKeyByTab.delete(tabId);

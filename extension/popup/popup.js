@@ -751,9 +751,21 @@ async function showPageNotice(tabId, message, toastType = 'info', options = {}) 
     toastType,
     durationMs: options.durationMs,
     closeTabAfterMs: options.closeTabAfterMs,
+    alertId: options.alertId,
   });
   if (!response?.ok) {
     throw new Error(response?.error || 'Could not display the notice on the job page.');
+  }
+}
+
+async function clearPageNotice(tabId, alertId) {
+  await ensurePageNotificationHost(tabId);
+  const response = await chrome.tabs.sendMessage(tabId, {
+    type: 'QTS_CLEAR_PAGE_ALERT',
+    alertId,
+  });
+  if (!response?.ok) {
+    throw new Error(response?.error || 'Could not clear the page notice.');
   }
 }
 
@@ -781,18 +793,22 @@ async function checkCurrentJobUrl(url) {
 async function handleGetJdUrlStatus(tabId, url) {
   const status = await checkCurrentJobUrl(url);
   if (status.alreadyApplied) {
+    await clearPageNotice(tabId, 'job-url-status');
     await showPageNotice(
       tabId,
       'You have already applied to this job.',
       'warn',
-      { durationMs: 3000, closeTabAfterMs: 3000 }
+      { durationMs: 3000, closeTabAfterMs: 3000, alertId: 'job-url-status' }
     );
     return { stop: true, job: null };
   }
 
   if (!status.job) return { stop: false, job: null };
 
-  await showPageNotice(tabId, 'This job is already on your list.', 'info');
+  await clearPageNotice(tabId, 'job-url-status');
+  await showPageNotice(tabId, 'This job is already on your list.', 'info', {
+    alertId: 'job-url-status',
+  });
   if (status.job.status === 'failed') {
     await showPageNotice(
       tabId,
@@ -1633,12 +1649,19 @@ async function loadCurrentTab({ preferCache = false, allowExtract = true } = {})
     const getJdActive = document.getElementById('btn-get-jd')?.classList.contains('is-selected');
     let checkedJob = null;
     const checkedJobUrlKeys = new Set();
+    let showedNewJobNotice = false;
 
     if (getJdActive && /^https?:\/\//i.test(currentTabUrl)) {
       const result = await handleGetJdUrlStatus(tab.id, currentTabUrl);
       checkedJobUrlKeys.add(normalizeJobUrl(currentTabUrl));
       if (result.stop) return;
       checkedJob = result.job;
+      if (!checkedJob) {
+        await showPageNotice(tab.id, 'New job', 'new-job', {
+          alertId: 'job-url-status',
+        });
+        showedNewJobNotice = true;
+      }
       if (checkedJob) {
         loadExistingJob(checkedJob, { silent: true });
         renderCandidates();
@@ -1701,8 +1724,10 @@ async function loadCurrentTab({ preferCache = false, allowExtract = true } = {})
           break;
         }
       }
-      if (!checkedJob && checkedJobUrlKeys.size > 0) {
-        await showPageNotice(tab.id, 'New job', 'new-job');
+      if (!checkedJob && checkedJobUrlKeys.size > 0 && !showedNewJobNotice) {
+        await showPageNotice(tab.id, 'New job', 'new-job', {
+          alertId: 'job-url-status',
+        });
       }
     }
     if (!getJdActive && resolvedJobUrls.some((url) => url.startsWith('http'))) {
@@ -1963,6 +1988,7 @@ async function loadApplyTemplateForTab(tabId) {
 
 function updateJobSummary() {
   const summary = document.getElementById('job-summary');
+  if (!summary) return;
   summary.classList.remove('hidden');
   document.getElementById('summary-source').textContent = currentSource || '—';
   updateApplyTemplateSummary();
