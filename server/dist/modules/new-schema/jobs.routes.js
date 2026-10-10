@@ -778,29 +778,29 @@ router.delete('/:id', async (req, res) => {
         return;
     }
     const deleted = await (0, connection_1.withTransaction)(async (tx) => {
-        const existing = await tx.query('SELECT j_id, status FROM job_list WHERE j_id = $1 AND u_id = $2 FOR UPDATE', [id, user.id]);
+        const existing = await tx.query(`SELECT job.j_id, job.status, assignment.account_user_id
+       FROM job_list job
+       LEFT JOIN job_account_assignments assignment ON assignment.j_id = job.j_id
+       WHERE job.j_id = $1 AND job.u_id = $2
+       FOR UPDATE OF job`, [id, user.id]);
         if (!existing.rows.length)
             return null;
         const row = existing.rows[0];
-        if (row.status !== 'todo')
-            return { blocked: true };
+        if (row.status === 'processing' && row.account_user_id !== null) {
+            await tx.query('DELETE FROM account_apply_runs WHERE account_user_id = $1 AND manager_user_id = $2', [row.account_user_id, user.id]);
+        }
         await tx.query('DELETE FROM job_list WHERE j_id = $1 AND u_id = $2', [id, user.id]);
-        return { blocked: false };
+        return { wasProcessing: row.status === 'processing' };
     });
     if (deleted === null) {
         res.status(404).json({ success: false, message: 'Job not found in your list.' });
         return;
     }
-    if (deleted.blocked) {
-        res.status(409).json({
-            success: false,
-            message: 'This Account row cannot be removed because its status is not todo.',
-        });
-        return;
-    }
     res.json({
         success: true,
-        message: 'Account-specific job row removed from your active job list.',
+        message: deleted.wasProcessing
+            ? 'Account-specific job row deleted and its active Apply run released. Close any already-open application tab.'
+            : 'Account-specific job row deleted from your job list.',
     });
 });
 exports.default = router;

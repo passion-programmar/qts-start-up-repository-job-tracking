@@ -46,6 +46,45 @@ router.get('/', async (req, res) => {
     const bids = await (0, connection_1.queryAll)(query, params);
     res.json({ success: true, bids });
 });
+router.delete('/:id', async (req, res) => {
+    const user = req.newSchemaUser;
+    if (user.role !== 'manager') {
+        res.status(403).json({ success: false, message: 'Only Managers can delete submitted applications.' });
+        return;
+    }
+    const bidId = Number.parseInt(req.params.id, 10);
+    if (!Number.isSafeInteger(bidId) || bidId <= 0) {
+        res.status(400).json({ success: false, message: 'Invalid Bid ID.' });
+        return;
+    }
+    const deleted = await (0, connection_1.withTransaction)(async (tx) => {
+        const existing = await tx.query(`SELECT b.b_id
+       FROM bids b
+       JOIN users account ON account.u_id = b.u_id
+         AND account.role = 'account' AND account.parent_user_id = $2
+       WHERE b.b_id = $1 AND b.manager_user_id = $2
+       FOR UPDATE OF b`, [bidId, user.id]);
+        if (!existing.rows.length)
+            return null;
+        const interviews = await tx.query('DELETE FROM interviews WHERE b_id = $1 RETURNING i_id', [bidId]);
+        await tx.query('DELETE FROM bids WHERE b_id = $1 AND manager_user_id = $2', [bidId, user.id]);
+        return { interviewsDeleted: interviews.rowCount ?? interviews.rows.length };
+    });
+    if (!deleted) {
+        res.status(404).json({ success: false, message: 'Submitted application not found in your Accounts.' });
+        return;
+    }
+    logger_1.logger.info('Submitted application deleted by Manager', {
+        bidId,
+        managerId: user.id,
+        interviewsDeleted: deleted.interviewsDeleted,
+    });
+    res.json({
+        success: true,
+        message: 'Submitted application deleted.',
+        interviewsDeleted: deleted.interviewsDeleted,
+    });
+});
 router.post('/', async (req, res) => {
     const user = req.newSchemaUser;
     if (user.role !== 'manager') {

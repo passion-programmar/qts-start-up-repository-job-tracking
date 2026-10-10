@@ -284,15 +284,11 @@ paths:
     post:
       operationId: submitTaskPackage
       summary: Submit grounded answers and any requested document data
-      description: |
-        Submit answers for this page using exact stableFieldIds. Omit guesses and
-        report unsupported or unclear questions in unresolvedFields. Include resume
-        or coverLetter JSON only when that file field is on this page; the server
-        renders requested documents as PDFs. If unresolvedFields is non-empty, the
-        task remains waiting_for_gpt; discuss missing facts with the Manager and
-        resubmit this task after they provide confirmed information. The extension
-        applies the package only after unresolvedFields is empty. Never submit the
-        job-site application.
+      description: >
+        Submit answers using exact stableFieldIds. Report missing or unclear fields
+        as unresolvedFields; discuss them with the Manager and resubmit this task.
+        Include resume or coverLetter JSON only when requested; QTS renders PDFs.
+        The extension fills resolved answers. Never submit the job application.
       parameters:
         - name: taskId
           in: path

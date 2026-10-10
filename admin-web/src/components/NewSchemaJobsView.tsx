@@ -100,13 +100,18 @@ export function NewSchemaJobsView() {
 
   async function removeJob(job: NewSchemaJob) {
     if (deletingJobId !== null) return;
+    const accountName = job.selected_accounts?.[0]?.name || 'this Account';
+    const activeRunWarning = job.status === 'processing'
+      ? '\n\nThis will cancel the active Apply run. Close any application tab that is already open.'
+      : '';
     const confirmed = window.confirm(
-      `Remove "${job.title}" for ${job.selected_accounts?.[0]?.name || 'this Account'} from your active job list?`
+      `Delete "${job.title}" for ${accountName} from your job list?${activeRunWarning}`
     );
     if (!confirmed) return;
 
     setDeletingJobId(job.id);
     setError(null);
+    setNotice(null);
     try {
       const result = await api<{ success: boolean; message?: string }>(
         'DELETE',
@@ -117,6 +122,7 @@ export function NewSchemaJobsView() {
         return;
       }
       setJobs((current) => current.filter((item) => item.id !== job.id));
+      setNotice(result.message || 'Job deleted.');
     } catch (removeError) {
       setError(removeError instanceof Error ? removeError.message : 'Could not remove the job from your list.');
     } finally {
@@ -251,10 +257,10 @@ export function NewSchemaJobsView() {
                         <button
                           className="btn btn-danger btn-sm"
                           type="button"
-                          disabled={deletingJobId !== null || savingStatusJobId !== null || editingJobId !== null || job.status !== 'todo'}
+                          disabled={deletingJobId !== null || savingStatusJobId !== null || editingJobId !== null}
                           onClick={() => { void removeJob(job); }}
                         >
-                          {deletingJobId === job.id ? 'Removing…' : 'Delete'}
+                          {deletingJobId === job.id ? 'Deleting…' : 'Delete'}
                         </button>
                       </td>
                     </tr>
