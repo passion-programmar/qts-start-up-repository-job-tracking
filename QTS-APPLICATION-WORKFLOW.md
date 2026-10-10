@@ -115,7 +115,8 @@ When the extension pauses for missing facts, manual review, or a page-level issu
 | Read Workable question names, choice groups, custom-select controls, and collection controls | Implemented |
 | Read-only Workable study report for visible steps (question, section, element type, required state, choices) | Implemented; temporary to the browser session |
 | Save or share reviewed platform templates | Not implemented; study reports do not become templates automatically |
-| Keep saved-fact questions out of GPT and pause when no approved answer exists | Implemented |
+| Send current-step questions to the assigned GPT with Account custom facts and Manager answers; prefer exact saved answers while filling | Implemented |
+| Keep an unresolved GPT package open while the Manager confirms missing facts in the same chat | Implemented |
 | Fill verified candidate fields | Implemented |
 | Create an application session and GPT task | Implemented |
 | Open/reuse pinned Custom GPT tab | Implemented or in active development |
@@ -810,7 +811,7 @@ Do not store critical workflow state only inside the popup because the popup clo
 | Package saved but PDF missing | Rendering or filesystem failure | Check server logs, schema validation, output directory, and permissions |
 | PDF ready but upload failed | Job modal closed, file control changed, or site blocked programmatic assignment | Reopen form, rescan field, retry manual package application |
 | Workable reports an option label or technical ID as a required question | The form exposes the question through its ARIA group/label, or uses a separate required proxy for a custom select | Reload the extension on the application tab and rescan; unresolved personal facts still require an approved profile/custom answer or human review |
-| Apply pauses for a saved-fact answer | The Account profile has no exact approved answer or has ambiguous salary settings | Enter the answer manually in Workable, then continue to the next step or submit manually |
+| Apply waits for an unresolved GPT answer | A required fact is missing or ambiguous | Discuss the fact in the assigned GPT chat; it resubmits the package and QTS continues when all unresolved questions are answered |
 | Popup closed and progress disappeared | Workflow state was stored only in popup | Move orchestration to service worker/server and show state again when popup opens |
 | GPT tab became inactive and stopped | Chrome froze/discarded tab or ChatGPT session expired | Reload pinned tab and resume task |
 | Marketing box remains unchecked | Correct consent behavior | Account chooses manually |

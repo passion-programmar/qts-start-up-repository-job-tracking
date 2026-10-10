@@ -367,7 +367,7 @@ async function runMigrations(): Promise<void> {
       authorization_status TEXT,
       sponsorship_required BOOLEAN,
       authorization_expires_on DATE,
-      relocation_willing BOOLEAN,
+      relocation_willing BOOLEAN DEFAULT FALSE,
       relocation_details TEXT,
       notice_period_value INTEGER CHECK (notice_period_value IS NULL OR notice_period_value >= 0),
       notice_period_unit TEXT CHECK (notice_period_unit IS NULL OR notice_period_unit IN ('days', 'weeks', 'months')),
@@ -375,6 +375,27 @@ async function runMigrations(): Promise<void> {
       updated_date TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+  await execute(`
+    CREATE TABLE IF NOT EXISTS qts_schema_migrations (
+      migration_key TEXT PRIMARY KEY,
+      applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await withTransaction(async (tx) => {
+    const migration = await tx.query(
+      `INSERT INTO qts_schema_migrations (migration_key)
+       VALUES ('20261010_manager_global_profile_scope')
+       ON CONFLICT (migration_key) DO NOTHING
+       RETURNING migration_key`
+    );
+    if (!migration.rows.length) return;
+    await tx.query(`
+      UPDATE manager_application_profiles
+      SET authorization_expires_on = NULL,
+          relocation_details = NULL,
+          relocation_willing = FALSE
+    `);
+  });
   await execute(`
     CREATE TABLE IF NOT EXISTS manager_salary_answers (
       salary_answer_id SERIAL PRIMARY KEY,
@@ -407,10 +428,15 @@ async function runMigrations(): Promise<void> {
       resume_content BYTEA,
       education JSONB NOT NULL DEFAULT '[]'::jsonb,
       work_experience JSONB NOT NULL DEFAULT '[]'::jsonb,
+      custom_fields JSONB NOT NULL DEFAULT '[]'::jsonb,
       updated_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       CHECK (resume_content IS NULL OR octet_length(resume_content) <= 4194304),
       CHECK ((resume_content IS NULL) = (resume_file_name IS NULL))
     )
+  `);
+  await execute(`
+    ALTER TABLE account_application_profiles
+    ADD COLUMN IF NOT EXISTS custom_fields JSONB NOT NULL DEFAULT '[]'::jsonb
   `);
   await execute(`
     CREATE TABLE IF NOT EXISTS gpt_application_tasks (

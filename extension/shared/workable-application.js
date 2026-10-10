@@ -143,8 +143,9 @@
       );
     }
 
-    const timeoutAt = handoffUnconfirmed ? Number.POSITIVE_INFINITY : Date.now() + 240000;
+    let timeoutAt = handoffUnconfirmed ? Number.POSITIVE_INFINITY : Date.now() + 240000;
     let lastStatusWarningAt = 0;
+    let unresolvedNoticeSent = false;
     while (Date.now() < timeoutAt) {
       let status;
       try {
@@ -165,6 +166,19 @@
       if (status.status === 'ready') return status.package || {};
       if (status.status === 'failed' || status.status === 'completed') {
         throw new Error(`Custom GPT task ended unexpectedly (${status.status}).`);
+      }
+      const unresolvedFields = status.package?.unresolvedFields || [];
+      if (status.status === 'waiting_for_gpt' && unresolvedFields.length) {
+        timeoutAt = Number.POSITIVE_INFINITY;
+        if (!unresolvedNoticeSent) {
+          const questions = unresolvedFields.map((field) => field.question).filter(Boolean);
+          notify(
+            tabId,
+            `The Custom GPT needs confirmed information for: ${questions.join('; ') || 'some application fields'}. Discuss the missing details in the assigned GPT chat; QTS will continue when it submits the completed answers.`,
+            'warn'
+          );
+          unresolvedNoticeSent = true;
+        }
       }
       await delay(handoffUnconfirmed ? 5000 : 2500);
     }
@@ -279,7 +293,7 @@
     }
 
     const profileFactFields = page.fields.filter(isSavedFactQuestion);
-    const gptFields = page.fields.filter((field) => !isSavedFactQuestion(field));
+    const gptFields = page.fields;
     const needsGptPackage = gptFields.length > 0
       || page.fields.some((field) => field.fieldType === 'file');
     const taskId = run.taskId;

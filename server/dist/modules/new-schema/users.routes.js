@@ -34,11 +34,16 @@ const workExperienceSchema = zod_1.z.object({
     currentRole: zod_1.z.boolean(),
     description: zod_1.z.string().trim().max(3000).nullable(),
 });
+const accountCustomFieldSchema = zod_1.z.object({
+    fieldName: zod_1.z.string().trim().min(1).max(100),
+    value: zod_1.z.string().trim().min(1).max(4000),
+}).strict();
 const accountApplicationProfileSchema = zod_1.z.object({
     firstName: zod_1.z.string().trim().min(1).max(100),
     lastName: zod_1.z.string().trim().min(1).max(100),
     education: zod_1.z.array(educationSchema).max(20).default([]),
     workExperience: zod_1.z.array(workExperienceSchema).max(30).default([]),
+    customFields: zod_1.z.array(accountCustomFieldSchema).max(100).default([]),
 });
 const accountProfileSchema = accountApplicationProfileSchema.extend({
     email: zod_1.z.string().email(),
@@ -63,7 +68,7 @@ const staffColumns = `
 const accountColumns = `
   u.u_id, u.username, u.name, u.role, u.parent_user_id, u.email, u.address, u.sex,
   u.birthday, u.phone, u.country, u.city, u.category_id, u.blocked_date,
-  app.first_name, app.last_name, app.education, app.work_experience,
+  app.first_name, app.last_name, app.education, app.work_experience, app.custom_fields,
   (app.resume_content IS NOT NULL) AS has_resume, app.resume_file_name
 `;
 function accountSelect(where) {
@@ -179,10 +184,11 @@ router.post('/', async (req, res) => {
             ]);
             const created = result.rows[0];
             await tx.query(`INSERT INTO account_application_profiles (
-          account_user_id, first_name, last_name, education, work_experience
-        ) VALUES ($1, $2, $3, $4::jsonb, $5::jsonb)`, [
+          account_user_id, first_name, last_name, education, work_experience, custom_fields
+        ) VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb)`, [
                 created.u_id, data.firstName, data.lastName,
                 JSON.stringify(data.education), JSON.stringify(data.workExperience),
+                JSON.stringify(data.customFields),
             ]);
             return created;
         });
@@ -254,7 +260,7 @@ router.put('/:id', async (req, res) => {
                 return;
             }
         }
-        const currentProfile = await (0, connection_1.queryOne)('SELECT first_name, last_name, education, work_experience FROM account_application_profiles WHERE account_user_id = $1', [userId]);
+        const currentProfile = await (0, connection_1.queryOne)('SELECT first_name, last_name, education, work_experience, custom_fields FROM account_application_profiles WHERE account_user_id = $1', [userId]);
         const firstName = data.firstName ?? currentProfile?.first_name;
         const lastName = data.lastName ?? currentProfile?.last_name;
         if (!firstName || !lastName) {
@@ -271,17 +277,19 @@ router.put('/:id', async (req, res) => {
                 await tx.query(`UPDATE users SET ${assignments.join(', ')} WHERE u_id = $${values.length}`, values);
             }
             await tx.query(`INSERT INTO account_application_profiles (
-          account_user_id, first_name, last_name, education, work_experience
-        ) VALUES ($1, $2, $3, $4::jsonb, $5::jsonb)
+          account_user_id, first_name, last_name, education, work_experience, custom_fields
+        ) VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb)
         ON CONFLICT (account_user_id) DO UPDATE SET
           first_name = EXCLUDED.first_name,
           last_name = EXCLUDED.last_name,
           education = EXCLUDED.education,
           work_experience = EXCLUDED.work_experience,
+          custom_fields = EXCLUDED.custom_fields,
           updated_date = NOW()`, [
                 userId, firstName, lastName,
                 JSON.stringify(data.education ?? currentProfile?.education ?? []),
                 JSON.stringify(data.workExperience ?? currentProfile?.work_experience ?? []),
+                JSON.stringify(data.customFields ?? currentProfile?.custom_fields ?? []),
             ]);
         });
         const account = await (0, connection_1.queryOne)(accountSelect('WHERE u.u_id = $1'), [userId]);

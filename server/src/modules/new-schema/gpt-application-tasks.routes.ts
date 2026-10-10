@@ -190,11 +190,11 @@ router.post('/jobs/:jobId', requireNewSchemaAuth, async (req: NewSchemaAuthReque
             account.email, account.phone, account.address, account.city,
             account.country, account.sex, account.birthday,
             profile.first_name, profile.last_name, profile.resume_content,
-            profile.education, profile.work_experience,
+            profile.education, profile.work_experience, profile.custom_fields,
             manager.managed_country, manager_profile.authorized_to_work,
             manager_profile.authorization_status, manager_profile.sponsorship_required,
-            manager_profile.authorization_expires_on, manager_profile.relocation_willing,
-            manager_profile.relocation_details, manager_profile.notice_period_value,
+            COALESCE(manager_profile.relocation_willing, FALSE) AS relocation_willing,
+            manager_profile.notice_period_value,
             manager_profile.notice_period_unit, manager_profile.notice_period_text
      FROM job_list job
      JOIN job_account_assignments assignment ON assignment.j_id = job.j_id
@@ -261,15 +261,14 @@ router.post('/jobs/:jobId', requireNewSchemaAuth, async (req: NewSchemaAuthReque
       birthday: context.birthday,
       education: context.education || [],
       workExperience: context.work_experience || [],
+      customFields: context.custom_fields || [],
     },
     managerAnswers: {
       managedCountry: context.managed_country,
       authorizedToWork: context.authorized_to_work,
       authorizationStatus: context.authorization_status,
       sponsorshipRequired: context.sponsorship_required,
-      authorizationExpiresOn: context.authorization_expires_on,
       relocationWilling: context.relocation_willing,
-      relocationDetails: context.relocation_details,
       noticePeriodValue: context.notice_period_value,
       noticePeriodUnit: context.notice_period_unit,
       noticePeriodText: context.notice_period_text,
@@ -417,6 +416,7 @@ router.get('/:taskId/context', requireGptActionKey, async (req, res: Response) =
     managerAnswers,
     resumeText: task.resume_text || '',
     previousAnswers: task.answers,
+    previousUnresolvedFields: task.package.unresolvedFields || [],
     page,
   });
 });
@@ -567,18 +567,19 @@ router.post('/:taskId/package', requireGptActionKey, async (req, res: Response) 
       [taskId, document.type, document.fileName, document.content]
     );
   }
+  const nextStatus = unresolved.length ? 'waiting_for_gpt' : 'ready';
   await execute(
     `UPDATE gpt_application_tasks
-     SET package = $2::jsonb, answers = $3::jsonb, status = 'ready',
+     SET package = $2::jsonb, answers = $3::jsonb, status = $4,
          last_activity_at = NOW(), updated_at = NOW(),
          resume_text_expires_at = CASE WHEN resume_text IS NULL THEN NULL ELSE NOW() + INTERVAL '30 days' END
      WHERE task_id = $1 AND status = 'waiting_for_gpt'`,
-    [taskId, JSON.stringify(packageData), JSON.stringify(allAnswers)]
+    [taskId, JSON.stringify(packageData), JSON.stringify(allAnswers), nextStatus]
   );
   res.json({
     success: true,
     taskId,
-    status: 'ready',
+    status: nextStatus,
     pageNumber: task.page_number,
     answersStored: parsed.data.answers.length,
     unresolvedCount: unresolved.length,

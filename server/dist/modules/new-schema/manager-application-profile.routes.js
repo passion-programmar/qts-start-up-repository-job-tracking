@@ -11,9 +11,7 @@ const profileSchema = zod_1.z.object({
     authorizedToWork: zod_1.z.boolean().nullable(),
     authorizationStatus: zod_1.z.string().trim().max(500).nullable(),
     sponsorshipRequired: zod_1.z.boolean().nullable(),
-    authorizationExpiresOn: zod_1.z.string().date().nullable(),
     relocationWilling: zod_1.z.boolean().nullable(),
-    relocationDetails: zod_1.z.string().trim().max(2000).nullable(),
     noticePeriodValue: zod_1.z.number().int().min(0).max(10000).nullable(),
     noticePeriodUnit: zod_1.z.enum(['days', 'weeks', 'months']).nullable(),
     noticePeriodText: zod_1.z.string().trim().max(1000).nullable(),
@@ -47,8 +45,7 @@ function resolveManagerId(req, res) {
 }
 async function readProfile(managerId) {
     const profile = await (0, connection_1.queryOne)(`SELECT u.managed_country, p.authorized_to_work, p.authorization_status,
-            p.sponsorship_required, p.authorization_expires_on,
-            p.relocation_willing, p.relocation_details,
+            p.sponsorship_required, COALESCE(p.relocation_willing, FALSE) AS relocation_willing,
             p.notice_period_value, p.notice_period_unit, p.notice_period_text
      FROM users u
      LEFT JOIN manager_application_profiles p ON p.manager_user_id = u.u_id
@@ -88,24 +85,21 @@ router.put('/', async (req, res) => {
         await tx.query(`UPDATE users SET managed_country = $1 WHERE u_id = $2 AND role = 'manager'`, [data.managedCountry || null, managerId]);
         await tx.query(`INSERT INTO manager_application_profiles (
         manager_user_id, authorized_to_work, authorization_status,
-        sponsorship_required, authorization_expires_on, relocation_willing,
-        relocation_details, notice_period_value, notice_period_unit,
+        sponsorship_required, relocation_willing, notice_period_value, notice_period_unit,
         notice_period_text, updated_date
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
       ON CONFLICT (manager_user_id) DO UPDATE SET
         authorized_to_work = EXCLUDED.authorized_to_work,
         authorization_status = EXCLUDED.authorization_status,
         sponsorship_required = EXCLUDED.sponsorship_required,
-        authorization_expires_on = EXCLUDED.authorization_expires_on,
         relocation_willing = EXCLUDED.relocation_willing,
-        relocation_details = EXCLUDED.relocation_details,
         notice_period_value = EXCLUDED.notice_period_value,
         notice_period_unit = EXCLUDED.notice_period_unit,
         notice_period_text = EXCLUDED.notice_period_text,
         updated_date = NOW()`, [
             managerId, data.authorizedToWork, data.authorizationStatus || null,
-            data.sponsorshipRequired, data.authorizationExpiresOn, data.relocationWilling,
-            data.relocationDetails || null, data.noticePeriodValue, data.noticePeriodUnit,
+            data.sponsorshipRequired, data.relocationWilling ?? false,
+            data.noticePeriodValue, data.noticePeriodUnit,
             data.noticePeriodText || null,
         ]);
         await tx.query('DELETE FROM manager_salary_answers WHERE manager_user_id = $1', [managerId]);

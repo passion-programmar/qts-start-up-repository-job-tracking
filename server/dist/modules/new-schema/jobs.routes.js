@@ -418,7 +418,7 @@ router.get('/:id/application-context', async (req, res) => {
               account.country, account.sex, account.birthday,
               profile.first_name, profile.last_name, profile.resume_file_name,
               (profile.resume_content IS NOT NULL) AS has_resume,
-              profile.education, profile.work_experience
+              profile.education, profile.work_experience, profile.custom_fields
        FROM job_account_assignments assignment
        JOIN users account ON account.u_id = assignment.account_user_id
          AND account.role = 'account' AND account.parent_user_id = $2
@@ -426,8 +426,7 @@ router.get('/:id/application-context', async (req, res) => {
        LEFT JOIN account_application_profiles profile ON profile.account_user_id = account.u_id
        WHERE assignment.j_id = $1`, [jobId, managerId]),
         (0, connection_1.queryOne)(`SELECT u.managed_country, p.authorized_to_work, p.authorization_status,
-              p.sponsorship_required, p.authorization_expires_on,
-              p.relocation_willing, p.relocation_details,
+              p.sponsorship_required, COALESCE(p.relocation_willing, FALSE) AS relocation_willing,
               p.notice_period_value, p.notice_period_unit, p.notice_period_text
        FROM users u
        LEFT JOIN manager_application_profiles p ON p.manager_user_id = u.u_id

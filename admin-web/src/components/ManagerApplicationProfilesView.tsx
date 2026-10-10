@@ -21,9 +21,7 @@ type ProfileForm = {
   authorizedToWork: BooleanChoice;
   authorizationStatus: string;
   sponsorshipRequired: BooleanChoice;
-  authorizationExpiresOn: string;
   relocationWilling: BooleanChoice;
-  relocationDetails: string;
   noticePeriodValue: string;
   noticePeriodUnit: '' | 'days' | 'weeks' | 'months';
   noticePeriodText: string;
@@ -36,9 +34,7 @@ const emptyProfile = (): ProfileForm => ({
   authorizedToWork: '',
   authorizationStatus: '',
   sponsorshipRequired: '',
-  authorizationExpiresOn: '',
   relocationWilling: '',
-  relocationDetails: '',
   noticePeriodValue: '',
   noticePeriodUnit: '',
   noticePeriodText: '',
@@ -85,11 +81,9 @@ export function ManagerApplicationProfilesView() {
       authorizedToWork: booleanChoice(source.authorized_to_work),
       authorizationStatus: String(source.authorization_status || ''),
       sponsorshipRequired: booleanChoice(source.sponsorship_required),
-      authorizationExpiresOn: source.authorization_expires_on
-        ? String(source.authorization_expires_on).slice(0, 10)
-        : '',
-      relocationWilling: booleanChoice(source.relocation_willing),
-      relocationDetails: String(source.relocation_details || ''),
+      relocationWilling: source.relocation_willing == null
+        ? 'false'
+        : booleanChoice(source.relocation_willing),
       noticePeriodValue: source.notice_period_value == null ? '' : String(source.notice_period_value),
       noticePeriodUnit: (source.notice_period_unit || '') as ProfileForm['noticePeriodUnit'],
       noticePeriodText: String(source.notice_period_text || ''),
@@ -132,9 +126,7 @@ export function ManagerApplicationProfilesView() {
         authorizedToWork: nullableBoolean(profile.authorizedToWork),
         authorizationStatus: profile.authorizationStatus || null,
         sponsorshipRequired: nullableBoolean(profile.sponsorshipRequired),
-        authorizationExpiresOn: profile.authorizationExpiresOn || null,
         relocationWilling: nullableBoolean(profile.relocationWilling),
-        relocationDetails: profile.relocationDetails || null,
         noticePeriodValue: profile.noticePeriodValue === '' ? null : Number(profile.noticePeriodValue),
         noticePeriodUnit: profile.noticePeriodUnit || null,
         noticePeriodText: profile.noticePeriodText || null,
@@ -176,7 +168,8 @@ export function ManagerApplicationProfilesView() {
           <span className="application-profile__eyebrow">MANAGER WORKSPACE</span>
           <h2>Reusable application answers</h2>
           <p>
-            Save details you use frequently. Only reuse an answer when it accurately applies to the account and job.
+            These answers are shared with all Accounts assigned to you. Add only answers you want reused globally;
+            candidate-specific facts belong in each Account profile.
           </p>
         </div>
       </header>
@@ -212,31 +205,17 @@ export function ManagerApplicationProfilesView() {
               </div>
               {yesNoSelect('sponsorship-required', 'Sponsorship required', profile.sponsorshipRequired,
                 (value) => update('sponsorshipRequired', value))}
-              <div className="form-group application-profile__field">
-                <label htmlFor="authorization-expiry">Authorization expiration date (optional)</label>
-                <input id="authorization-expiry" type="date" value={profile.authorizationExpiresOn}
-                  onChange={(event) => update('authorizationExpiresOn', event.target.value)} />
-              </div>
             </div>
           </section>
 
           <section className="application-profile__section" aria-labelledby="profile-relocation-title">
             <div className="application-profile__section-heading">
               <h3 id="profile-relocation-title">Relocation</h3>
-              <p>Describe preferences or constraints that help answer employer questions.</p>
+              <p>This global answer is shared with all Accounts assigned to you.</p>
             </div>
             <div className="application-profile__grid">
               {yesNoSelect('relocation-willing', 'Willing to relocate', profile.relocationWilling,
                 (value) => update('relocationWilling', value))}
-              <div className="form-group application-profile__field application-profile__field--full">
-                <label htmlFor="relocation-details">Reusable relocation details</label>
-                <textarea id="relocation-details" maxLength={2000} value={profile.relocationDetails}
-                  onChange={(event) => update('relocationDetails', event.target.value)} />
-                <div className="application-profile__field-meta">
-                  <span>Long answers wrap automatically.</span>
-                  <span>{profile.relocationDetails.length}/2,000</span>
-                </div>
-              </div>
             </div>
           </section>
 
@@ -316,7 +295,10 @@ export function ManagerApplicationProfilesView() {
           <section className="application-profile__section" aria-labelledby="profile-custom-title">
             <div className="application-profile__section-heading">
               <h3 id="profile-custom-title">Custom reusable questions</h3>
-              <p>Save matching employer questions with the answers you want to reuse.</p>
+              <p>
+                Add global answers such as work schedule or travel. For example, “Are you willing to travel?”
+                or “What work schedules are you available for?” These are shared across your Accounts.
+              </p>
             </div>
           {profile.customAnswers.map((answer, index) => (
             <fieldset className="application-profile__entry" key={index}>

@@ -38,11 +38,17 @@ const workExperienceSchema = z.object({
   description: z.string().trim().max(3000).nullable(),
 });
 
+const accountCustomFieldSchema = z.object({
+  fieldName: z.string().trim().min(1).max(100),
+  value: z.string().trim().min(1).max(4000),
+}).strict();
+
 const accountApplicationProfileSchema = z.object({
   firstName: z.string().trim().min(1).max(100),
   lastName: z.string().trim().min(1).max(100),
   education: z.array(educationSchema).max(20).default([]),
   workExperience: z.array(workExperienceSchema).max(30).default([]),
+  customFields: z.array(accountCustomFieldSchema).max(100).default([]),
 });
 
 const accountProfileSchema = accountApplicationProfileSchema.extend({
@@ -71,7 +77,7 @@ const staffColumns = `
 const accountColumns = `
   u.u_id, u.username, u.name, u.role, u.parent_user_id, u.email, u.address, u.sex,
   u.birthday, u.phone, u.country, u.city, u.category_id, u.blocked_date,
-  app.first_name, app.last_name, app.education, app.work_experience,
+  app.first_name, app.last_name, app.education, app.work_experience, app.custom_fields,
   (app.resume_content IS NOT NULL) AS has_resume, app.resume_file_name
 `;
 
@@ -210,11 +216,12 @@ router.post('/', async (req: NewSchemaAuthRequest, res: Response) => {
       const created = result.rows[0] as { u_id: number };
       await tx.query(
         `INSERT INTO account_application_profiles (
-          account_user_id, first_name, last_name, education, work_experience
-        ) VALUES ($1, $2, $3, $4::jsonb, $5::jsonb)`,
+          account_user_id, first_name, last_name, education, work_experience, custom_fields
+        ) VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb)`,
         [
           created.u_id, data.firstName, data.lastName,
           JSON.stringify(data.education), JSON.stringify(data.workExperience),
+          JSON.stringify(data.customFields),
         ]
       );
       return created;
@@ -303,9 +310,9 @@ router.put('/:id', async (req: NewSchemaAuthRequest, res: Response) => {
       }
     }
     const currentProfile = await queryOne<{
-      first_name: string; last_name: string; education: unknown; work_experience: unknown;
+      first_name: string; last_name: string; education: unknown; work_experience: unknown; custom_fields: unknown;
     }>(
-      'SELECT first_name, last_name, education, work_experience FROM account_application_profiles WHERE account_user_id = $1',
+      'SELECT first_name, last_name, education, work_experience, custom_fields FROM account_application_profiles WHERE account_user_id = $1',
       [userId]
     );
     const firstName = data.firstName ?? currentProfile?.first_name;
@@ -325,18 +332,20 @@ router.put('/:id', async (req: NewSchemaAuthRequest, res: Response) => {
       }
       await tx.query(
         `INSERT INTO account_application_profiles (
-          account_user_id, first_name, last_name, education, work_experience
-        ) VALUES ($1, $2, $3, $4::jsonb, $5::jsonb)
+          account_user_id, first_name, last_name, education, work_experience, custom_fields
+        ) VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb)
         ON CONFLICT (account_user_id) DO UPDATE SET
           first_name = EXCLUDED.first_name,
           last_name = EXCLUDED.last_name,
           education = EXCLUDED.education,
           work_experience = EXCLUDED.work_experience,
+          custom_fields = EXCLUDED.custom_fields,
           updated_date = NOW()`,
         [
           userId, firstName, lastName,
           JSON.stringify(data.education ?? currentProfile?.education ?? []),
           JSON.stringify(data.workExperience ?? currentProfile?.work_experience ?? []),
+          JSON.stringify(data.customFields ?? currentProfile?.custom_fields ?? []),
         ]
       );
     });

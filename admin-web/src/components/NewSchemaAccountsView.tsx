@@ -18,8 +18,14 @@ type Profile = NewSchemaAccountProfile & {
   city: string;
   education?: EducationRecord[] | null;
   work_experience?: WorkExperienceRecord[] | null;
+  custom_fields?: AccountCustomField[] | null;
   has_resume?: boolean;
   resume_file_name?: string | null;
+};
+
+type AccountCustomField = {
+  fieldName: string;
+  value: string;
 };
 
 type EducationRecord = {
@@ -54,6 +60,7 @@ const emptyForm = () => ({
   categoryId: '',
   education: [] as EducationRecord[],
   workExperience: [] as WorkExperienceRecord[],
+  customFields: [] as AccountCustomField[],
 });
 
 export function NewSchemaAccountsView() {
@@ -125,6 +132,10 @@ export function NewSchemaAccountsView() {
         currentRole: Boolean(item.currentRole),
         description: item.description || '',
       })),
+      customFields: (profile.custom_fields || []).map((item) => ({
+        fieldName: item.fieldName || '',
+        value: item.value || '',
+      })),
     });
     setResumeFile(null);
     setFormError(null);
@@ -160,6 +171,10 @@ export function NewSchemaAccountsView() {
         startDate: item.startDate || null,
         endDate: item.currentRole ? null : item.endDate || null,
         description: item.description.trim() || null,
+      })),
+      customFields: form.customFields.map((item) => ({
+        fieldName: item.fieldName.trim(),
+        value: item.value.trim(),
       })),
     };
     const result = editingId
@@ -366,6 +381,43 @@ export function NewSchemaAccountsView() {
               currentRole: false, description: '',
             }],
           })}>Add work experience</button>
+          <h3>Additional application facts</h3>
+          <p className="text-muted">
+            These name-and-value facts belong to this Account only. For example, “Work authorization expiry” → “2028-04-30”.
+          </p>
+          {form.customFields.map((item, index) => (
+            <fieldset className="card" key={index}>
+              <legend>Additional fact {index + 1}</legend>
+              <div className="form-group">
+                <label htmlFor={`account-custom-field-name-${index}`}>Field name</label>
+                <input id={`account-custom-field-name-${index}`} required maxLength={100}
+                  value={item.fieldName}
+                  onChange={(event) => {
+                    const customFields = [...form.customFields];
+                    customFields[index] = { ...item, fieldName: event.target.value };
+                    setForm({ ...form, customFields });
+                  }} />
+              </div>
+              <div className="form-group">
+                <label htmlFor={`account-custom-field-value-${index}`}>Value</label>
+                <textarea id={`account-custom-field-value-${index}`} required maxLength={4000}
+                  value={item.value}
+                  onChange={(event) => {
+                    const customFields = [...form.customFields];
+                    customFields[index] = { ...item, value: event.target.value };
+                    setForm({ ...form, customFields });
+                  }} />
+              </div>
+              <button className="btn btn-ghost" type="button"
+                onClick={() => setForm({ ...form, customFields: form.customFields.filter((_, row) => row !== index) })}>
+                Remove additional fact
+              </button>
+            </fieldset>
+          ))}
+          <button className="btn btn-ghost" type="button" onClick={() => setForm({
+            ...form,
+            customFields: [...form.customFields, { fieldName: '', value: '' }],
+          })}>Add additional fact</button>
         </form>
         {formError && <div className="alert alert-error">{formError}</div>}
       </Modal>

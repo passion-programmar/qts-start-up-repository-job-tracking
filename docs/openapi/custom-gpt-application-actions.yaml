@@ -7,10 +7,12 @@ info:
     Workable job row and sends `PROCESS_TASK: task_<uuid>` to that Manager's assigned Custom GPT.
     For each page, call getTaskContext, answer only from the supplied candidate/profile
     facts, and call submitTaskPackage. Mark any unsupported or unclear fields as
-    unresolvedFields; do not invent candidate facts. Generate resume or cover-letter
-    JSON only when the current page contains the corresponding file field. The server
-    renders requested documents as PDFs; the extension polls its
-    Manager-authenticated extension-status endpoint.
+    unresolvedFields; do not invent candidate facts. When fields remain unresolved,
+    discuss the missing facts with the Manager in the same GPT chat and resubmit an
+    updated package for this task; the extension keeps waiting until the package has
+    no unresolved fields. Generate resume or cover-letter JSON only when the current
+    page contains the corresponding file field. The server renders requested documents
+    as PDFs; the extension polls its Manager-authenticated extension-status endpoint.
     Job-site submission is always left to the Manager.
 servers:
   - url: https://qts-job-tracking.vercel.app
@@ -147,6 +149,7 @@ components:
         - managerAnswers
         - resumeText
         - previousAnswers
+        - previousUnresolvedFields
         - page
       properties:
         success: { type: boolean }
@@ -164,7 +167,7 @@ components:
           additionalProperties: true
         candidate:
           type: object
-          description: Saved Account profile and work/education history.
+          description: Saved Account profile, work/education history, and custom fieldName/value facts.
           additionalProperties: true
         managerAnswers:
           type: object
@@ -176,6 +179,9 @@ components:
         previousAnswers:
           type: array
           items: { $ref: '#/components/schemas/Answer' }
+        previousUnresolvedFields:
+          type: array
+          items: { $ref: '#/components/schemas/UnresolvedField' }
         page: { $ref: '#/components/schemas/ApplicationPage' }
 
     TaskPackage:
@@ -282,7 +288,11 @@ paths:
         Submit answers for this page using exact stableFieldIds. Omit guesses and
         report unsupported or unclear questions in unresolvedFields. Include resume
         or coverLetter JSON only when that file field is on this page; the server
-        renders requested documents as PDFs. Never submit the job-site application.
+        renders requested documents as PDFs. If unresolvedFields is non-empty, the
+        task remains waiting_for_gpt; discuss missing facts with the Manager and
+        resubmit this task after they provide confirmed information. The extension
+        applies the package only after unresolvedFields is empty. Never submit the
+        job-site application.
       parameters:
         - name: taskId
           in: path
@@ -295,7 +305,7 @@ paths:
             schema: { $ref: '#/components/schemas/TaskPackage' }
       responses:
         '200':
-          description: Package accepted; the extension can retrieve answers and generated PDFs.
+          description: Package accepted; unresolved packages remain open for Manager discussion and resubmission.
           content:
             application/json:
               schema:
@@ -303,7 +313,9 @@ paths:
                 properties:
                   success: { type: boolean }
                   taskId: { $ref: '#/components/schemas/TaskId' }
-                  status: { type: string, const: ready }
+                  status:
+                    type: string
+                    enum: [waiting_for_gpt, ready]
                   pageNumber: { type: integer }
                   answersStored: { type: integer }
                   unresolvedCount: { type: integer }

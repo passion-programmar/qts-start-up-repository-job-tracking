@@ -13,6 +13,7 @@
     "managerAnswers",
     "resumeText",
     "previousAnswers",
+    "previousUnresolvedFields",
     "page"
   ],
   "properties": {
@@ -33,7 +34,21 @@
     },
     "candidate": {
       "type": "object",
-      "description": "Saved Account profile, education, and work history.",
+      "description": "Saved Account profile, education, work history, and Account-specific custom facts.",
+      "properties": {
+        "customFields": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["fieldName", "value"],
+            "properties": {
+              "fieldName": { "type": "string" },
+              "value": { "type": "string" }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
       "additionalProperties": true
     },
     "managerAnswers": {
@@ -49,6 +64,10 @@
       "type": "array",
       "items": { "$ref": "#/$defs/answer" }
     },
+    "previousUnresolvedFields": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/unresolvedField" }
+    },
     "page": { "$ref": "#/$defs/page" }
   },
   "$defs": {
@@ -58,6 +77,15 @@
       "properties": {
         "stableFieldId": { "type": "string" },
         "answer": { "type": "string" }
+      }
+    },
+    "unresolvedField": {
+      "type": "object",
+      "required": ["stableFieldId", "question", "reason"],
+      "properties": {
+        "stableFieldId": { "type": "string" },
+        "question": { "type": "string" },
+        "reason": { "type": "string" }
       }
     },
     "field": {

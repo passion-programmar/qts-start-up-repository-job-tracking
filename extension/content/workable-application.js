@@ -441,6 +441,17 @@
   function answerForQuestion(question, managerAnswers, account, options = []) {
     const normalized = normalizedQuestion(question);
     const standard = managerAnswers || {};
+    const customProfileField = (account?.custom_fields || []).find((field) => {
+      const fieldName = normalizedQuestion(field.fieldName);
+      if (fieldName.length < 4) return false;
+      if (normalized === fieldName || normalized.includes(fieldName)) return true;
+      const isExpiryQuestion = /expir|expire/.test(normalized)
+        && /authorization|work permit|visa/.test(normalized);
+      const isExpiryField = /expir|expire/.test(fieldName)
+        && /authorization|work permit|visa/.test(fieldName);
+      return isExpiryQuestion && isExpiryField;
+    });
+    if (customProfileField?.value) return clean(customProfileField.value);
     if (/salary|compensation|pay expectation/.test(normalized)) {
       return textForSalary(question, standard);
     }
@@ -457,11 +468,10 @@
       if (typeof standard.sponsorship_required === 'boolean') return standard.sponsorship_required ? 'YES' : 'NO';
     }
     if (/authorization.*expir|expire.*authorization/.test(normalized)) {
-      return standard.authorization_expires_on ? String(standard.authorization_expires_on).slice(0, 10) : null;
+      return null;
     }
     if (/relocat|move to/.test(normalized)) {
       if (typeof standard.relocation_willing === 'boolean') return standard.relocation_willing ? 'YES' : 'NO';
-      if (clean(standard.relocation_details)) return clean(standard.relocation_details);
     }
     if (/notice period|when can you start|availability to start/.test(normalized)) {
       if (clean(standard.notice_period_text)) return clean(standard.notice_period_text);
@@ -706,8 +716,7 @@
         managerAnswers,
         account,
         optionsForField(control, question)
-      )
-        ?? (profileFact ? null : answerForGptField(control, question));
+      ) ?? answerForGptField(control, question);
       if (answer != null) {
         if (!await setControlValue(control, answer)) {
           if (profileFact) manualAnswerFields.push(question);
@@ -733,7 +742,7 @@
           account,
           optionsForField(first, question)
         )
-        ?? (profileFact ? null : answerForGptField(first, question));
+        ?? answerForGptField(first, question);
       if (answer != null && !applyRadioOrCheckbox(group, answer)) {
         if (profileFact) manualAnswerFields.push(question);
         else failures.push(`Could not select an answer for: ${question || 'required choice'}.`);
