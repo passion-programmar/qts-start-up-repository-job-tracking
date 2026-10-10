@@ -1,5 +1,7 @@
 'use client';
 
+import { LoadingState } from '@/components/LoadingState';
+
 import { useCallback, useEffect, useState } from 'react';
 import { Modal } from '@/components/Modal';
 import { api, uploadPdf } from '@/lib/api';
@@ -202,7 +204,7 @@ export function NewSchemaAccountsView() {
       {error && <div className="alert alert-error">{error}</div>}
       <div className="search-row"><button className="btn btn-primary" type="button" onClick={startCreate}>+ Add Account Profile</button></div>
       <div className="card">
-        {loading ? <div className="text-muted">Loading…</div> : (
+        {loading ? <LoadingState label="Loading…" /> : (
           <div className="table-scroll"><table>
             <thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>City</th><th>Category</th><th /></tr></thead>
             <tbody>{profiles.map((profile) => (

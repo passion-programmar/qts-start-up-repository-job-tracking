@@ -1,5 +1,63 @@
 /* Mobile-first responsive layout */
 
+.loading-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 150px;
+  padding: 24px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.loading-state--inline {
+  min-height: 72px;
+  padding: 16px;
+}
+
+.loading-state--page {
+  min-height: min(50vh, 420px);
+  min-height: min(50dvh, 420px);
+}
+
+.loading-state__spinner {
+  position: relative;
+  display: inline-block;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  border: 3px solid rgba(22, 119, 255, 0.16);
+  border-top-color: var(--primary);
+  border-right-color: var(--accent);
+  border-radius: 50%;
+  animation: loading-state-spin 0.85s linear infinite;
+}
+
+.loading-state__spinner::after {
+  position: absolute;
+  inset: 5px;
+  border: 2px solid transparent;
+  border-bottom-color: var(--primary-light);
+  border-radius: 50%;
+  content: '';
+  animation: loading-state-spin 1.2s linear infinite reverse;
+}
+
+@keyframes loading-state-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loading-state__spinner,
+  .loading-state__spinner::after {
+    animation-duration: 2.5s;
+  }
+}
+
 /* ── Modals ───────────────────────────────────────────── */
 .modal-overlay {
   padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right))

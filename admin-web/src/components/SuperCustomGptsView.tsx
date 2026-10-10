@@ -1,5 +1,7 @@
 'use client';
 
+import { LoadingState } from '@/components/LoadingState';
+
 import { useCallback, useEffect, useState } from 'react';
 import { Modal } from '@/components/Modal';
 import { api } from '@/lib/api';
@@ -148,7 +150,7 @@ export function SuperCustomGptsView() {
       </p>
       {error && <div className="alert alert-error">{error}</div>}
       {message && <div className="alert alert-success">{message}</div>}
-      {loading ? <div className="text-muted">Loading Custom GPTs…</div> : customGpts.length ? (
+      {loading ? <LoadingState label="Loading Custom GPTs…" /> : customGpts.length ? (
         <div style={{ display: 'grid', gap: 16 }}>
           {customGpts.map((customGpt) => (
             <div key={customGpt.id} className="card" style={{ padding: 16 }}>

@@ -1,5 +1,7 @@
 'use client';
 
+import { LoadingState } from '@/components/LoadingState';
+
 import { useCallback, useEffect, useState } from 'react';
 import { Modal } from '@/components/Modal';
 import { api } from '@/lib/api';
@@ -69,7 +71,7 @@ export function AdminAccountsView() {
       </p>
 
       {loading ? (
-        <div className="card"><div className="text-muted">Loading…</div></div>
+        <div className="card"><LoadingState label="Loading…" /></div>
       ) : (
         <div className="card" style={{ overflowX: 'auto' }}>
           <table className="data-table">

@@ -1,5 +1,7 @@
 'use client';
 
+import { LoadingState } from '@/components/LoadingState';
+
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '@/lib/api';
 import type { NewSchemaJobAccountStatus } from '@/lib/types';
@@ -106,7 +108,7 @@ export function ManagerBidStatusView() {
       <div className="card">
         <h2>Applications by Account and Job</h2>
         <p className="text-muted">Each Account has a separate job row. Reset a failed row to To do to make it eligible for Apply again.</p>
-        {loading ? <div className="text-muted">Loading…</div> : (
+        {loading ? <LoadingState label="Loading…" /> : (
           <div className="table-scroll">
             <table>
               <thead><tr>

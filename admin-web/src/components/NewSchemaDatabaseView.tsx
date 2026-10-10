@@ -1,5 +1,7 @@
 'use client';
 
+import { LoadingState } from '@/components/LoadingState';
+
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAuth } from '@/components/AuthProvider';
 import { api } from '@/lib/api';
@@ -270,7 +272,7 @@ export function NewSchemaDatabaseView() {
       </p>
       {error && <div className="alert alert-error">{error}</div>}
       {loadingTables ? (
-        <div className="card"><div className="text-muted">Loading database tables…</div></div>
+        <div className="card"><LoadingState label="Loading database tables…" /></div>
       ) : (
         <div className="database-records-layout">
           <aside className="card database-records-sidebar">
@@ -313,7 +315,7 @@ export function NewSchemaDatabaseView() {
                 <button className="btn btn-ghost" type="button" onClick={runSearch}>Search</button>
               </div>
             </div>
-            {loadingRecords ? <div className="text-muted">Loading records…</div> : (
+            {loadingRecords ? <LoadingState label="Loading records…" /> : (
               <>
                 <div className="table-scroll">
                   <table>

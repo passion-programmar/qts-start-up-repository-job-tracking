@@ -1,5 +1,7 @@
 'use client';
 
+import { LoadingState } from '@/components/LoadingState';
+
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '@/lib/api';
 import { useAuth } from '@/components/AuthProvider';
@@ -160,7 +162,7 @@ export function NewSchemaJobsView() {
           <p className="text-muted">
             Each Account has its own job row. Failed rows can be reset to To do for another Apply attempt; only To do rows can be removed.
           </p>
-          {loading ? <div className="text-muted">Loading…</div> : (
+          {loading ? <LoadingState label="Loading…" /> : (
             <div className="table-scroll">
               <table>
                 <thead>
@@ -218,7 +220,7 @@ export function NewSchemaJobsView() {
       )}
       <div className="card">
         <h2>Bids</h2>
-        {loading ? <div className="text-muted">Loading…</div> : (
+        {loading ? <LoadingState label="Loading…" /> : (
           <div className="table-scroll">
             <table>
               <thead>

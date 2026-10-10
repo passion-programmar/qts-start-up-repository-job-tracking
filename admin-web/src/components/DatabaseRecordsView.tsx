@@ -1,5 +1,7 @@
 'use client';
 
+import { LoadingState } from '@/components/LoadingState';
+
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Modal } from '@/components/Modal';
 import { api } from '@/lib/api';
@@ -264,7 +266,7 @@ export function DatabaseRecordsView() {
       </p>
 
       {loading ? (
-        <div className="card"><div className="text-muted">Loading categories…</div></div>
+        <div className="card"><LoadingState label="Loading categories…" /></div>
       ) : (
         <div className="database-records-layout">
           <aside className="card database-records-sidebar">
@@ -314,7 +316,7 @@ export function DatabaseRecordsView() {
             {error && !modal && <div className="alert alert-error">{error}</div>}
 
             {recordsLoading ? (
-              <div className="text-muted">Loading records…</div>
+              <LoadingState label="Loading records…" size="inline" />
             ) : (
               <>
                 <div className="table-scroll">

@@ -1,5 +1,7 @@
 'use client';
 
+import { LoadingState } from '@/components/LoadingState';
+
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 
@@ -178,7 +180,7 @@ export function ManagerApplicationProfilesView() {
           </p>
         </div>
       </header>
-      {loading ? <p>Loading application answers…</p> : (
+      {loading ? <LoadingState label="Loading application answers…" /> : (
         <>
           {message && <div className={`alert ${isError ? 'alert-error' : 'alert-success'}`}>{message}</div>}
           <section className="application-profile__section" aria-labelledby="profile-country-title">

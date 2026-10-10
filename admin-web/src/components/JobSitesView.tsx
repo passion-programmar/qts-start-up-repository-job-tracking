@@ -1,5 +1,7 @@
 'use client';
 
+import { LoadingState } from '@/components/LoadingState';
+
 import { useCallback, useEffect, useState } from 'react';
 import { Modal } from '@/components/Modal';
 import { api } from '@/lib/api';
@@ -153,7 +155,7 @@ export function JobSitesView() {
 
       <div className="card">
         {loading ? (
-          <div className="text-muted">Loading…</div>
+          <LoadingState label="Loading…" />
         ) : (
           <div className="table-scroll">
             <table>

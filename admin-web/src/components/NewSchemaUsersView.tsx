@@ -1,5 +1,7 @@
 'use client';
 
+import { LoadingState } from '@/components/LoadingState';
+
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '@/components/AuthProvider';
 import { Modal } from '@/components/Modal';
@@ -134,7 +136,7 @@ export function NewSchemaUsersView() {
         </button>
       </div>
       <div className="card">
-        {loading ? <div className="text-muted">Loading…</div> : (
+        {loading ? <LoadingState label="Loading…" /> : (
           <div className="table-scroll"><table>
             <thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Status</th><th>Password</th><th /></tr></thead>
             <tbody>{users.map((target) => {
