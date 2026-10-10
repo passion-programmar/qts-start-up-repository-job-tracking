@@ -576,8 +576,9 @@ td.text-right {
   }
 
   .sidebar {
-    position: static;
-    inset: auto;
+    position: sticky;
+    top: 0;
+    align-self: flex-start;
     z-index: auto;
     width: 220px;
     height: 100dvh;
