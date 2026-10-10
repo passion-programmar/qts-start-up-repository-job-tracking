@@ -65,12 +65,13 @@ CREATE TABLE bids (
   job_title TEXT NOT NULL,
   company TEXT NOT NULL,
   job_url TEXT NOT NULL,
-  job_status TEXT NOT NULL DEFAULT 'did'
-    CHECK (job_status IN ('processing', 'todo', 'did', 'failed')),
   resume_path TEXT NOT NULL,
   applied_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (u_id, j_id)
 );
+
+-- Only successfully submitted applications belong in bids; their active
+-- Account-specific job_list rows and status are removed when they are moved.
 
 CREATE TABLE interviews (
   i_id SERIAL PRIMARY KEY,

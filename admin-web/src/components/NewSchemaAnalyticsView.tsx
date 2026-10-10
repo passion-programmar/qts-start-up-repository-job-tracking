@@ -114,8 +114,8 @@ export function NewSchemaAnalyticsView() {
               label={periodText}
             />
             <BarList
-              title="Bids by job status"
-              rows={data.bidsByStatus.map((row) => ({ label: row.status, count: row.count }))}
+              title="Jobs by status"
+              rows={data.jobsByStatus.map((row) => ({ label: row.status, count: row.count }))}
               label={(value) => value}
             />
             <BarList

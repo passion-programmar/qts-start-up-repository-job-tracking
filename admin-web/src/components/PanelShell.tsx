@@ -18,7 +18,7 @@ type NavItem = {
 
 const NAV_ITEMS: NavItem[] = [
   { href: '/jobs', label: '💼 Jobs', page: 'jobs', modes: ['admin', 'manager'] },
-  { href: '/bid-status', label: '📋 Bid Status', page: 'bid-status', modes: ['manager'] },
+  { href: '/bid-status', label: '📋 Bids', page: 'bid-status', modes: ['manager'] },
   { href: '/analytics', label: '📊 Analytics', page: 'analytics', modes: ['admin', 'manager'] },
   { href: '/database', label: '🗄️ Database', page: 'database', modes: ['admin'], roles: ['super'] },
   { href: '/accounts', label: '👤 Account Profiles', page: 'accounts', modes: ['manager'] },
@@ -41,7 +41,7 @@ const PAGE_TITLES: Record<string, string> = {
   interviews: 'Interview Process',
   settings: 'Settings',
   'application-profile': 'Application Answers',
-  'bid-status': 'Bid Status',
+  'bid-status': 'Bids',
 };
 
 function resolvePage(pathname: string, base: string): string {

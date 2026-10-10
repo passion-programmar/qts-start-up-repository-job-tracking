@@ -30,6 +30,10 @@ The three main components are:
 
 The Custom GPT does **not** inspect the job website, click job-site controls, upload files, or submit applications. The extension performs all job-page interaction.
 
+### Manager Job List and Bids
+
+Manager-added jobs are stored as Account-specific rows in `job_list`. The Jobs page shows those active rows and lets the Manager change a waiting job to Failed or confirm it as Applied; Processing is controlled by the Apply workflow. When Workable confirms a successful submission (or the Manager confirms Applied), QTS inserts the application details into `bids` and removes the active row from `job_list`. The Manager's Bids page lists those submissions; application status is tracked only in the active Job List, not in `bids`. Existing Applied job rows are moved into `bids` during the database migration.
+
 ```text
 ┌─────────────────┐    scan / fill / upload    ┌──────────────────┐
 │ Chrome extension│ ◄────────────────────────► │ Job application  │

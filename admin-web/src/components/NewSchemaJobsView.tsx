@@ -14,6 +14,7 @@ const JOB_STATUS_LABELS: Record<NewSchemaJob['status'], string> = {
   did: 'Applied',
   failed: 'Failed',
 };
+type EditableJobStatus = 'todo' | 'failed' | 'did';
 
 function applicationTypeLabel(type: string): string {
   return type === 'workable' ? 'Workable' : type;
@@ -26,29 +27,36 @@ export function NewSchemaJobsView() {
   const [jobs, setJobs] = useState<NewSchemaJob[]>([]);
   const [search, setSearch] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [deletingJobId, setDeletingJobId] = useState<number | null>(null);
-  const [resettingJobId, setResettingJobId] = useState<number | null>(null);
+  const [editingJobId, setEditingJobId] = useState<number | null>(null);
+  const [editedStatus, setEditedStatus] = useState<EditableJobStatus>('todo');
+  const [savingStatusJobId, setSavingStatusJobId] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const [result, jobsResult] = await Promise.all([
-        api<{ success: boolean; message?: string; bids?: NewSchemaBid[] }>(
-        'GET',
-        '/api/v2/bids'
-        ),
+        isManager
+          ? Promise.resolve(null)
+          : api<{ success: boolean; message?: string; bids?: NewSchemaBid[] }>(
+            'GET',
+            '/api/v2/bids'
+          ),
         isManager
           ? api<{ success: boolean; message?: string; jobs?: NewSchemaJob[] }>('GET', '/api/v2/jobs')
           : Promise.resolve(null),
       ]);
-      if (!result.success) {
-        setBids([]);
-        setError(result.message || 'Could not load bid history.');
-        return;
+      if (result) {
+        if (!result.success) {
+          setBids([]);
+          setError(result.message || 'Could not load bid history.');
+          return;
+        }
+        setBids(result.bids || []);
       }
-      setBids(result.bids || []);
       if (jobsResult) {
         if (!jobsResult.success) {
           setJobs([]);
@@ -116,42 +124,51 @@ export function NewSchemaJobsView() {
     }
   }
 
-  async function resetFailedJob(job: NewSchemaJob) {
-    if (resettingJobId !== null) return;
-    const confirmed = window.confirm(
-      `Reset "${job.title}" for ${job.selected_accounts?.[0]?.name || 'this Account'} to To do? It will be eligible for Apply again.`
-    );
-    if (!confirmed) return;
+  async function updateJobStatus(job: NewSchemaJob) {
+    if (savingStatusJobId !== null) return;
+    if (editedStatus === 'did' && !window.confirm(
+      `Confirm "${job.title}" for ${job.selected_accounts?.[0]?.name || 'this Account'} was successfully applied? It will move from the Job List to Bids.`
+    )) return;
 
-    setResettingJobId(job.id);
+    setSavingStatusJobId(job.id);
     setError(null);
+    setNotice(null);
     try {
       const result = await api<{ success: boolean; message?: string; status?: NewSchemaJob['status'] }>(
         'PATCH',
         `/api/v2/jobs/${encodeURIComponent(String(job.id))}/status`,
-        { status: 'todo' }
+        { status: editedStatus }
       );
       if (!result.success) {
-        setError(result.message || 'Could not reset the failed job.');
+        setError(result.message || 'Could not update the job status.');
         return;
       }
-      setJobs((current) => current.map((item) =>
-        item.id === job.id ? { ...item, status: 'todo' } : item
-      ));
-    } catch (resetError) {
-      setError(resetError instanceof Error ? resetError.message : 'Could not reset the failed job.');
+      const updatedStatus = result.status;
+      if (updatedStatus === 'did') {
+        setJobs((current) => current.filter((item) => item.id !== job.id));
+        setNotice('Application confirmed. The job was moved to Bids.');
+      } else if (updatedStatus) {
+        setJobs((current) => current.map((item) =>
+          item.id === job.id ? { ...item, status: updatedStatus } : item
+        ));
+        setNotice(`Job status changed to ${JOB_STATUS_LABELS[updatedStatus]}.`);
+      }
+      setEditingJobId(null);
+    } catch (updateError) {
+      setError(updateError instanceof Error ? updateError.message : 'Could not update the job status.');
     } finally {
-      setResettingJobId(null);
+      setSavingStatusJobId(null);
     }
   }
 
   return (
     <>
       {error && <div className="alert alert-error">{error}</div>}
+      {notice && <div className="alert alert-success">{notice}</div>}
       <div className="search-row">
         <input
-          aria-label="Search jobs and bids"
-          placeholder="Search jobs and bids…"
+          aria-label={isManager ? 'Search jobs' : 'Search bids'}
+          placeholder={isManager ? 'Search jobs…' : 'Search bids…'}
           value={search}
           onChange={(event) => setSearch(event.target.value)}
         />
@@ -160,7 +177,7 @@ export function NewSchemaJobsView() {
         <div className="card">
           <h2>My job list</h2>
           <p className="text-muted">
-            Each Account has its own job row. Failed rows can be reset to To do for another Apply attempt; only To do rows can be removed.
+            Jobs you add are saved here for the selected Accounts. Confirming Applied moves that Account’s job into Bids; Processing is managed by Apply.
           </p>
           {loading ? <LoadingState label="Loading…" /> : (
             <div className="table-scroll">
@@ -172,7 +189,6 @@ export function NewSchemaJobsView() {
                     <th>Company</th>
                     <th>Status</th>
                     <th>Account</th>
-                    <th>Bids</th>
                     <th>Added</th>
                     <th>Actions</th>
                   </tr>
@@ -183,25 +199,59 @@ export function NewSchemaJobsView() {
                       <td><a href={job.url} target="_blank" rel="noreferrer">{job.title}</a></td>
                       <td>{applicationTypeLabel(job.application_type)}</td>
                       <td>{job.company}</td>
-                      <td>{JOB_STATUS_LABELS[job.status]}</td>
+                      <td>
+                        {editingJobId === job.id ? (
+                          <select
+                            aria-label={`New status for ${job.title}`}
+                            value={editedStatus}
+                            disabled={savingStatusJobId !== null}
+                            onChange={(event) => setEditedStatus(event.target.value as EditableJobStatus)}
+                          >
+                            <option value="todo">To do</option>
+                            <option value="failed">Failed</option>
+                            <option value="did">Applied (move to Bids)</option>
+                          </select>
+                        ) : JOB_STATUS_LABELS[job.status]}
+                      </td>
                       <td>{job.selected_accounts?.[0]?.name || 'No Account assigned'}</td>
-                      <td>{job.bid_count}</td>
                       <td>{formatDate(job.get_date)}</td>
                       <td>
-                        {job.status === 'failed' && (
+                        {editingJobId === job.id ? (
+                          <>
+                            <button
+                              className="btn btn-primary btn-sm"
+                              type="button"
+                              disabled={savingStatusJobId !== null || editedStatus === job.status}
+                              onClick={() => { void updateJobStatus(job); }}
+                            >
+                              {savingStatusJobId === job.id ? 'Saving…' : 'Save'}
+                            </button>
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              type="button"
+                              disabled={savingStatusJobId !== null}
+                              onClick={() => setEditingJobId(null)}
+                            >
+                              Cancel
+                            </button>
+                          </>
+                        ) : job.status !== 'processing' && (
                           <button
                             className="btn btn-ghost btn-sm"
                             type="button"
-                            disabled={resettingJobId !== null || deletingJobId !== null}
-                            onClick={() => { void resetFailedJob(job); }}
+                            disabled={savingStatusJobId !== null || deletingJobId !== null}
+                            onClick={() => {
+                              setEditingJobId(job.id);
+                              setEditedStatus(job.status === 'failed' ? 'failed' : 'todo');
+                            }}
                           >
-                            {resettingJobId === job.id ? 'Resetting…' : 'Reset to To do'}
+                            Edit status
                           </button>
                         )}
                         <button
                           className="btn btn-danger btn-sm"
                           type="button"
-                          disabled={deletingJobId !== null || resettingJobId !== null || job.status !== 'todo'}
+                          disabled={deletingJobId !== null || savingStatusJobId !== null || editingJobId !== null || job.status !== 'todo'}
                           onClick={() => { void removeJob(job); }}
                         >
                           {deletingJobId === job.id ? 'Removing…' : 'Delete'}
@@ -210,7 +260,7 @@ export function NewSchemaJobsView() {
                     </tr>
                   ))}
                   {!visibleJobs.length && (
-                    <tr><td colSpan={8} className="text-muted">No active Account-specific job rows found.</td></tr>
+                    <tr><td colSpan={7} className="text-muted">No active Account-specific job rows found.</td></tr>
                   )}
                 </tbody>
               </table>
@@ -218,7 +268,7 @@ export function NewSchemaJobsView() {
           )}
         </div>
       )}
-      <div className="card">
+      {!isManager && <div className="card">
         <h2>Bids</h2>
         {loading ? <LoadingState label="Loading…" /> : (
           <div className="table-scroll">
@@ -228,7 +278,6 @@ export function NewSchemaJobsView() {
                   <th>Account</th>
                   <th>Job</th>
                   <th>Company</th>
-                  <th>Status</th>
                   <th>Applied</th>
                   <th>Resume path</th>
                 </tr>
@@ -239,7 +288,6 @@ export function NewSchemaJobsView() {
                     <td>{bid.account_name}</td>
                     <td><a href={bid.url} target="_blank" rel="noreferrer">{bid.job_title}</a></td>
                     <td>{bid.company}</td>
-                    <td>{bid.status}</td>
                     <td>{formatDate(bid.applied_date)}</td>
                     <td>
                       <code style={{ whiteSpace: 'normal', overflowWrap: 'anywhere' }}>
@@ -249,13 +297,13 @@ export function NewSchemaJobsView() {
                   </tr>
                 ))}
                 {!visibleBids.length && (
-                  <tr><td colSpan={6} className="text-muted">No bids recorded yet.</td></tr>
+                  <tr><td colSpan={5} className="text-muted">No bids recorded yet.</td></tr>
                 )}
               </tbody>
             </table>
           </div>
         )}
-      </div>
+      </div>}
     </>
   );
 }

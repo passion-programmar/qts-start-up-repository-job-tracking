@@ -99,12 +99,12 @@ const TABLES = {
   },
   bids: {
     label: 'Bids',
-    description: 'Durable Account applications with job details retained independently of the job list.',
+    description: 'Successfully submitted Account applications retained independently of the active job list.',
     columns: [
       'b_id', 'u_id', 'j_id', 'manager_user_id', 'job_title', 'company',
-      'job_url', 'job_status', 'resume_path', 'applied_date',
+      'job_url', 'resume_path', 'applied_date',
     ],
-    searchColumns: ['job_title', 'company', 'job_url', 'job_status', 'resume_path'],
+    searchColumns: ['job_title', 'company', 'job_url', 'resume_path'],
     orderBy: 'b_id',
     primaryKey: 'b_id',
     fields: {
@@ -114,7 +114,6 @@ const TABLES = {
       job_title: { type: 'text', required: true, maxLength: 300 },
       company: { type: 'text', required: true, maxLength: 300 },
       job_url: { type: 'url', required: true, maxLength: 2000 },
-      job_status: { type: 'enum', required: true, options: ['processing', 'todo', 'did', 'failed'] },
       resume_path: { type: 'text', required: true, maxLength: 2000 },
       applied_date: { type: 'datetime' },
     },

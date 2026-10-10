@@ -138,7 +138,6 @@ export interface NewSchemaJob {
   }>;
   status: 'processing' | 'todo' | 'did' | 'failed';
   get_date: string;
-  bid_count: number;
 }
 
 export interface NewSchemaAccountProfile {
@@ -173,7 +172,6 @@ export interface NewSchemaBid {
   job_title: string;
   company: string;
   url: string;
-  status: 'processing' | 'todo' | 'did' | 'failed';
   resume_path: string | null;
   applied_date: string;
 }
@@ -200,7 +198,7 @@ export interface NewSchemaAnalytics {
   period: 'day' | 'week' | 'month' | 'year';
   bidsByPeriod: Array<{ bucket: string; count: number }>;
   interviewsByPeriod: Array<{ bucket: string; count: number }>;
-  bidsByStatus: Array<{ status: string; count: number }>;
+  jobsByStatus: Array<{ status: string; count: number }>;
   interviewsByOutcome: Array<{ outcome: string; count: number }>;
   byManager: Array<{
     manager_id: number;
