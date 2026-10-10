@@ -37,7 +37,9 @@
   }
 
   function isRequired(element) {
-    return element.required || element.getAttribute('aria-required') === 'true';
+    if (element.required || element.getAttribute('aria-required') === 'true') return true;
+    if (element.getAttribute('role') !== 'combobox') return false;
+    return Boolean(element.closest('[data-ui]')?.querySelector('input[name][required]'));
   }
 
   function visible(element) {
@@ -47,11 +49,33 @@
       && element.getClientRects().length > 0;
   }
 
+  function labelledByText(element) {
+    const ids = clean(element.getAttribute('aria-labelledby')).split(' ').filter(Boolean);
+    return clean(ids.map((id) => document.getElementById(id)?.innerText || '').join(' '));
+  }
+
+  function accessibleName(element) {
+    return labelledByText(element)
+      || clean(element.getAttribute('aria-label'))
+      || clean(element.getAttribute('title'))
+      || clean(element.innerText);
+  }
+
   function labelFor(element) {
+    const accessible = labelledByText(element)
+      || clean(element.getAttribute('aria-label'));
+    if (accessible) return accessible;
     if (element.labels?.length) return clean([...element.labels].map((label) => label.innerText).join(' '));
-    const aria = clean(element.getAttribute('aria-label'));
-    if (aria) return aria;
     if (element.closest('label')) return clean(element.closest('label').innerText);
+    const fieldLabel = element.closest('[data-ui]')?.querySelector('[id$="_label"]');
+    if (fieldLabel) return clean(fieldLabel.innerText);
+    const conventionalLabels = {
+      city: 'City',
+      postcode: 'Postal code',
+      country: 'Country',
+    };
+    const conventionalLabel = conventionalLabels[String(element.name || element.id || '').toLowerCase()];
+    if (conventionalLabel) return conventionalLabel;
 
     let current = element;
     for (let depth = 0; current && depth < 7; depth += 1, current = current.parentElement) {
@@ -64,21 +88,57 @@
     return clean(element.getAttribute('name') || element.getAttribute('placeholder'));
   }
 
+  function isCustomSelectProxy(element) {
+    if (!(element instanceof HTMLInputElement) || element.matches('[role="combobox"]')) return false;
+    const field = element.closest('[data-ui]');
+    return Boolean(field?.querySelector('[role="combobox"]'));
+  }
+
+  function fieldIdentity(element) {
+    if (element.getAttribute('role') === 'combobox') {
+      const fieldId = element.closest('[data-ui]')?.getAttribute('data-ui');
+      if (fieldId) return clean(fieldId);
+    }
+    return clean(
+      element.name
+      || element.getAttribute('data-ui')
+      || element.closest('[data-ui]')?.getAttribute('data-ui')
+      || element.id
+      || labelFor(element)
+    );
+  }
+
   function questionForChoice(element) {
-    const fieldset = element.closest('fieldset');
-    const legend = clean(fieldset?.querySelector('legend')?.innerText);
+    const group = element.closest('fieldset, [role="radiogroup"], [role="group"]');
+    const groupName = group && accessibleName(group);
+    if (groupName) return groupName;
+    const legend = clean(group?.querySelector('legend')?.innerText);
     if (legend) return legend;
     let current = element.parentElement;
     for (let depth = 0; current && depth < 5; depth += 1, current = current.parentElement) {
-      const heading = current.querySelector('legend, [role="heading"], h1, h2, h3, h4');
+      const heading = current.querySelector(
+        'legend, [role="heading"], h1, h2, h3, h4, [id$="_label"]'
+      );
       const text = clean(heading?.innerText);
       if (text) return text;
     }
     return labelFor(element);
   }
 
+  function sectionFor(element) {
+    const section = element.closest('section[data-ui="section"], section, [role="region"]');
+    if (!section) return '';
+    const heading = section.querySelector('h1, h2, h3, h4, [role="heading"]');
+    return clean(heading?.innerText || section.getAttribute('aria-label') || '');
+  }
+
   function isManualReviewQuestion(label) {
     return /\b(terms and conditions|terms of service|privacy policy|gdpr|consent|marketing|equal opportunity|disability self identification|veteran status|background check authorization|certify that)\b/i
+      .test(label);
+  }
+
+  function isConditionalReferralQuestion(label) {
+    return /\bif (?:you were )?referred\b.*\bemployee\b|\breferral\b.*\b(if applicable|if any)\b/i
       .test(label);
   }
 
@@ -109,9 +169,54 @@
     return description.slice(0, 50000);
   }
 
-  function scanApplicationPage(pageNumber) {
+  async function optionsForCombobox(control) {
+    const listboxId = control.getAttribute('aria-controls') || control.getAttribute('aria-owns');
+    const getOptions = () => {
+      const listbox = listboxId ? document.getElementById(listboxId) : null;
+      return [...(listbox?.querySelectorAll('[role="option"]') || [])]
+        .filter(visible)
+        .map((option) => accessibleName(option))
+        .filter(Boolean);
+    };
+    let options = getOptions();
+    let openedForScan = false;
+    try {
+      if (!options.length && control.getAttribute('aria-expanded') !== 'true') {
+        control.dispatchEvent(new MouseEvent('click', {
+          bubbles: true,
+          cancelable: true,
+          view: control.ownerDocument.defaultView,
+        }));
+        openedForScan = true;
+        for (let attempt = 0; attempt < 10 && !options.length; attempt += 1) {
+          await sleep(50);
+          options = getOptions();
+        }
+      }
+      return options;
+    } finally {
+      if (openedForScan && control.getAttribute('aria-expanded') === 'true') {
+        const view = control.ownerDocument.defaultView;
+        document.body.dispatchEvent(new view.MouseEvent('mousedown', {
+          bubbles: true,
+          cancelable: true,
+          view,
+        }));
+        document.body.dispatchEvent(new view.MouseEvent('click', {
+          bubbles: true,
+          cancelable: true,
+          view,
+        }));
+      }
+    }
+  }
+
+  async function scanApplicationPage(pageNumber, {
+    includeManualReview = false,
+    includeJobDescription = true,
+  } = {}) {
     const controls = [...document.querySelectorAll('input:not([type="hidden"]), textarea, select')]
-      .filter(visible);
+      .filter((control) => visible(control) && !isCustomSelectProxy(control));
     const fields = [];
     const manualReviewFields = [];
     const seen = new Set();
@@ -125,8 +230,9 @@
       if (isChoice) seen.add(groupName);
 
       const label = isChoice ? questionForChoice(control) : labelFor(control);
-      if (!label || isManualReviewQuestion(label)) {
-        if (label && isManualReviewQuestion(label)) {
+      const manualReview = isManualReviewQuestion(label);
+      if (!label || (manualReview && !includeManualReview)) {
+        if (label && manualReview) {
           manualReviewFields.push(label);
         }
         continue;
@@ -138,22 +244,26 @@
           && (item.name || `${item.type}:${item.id}`) === groupName)
         : [control];
       const first = controlsInField[0];
-      const identity = String(first.name || first.id || label).trim();
+      const identity = fieldIdentity(first);
       const stableFieldId = `workable:${location.pathname}:${identity}:${index++}`
         .slice(0, 300);
       const fieldType = first.type === 'file'
         ? 'file'
         : isChoice
           ? (first.type === 'checkbox' ? 'checkbox' : 'radio')
-          : first instanceof HTMLSelectElement
+          : first.getAttribute('role') === 'combobox'
             ? 'select'
-            : first instanceof HTMLTextAreaElement
-              ? 'textarea'
-              : String(first.type || 'text');
+            : first instanceof HTMLSelectElement
+              ? 'select'
+              : first instanceof HTMLTextAreaElement
+                ? 'textarea'
+                : String(first.type || 'text');
       const options = isChoice
         ? controlsInField.map((item) => labelFor(item) || String(item.value || ''))
         : first instanceof HTMLSelectElement
           ? [...first.options].filter((option) => option.value).map((option) => clean(option.textContent))
+          : first.getAttribute('role') === 'combobox'
+            ? await optionsForCombobox(first)
           : undefined;
       const documentSlot = fieldType === 'file' && /cover letter|cover_letter/i.test(label)
         ? 'cover_letter'
@@ -164,8 +274,10 @@
       fields.push({
         stableFieldId,
         label: label.slice(0, 1000),
+        section: sectionFor(first).slice(0, 200),
         fieldType,
         fieldKey: identity.slice(0, 300),
+        ...(manualReview ? { manualReview: true } : {}),
         ...(documentSlot ? { documentSlot } : {}),
         required: controlsInField.some(isRequired),
         ...(options?.length ? { options: options.slice(0, 100) } : {}),
@@ -178,11 +290,14 @@
     const captchaPresent = Boolean(document.querySelector(
       'iframe[src*="turnstile"], iframe[src*="recaptcha"], .cf-turnstile, input[name*="turnstile"], input[name*="recaptcha"]'
     ));
-    const pageDescription = extractJobDescription();
+    const pageDescription = includeJobDescription ? extractJobDescription() : '';
     return {
       pageUrl: location.href,
       pageTitle: clean(document.title).slice(0, 500),
       pageNumber,
+      stepLabel: clean(document.querySelector(
+        '[aria-current="step"], [role="progressbar"], form legend'
+      )?.innerText || ''),
       pageSignature: formSignature(),
       fields,
       jobDescription: pageDescription || undefined,
@@ -233,8 +348,24 @@
     return { ok: false, error: 'Workable application form did not open.' };
   }
 
-  function setControlValue(element, value) {
+  async function setControlValue(element, value) {
     const nextValue = String(value);
+    if (element.getAttribute('role') === 'combobox') {
+      element.click();
+      const listboxId = element.getAttribute('aria-controls') || element.getAttribute('aria-owns');
+      let options = [];
+      for (let attempt = 0; attempt < 10 && !options.length; attempt += 1) {
+        const listbox = listboxId ? document.getElementById(listboxId) : null;
+        options = [...(listbox?.querySelectorAll('[role="option"]') || [])].filter(visible);
+        if (!options.length) await sleep(50);
+      }
+      const answer = normalizedQuestion(nextValue);
+      const option = options.find((item) => normalizedQuestion(accessibleName(item)) === answer);
+      if (!option) return false;
+      option.click();
+      await sleep(100);
+      return true;
+    }
     if (element instanceof HTMLSelectElement) {
       const option = [...element.options].find((item) =>
         clean(item.textContent).toLowerCase() === nextValue.toLowerCase()
@@ -262,25 +393,41 @@
     const currencyMatch = normalized.match(/\b(usd|eur|gbp|cad|aud|nzd|inr|jpy|chf|sek|nok|dkk|pln|ron|bgn)\b/);
     const explicitCodeMatch = normalized.match(/\bin\s+([a-z]{3})\b/);
     const requestedCurrency = (currencyMatch?.[1] || explicitCodeMatch?.[1])?.toUpperCase();
+    const configured = answers.filter((entry) =>
+      clean(entry.answer_text) || entry.minimum_amount != null || entry.maximum_amount != null
+    );
     if (!requestedCurrency) {
-      const answer = answers.find((entry) => clean(entry.answer_text));
-      return answer ? clean(answer.answer_text) : null;
+      if (configured.length !== 1) return null;
+      const answer = configured[0];
+      const text = clean(answer.answer_text);
+      if (text) {
+        return /\d/.test(text) && !/\b[A-Z]{3}\b/i.test(text)
+          ? `${text} ${answer.currency} per ${answer.pay_period}`
+          : text;
+      }
+      const value = answer.minimum_amount != null && answer.maximum_amount != null
+        ? `${answer.minimum_amount}-${answer.maximum_amount}`
+        : String(answer.minimum_amount ?? answer.maximum_amount);
+      return `${value} ${answer.currency} per ${answer.pay_period}`;
     }
     const period = hourly ? 'hour' : null;
-    const matching = answers.find((entry) =>
+    const matching = answers.filter((entry) =>
       String(entry.currency).toUpperCase() === requestedCurrency
       && (!period || entry.pay_period === period)
     );
-    const fallback = requestedCurrency === 'USD'
-      ? null
-      : answers.find((entry) =>
+    if (matching.length > 1) return null;
+    const fallbacks = requestedCurrency === 'USD'
+      ? []
+      : answers.filter((entry) =>
         String(entry.currency).toUpperCase() === 'USD' && (!period || entry.pay_period === period)
       );
-    const answer = matching || fallback;
+    if (!matching.length && fallbacks.length > 1) return null;
+    const answer = matching[0] || fallbacks[0];
+    const usedFallback = !matching.length && Boolean(answer);
     if (!answer) return null;
     if (clean(answer.answer_text)) {
       const text = clean(answer.answer_text);
-      return fallback && !/\bUSD\b/i.test(text) ? `${text} USD` : text;
+      return usedFallback && !/\bUSD\b/i.test(text) ? `${text} USD` : text;
     }
     const minimum = answer.minimum_amount;
     const maximum = answer.maximum_amount;
@@ -288,10 +435,10 @@
     const value = minimum != null && maximum != null
       ? `${minimum}-${maximum}`
       : String(minimum ?? maximum);
-    return fallback ? `${value} USD` : value;
+    return usedFallback ? `${value} USD` : value;
   }
 
-  function answerForQuestion(question, managerAnswers) {
+  function answerForQuestion(question, managerAnswers, account, options = []) {
     const normalized = normalizedQuestion(question);
     const standard = managerAnswers || {};
     if (/salary|compensation|pay expectation/.test(normalized)) {
@@ -299,6 +446,9 @@
     }
     if (/authorized to work|legally authorized/.test(normalized)) {
       if (typeof standard.authorized_to_work === 'boolean') return standard.authorized_to_work ? 'YES' : 'NO';
+    }
+    if (/basis of (?:your )?(?:current )?work authorization|current work authorization basis/.test(normalized)) {
+      return clean(standard.authorization_status) || null;
     }
     if (/work authorization status|authorization status|visa type/.test(normalized)) {
       return clean(standard.authorization_status) || null;
@@ -322,7 +472,20 @@
     const custom = (standard.customAnswers || []).find((entry) =>
       normalizedQuestion(entry.question) === normalized
     );
-    return custom ? clean(custom.answer) : null;
+    if (custom) return clean(custom.answer);
+    if (/highest(?: level of)? education|education level|degree level|highest degree|what degree|which degree|degree or qualification/.test(normalized)) {
+      const availableOptions = options.map((option) => clean(option)).filter(Boolean);
+      const matches = (account?.education || [])
+        .map((record) => clean(record.qualification))
+        .filter(Boolean)
+        .map((qualification) => availableOptions.find((option) =>
+          normalizedQuestion(option) === normalizedQuestion(qualification)
+        ) || (availableOptions.length ? null : qualification))
+        .filter(Boolean);
+      const uniqueMatches = [...new Set(matches)];
+      if (uniqueMatches.length === 1) return uniqueMatches[0];
+    }
+    return null;
   }
 
   function applyRadioOrCheckbox(group, answer) {
@@ -391,13 +554,17 @@
     return { ok: true, value: phoneValue };
   }
 
-  async function fillCollection(section, records, fields) {
+  async function fillCollection(section, records, fields, preserveExisting) {
     if (!records?.length) return [];
     const errors = [];
     const addButton = [...document.querySelectorAll('button')].find((button) =>
-      new RegExp(`add\\s+(?:work\\s+)?${section}`, 'i').test(clean(button.innerText))
+      new RegExp(`add\\s+(?:work\\s+)?${section}`, 'i').test(accessibleName(button))
     );
     if (!addButton) return [`Could not find Workable's Add ${section} control.`];
+    const sectionRoot = addButton.closest(`[data-ui="${section}"]`);
+    if (preserveExisting && sectionRoot?.querySelector(
+      'input:not([type="hidden"]), textarea, select, [role="combobox"]'
+    )) return [];
 
     for (const record of records) {
       addButton.click();
@@ -420,7 +587,7 @@
             control.dispatchEvent(new Event('change', { bubbles: true }));
             filled = true;
         } else if (control) {
-            filled = setControlValue(control, value);
+            filled = await setControlValue(control, value);
         }
         if (!filled) {
             if (['school', 'qualification', 'employer', 'jobTitle'].includes(key)) {
@@ -448,10 +615,13 @@
       answers = [],
       pageFields = [],
       manualReviewFields = [],
+      profileFactFields = [],
       gptPackage = false,
+      preserveExisting = false,
       submissionMode,
     } = payload;
     const failures = [];
+    const manualAnswerFields = [];
     if (!isApplicationForm()) {
       return { ok: false, failures: ['Workable application form did not open.'] };
     }
@@ -466,11 +636,20 @@
       pageFieldByKey.get(key).push(answer);
     }
     const answerForGptField = (element, label) => {
-      const key = String(element.name || element.id || label || '');
+      const key = fieldIdentity(element) || label;
       const values = pageFieldByKey.get(key) || pageFieldByKey.get(label) || [];
       return values.length ? values.shift() : null;
     };
+    const optionsForField = (element, label) => {
+      const key = fieldIdentity(element) || label;
+      return pageFields.find((field) =>
+        field.fieldKey === key || field.label === label
+      )?.options || [];
+    };
     const isManualReviewField = (label) => manualReviewFields.some(
+      (item) => normalizedQuestion(item) === normalizedQuestion(label)
+    );
+    const isProfileFactField = (label) => profileFactFields.some(
       (item) => normalizedQuestion(item) === normalizedQuestion(label)
     );
 
@@ -482,15 +661,20 @@
       .filter(visible);
     const radioGroups = new Map();
     for (const control of controls) {
+      if (isCustomSelectProxy(control)) continue;
       if (control instanceof HTMLInputElement && (control.type === 'radio' || control.type === 'checkbox')) {
         const groupName = control.name || `${control.type}:${control.id}`;
         if (!radioGroups.has(groupName)) radioGroups.set(groupName, []);
         radioGroups.get(groupName).push(control);
         continue;
       }
+      if (preserveExisting
+        && (control.type === 'file' ? control.files?.length : String(control.value || '').trim())) {
+        continue;
+      }
       const mapped = mapAccountField(control, accountWithLocalPhone);
       if (mapped != null && mapped !== '') {
-        if (!setControlValue(control, mapped)) failures.push(`Could not fill ${labelFor(control) || control.name}.`);
+        if (!await setControlValue(control, mapped)) failures.push(`Could not fill ${labelFor(control) || control.name}.`);
         continue;
       }
       if (control.type === 'file') {
@@ -516,26 +700,47 @@
       }
       const question = labelFor(control);
       if (isManualReviewField(question)) continue;
-      const answer = answerForQuestion(question, managerAnswers) ?? answerForGptField(control, question);
+      const profileFact = isProfileFactField(question);
+      const answer = answerForQuestion(
+        question,
+        managerAnswers,
+        account,
+        optionsForField(control, question)
+      )
+        ?? (profileFact ? null : answerForGptField(control, question));
       if (answer != null) {
-        if (!setControlValue(control, answer)) failures.push(`Could not fill required answer: ${question}.`);
+        if (!await setControlValue(control, answer)) {
+          if (profileFact) manualAnswerFields.push(question);
+          else failures.push(`Could not fill required answer: ${question}.`);
+        }
       } else if (isRequired(control) && !control.value) {
-        failures.push(`Unknown required question: ${question || 'question label unavailable'}.`);
+        if (isConditionalReferralQuestion(question)) continue;
+        if (profileFact) manualAnswerFields.push(question);
+        else failures.push(`Unknown required question: ${question || 'question label unavailable'}.`);
       }
     }
 
     for (const group of radioGroups.values()) {
+      if (preserveExisting && group.some((item) => item.checked)) continue;
       const first = group[0];
       const question = questionForChoice(first);
       if (isManualReviewField(question)) continue;
+      const profileFact = isProfileFactField(question);
       const answer = mapAccountField(first, account)
-        ?? answerForQuestion(question, managerAnswers)
-        ?? answerForGptField(first, question);
+        ?? answerForQuestion(
+          question,
+          managerAnswers,
+          account,
+          optionsForField(first, question)
+        )
+        ?? (profileFact ? null : answerForGptField(first, question));
       if (answer != null && !applyRadioOrCheckbox(group, answer)) {
-        failures.push(`Could not select an answer for: ${question || 'required choice'}.`);
+        if (profileFact) manualAnswerFields.push(question);
+        else failures.push(`Could not select an answer for: ${question || 'required choice'}.`);
       } else if (answer == null && group.some(isRequired) &&
           !group.some((item) => item.checked)) {
-        failures.push(`Unknown required question: ${question || 'question label unavailable'}.`);
+        if (profileFact) manualAnswerFields.push(question);
+        else failures.push(`Unknown required question: ${question || 'question label unavailable'}.`);
       }
     }
 
@@ -546,7 +751,7 @@
       startDate: [/start date|from/],
       endDate: [/end date|to|graduation/],
       description: [/description/],
-    }));
+    }, preserveExisting));
     failures.push(...await fillCollection('experience', account.work_experience, {
       employer: [/employer|company/],
       jobTitle: [/job title|position|title/],
@@ -555,15 +760,34 @@
       endDate: [/end date|to/],
       currentRole: [/current role|currently work/],
       description: [/description/],
-    }));
+    }, preserveExisting));
 
-    const invalid = controls.find((control) => isRequired(control) && !control.checkValidity());
-    if (invalid && !failures.length) {
-      failures.push(`Required field is incomplete: ${labelFor(invalid) || invalid.name || 'unlabeled field'}.`);
+    const invalid = controls.find((control) => {
+      const question = control instanceof HTMLInputElement
+        && (control.type === 'radio' || control.type === 'checkbox')
+        ? questionForChoice(control)
+        : labelFor(control);
+      return isRequired(control)
+        && !control.checkValidity()
+        && !isConditionalReferralQuestion(question);
+    });
+    let invalidQuestion = '';
+    if (invalid) {
+      invalidQuestion = invalid instanceof HTMLInputElement
+        && (invalid.type === 'radio' || invalid.type === 'checkbox')
+        ? questionForChoice(invalid)
+        : labelFor(invalid);
+    }
+    const isPendingManualAnswer = manualAnswerFields.some(
+      (question) => normalizedQuestion(question) === normalizedQuestion(invalidQuestion)
+    );
+    if (invalid && !failures.length && !isPendingManualAnswer) {
+      failures.push(`Required field is incomplete: ${invalidQuestion || invalid.name || 'unlabeled field'}.`);
     }
     return {
       ok: failures.length === 0,
       failures: [...new Set(failures)],
+      manualAnswerFields: [...new Set(manualAnswerFields)],
       captchaPresent: Boolean(document.querySelector(
         'iframe[src*="turnstile"], iframe[src*="recaptcha"], .cf-turnstile, input[name*="turnstile"], input[name*="recaptcha"]'
       )),
@@ -589,12 +813,14 @@
     return { ok: true };
   }
 
-  function showNotice(message, type = 'warn') {
+  function showNotice(message, type = 'warn', action) {
     const id = 'qts-workable-notice';
     document.getElementById(id)?.remove();
     const notice = document.createElement('div');
     notice.id = id;
-    notice.textContent = `QTS: ${message}`;
+    const text = document.createElement('span');
+    text.textContent = `QTS: ${message}`;
+    notice.appendChild(text);
     Object.assign(notice.style, {
       position: 'fixed',
       zIndex: '2147483647',
@@ -608,8 +834,40 @@
       boxShadow: '0 4px 18px rgba(0,0,0,.3)',
       font: '14px/1.45 sans-serif',
     });
+    if (action?.type === 'QTS_WORKABLE_RESUME') {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = action.label || 'Continue';
+      Object.assign(button.style, {
+        display: 'block',
+        marginTop: '10px',
+        padding: '6px 12px',
+        border: '1px solid rgba(255,255,255,.8)',
+        borderRadius: '4px',
+        color: '#fff',
+        background: 'transparent',
+        cursor: 'pointer',
+        font: '600 14px/1.4 sans-serif',
+      });
+      button.addEventListener('click', () => {
+        button.disabled = true;
+        button.textContent = 'Continuing...';
+        chrome.runtime.sendMessage({
+          type: 'QTS_WORKABLE_RESUME',
+          url: location.href,
+          pageSignature: formSignature(),
+        }).then((result) => {
+          if (!result?.ok) throw new Error(result?.error || 'Could not resume the application.');
+        }).catch((error) => {
+          showNotice(error.message || 'Could not resume the application.', 'error');
+        });
+      });
+      notice.appendChild(button);
+    }
     document.documentElement.appendChild(notice);
-    setTimeout(() => notice.remove(), 12000);
+    if (action?.type !== 'QTS_WORKABLE_RESUME') {
+      setTimeout(() => notice.remove(), 12000);
+    }
   }
 
   function detectOutcome() {
@@ -648,7 +906,7 @@
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message.type === 'QTS_WORKABLE_NOTICE') {
-      showNotice(message.message, message.level);
+      showNotice(message.message, message.level, message.action);
       sendResponse({ ok: true });
       return false;
     }
@@ -663,8 +921,25 @@
       return false;
     }
     if (message.type === 'QTS_WORKABLE_SCAN_PAGE') {
-      sendResponse({ ok: true, page: scanApplicationPage(Number(message.pageNumber) || 1) });
-      return false;
+      scanApplicationPage(Number(message.pageNumber) || 1).then((page) =>
+        sendResponse({ ok: true, page })
+      ).catch((error) => sendResponse({
+        ok: false,
+        error: error.message || 'Could not scan the Workable application page.',
+      }));
+      return true;
+    }
+    if (message.type === 'QTS_WORKABLE_STUDY_SCAN') {
+      scanApplicationPage(Number(message.pageNumber) || 1, {
+        includeManualReview: true,
+        includeJobDescription: false,
+      }).then((page) =>
+        sendResponse({ ok: true, page })
+      ).catch((error) => sendResponse({
+        ok: false,
+        error: error.message || 'Could not study the current Workable application step.',
+      }));
+      return true;
     }
     if (message.type === 'QTS_WORKABLE_NEXT_PAGE') {
       clickNextPage().then(sendResponse).catch((error) =>

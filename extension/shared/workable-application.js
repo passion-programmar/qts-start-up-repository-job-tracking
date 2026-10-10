@@ -24,12 +24,20 @@
     }
   }
 
-  function notify(tabId, message, level = 'warn') {
+  function notify(tabId, message, level = 'warn', action) {
     chrome.tabs.sendMessage(tabId, {
       type: 'QTS_WORKABLE_NOTICE',
       message,
       level,
+      ...(action ? { action } : {}),
     }).catch(() => {});
+  }
+
+  function notifyResume(tabId, message) {
+    notify(tabId, message, 'warn', {
+      label: 'Continue',
+      type: 'QTS_WORKABLE_RESUME',
+    });
   }
 
   function lastProgress(tabId, message, type = 'info') {
@@ -93,6 +101,12 @@
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
+  function isSavedFactQuestion(field) {
+    const question = String(field.label || '').toLowerCase();
+    return /\b(salary|compensation|pay expectation|referral|referred|legally authorized to work|authorized to work|work authorization|visa sponsorship|sponsorship required|relocat\w*|move to|notice period|when can you start|availability to start|commut\w*|hybrid|available to work|evenings?|weekends?|on[ -]site|in[ -]person|highest(?: level of)? education|education level|degree level|highest degree|what degree|which degree|degree or qualification)\b/
+      .test(question);
+  }
+
   async function captureJobDescription(tabId) {
     const captured = await sendToTab(tabId, { type: 'QTS_WORKABLE_CAPTURE_JOB' });
     const description = String(captured?.jobDescription || '').trim();
@@ -116,37 +130,134 @@
       throw new Error('Custom GPT task dispatch is unavailable in this extension version.');
     }
     const sent = await dispatch({ taskId, jobTabId: tabId });
-    if (!sent?.handoff?.sent) {
+    const handoffUnconfirmed = Boolean(sent?.handoff?.needsManualSend);
+    if (!sent?.handoff?.sent && !handoffUnconfirmed) {
       throw new Error(sent?.handoff?.error || 'The task was not sent to the assigned Custom GPT.');
     }
 
-    const timeoutAt = Date.now() + 240000;
-    while (Date.now() < timeoutAt) {
-      const status = await request(
-        'GET',
-        `/api/v2/gpt-application-tasks/${encodeURIComponent(taskId)}/extension-status`
+    if (handoffUnconfirmed) {
+      lastProgress(
+        tabId,
+        'ChatGPT did not confirm the task message. Keeping this job active and waiting for the server to confirm its answer package. Send the prompt and approve any requested Action if needed.',
+        'warn'
       );
+    }
+
+    const timeoutAt = handoffUnconfirmed ? Number.POSITIVE_INFINITY : Date.now() + 240000;
+    let lastStatusWarningAt = 0;
+    while (Date.now() < timeoutAt) {
+      let status;
+      try {
+        status = await request(
+          'GET',
+          `/api/v2/gpt-application-tasks/${encodeURIComponent(taskId)}/extension-status`
+        );
+      } catch (error) {
+        if (!handoffUnconfirmed) throw error;
+        if (Date.now() - lastStatusWarningAt >= 30000) {
+          console.error('[QTS Workable] Could not check the uncertain GPT task status; keeping the job active:', error);
+          lastProgress(tabId, `Could not confirm the GPT task status yet: ${error.message}`, 'warn');
+          lastStatusWarningAt = Date.now();
+        }
+        await delay(5000);
+        continue;
+      }
       if (status.status === 'ready') return status.package || {};
       if (status.status === 'failed' || status.status === 'completed') {
         throw new Error(`Custom GPT task ended unexpectedly (${status.status}).`);
       }
-      await delay(2500);
+      await delay(handoffUnconfirmed ? 5000 : 2500);
     }
     throw new Error('Timed out waiting for the Custom GPT. Check its chat and Action error, then resume the task.');
   }
 
-  async function getGeneratedDocuments(taskId, packageData) {
+  function safeDownloadPathPart(value, fallback) {
+    const safe = String(value || '')
+      .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_')
+      .replace(/\s+/g, ' ')
+      .replace(/[. ]+$/g, '')
+      .trim()
+      .slice(0, 100);
+    return safe || fallback;
+  }
+
+  function localDateTimeStamp(date = new Date()) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    const seconds = String(date.getSeconds()).padStart(2, '0');
+    return `${year}-${month}-${day}_${hours}-${minutes}-${seconds}`;
+  }
+
+  async function getGeneratedDocuments(taskId, packageData, run, account) {
     const documents = {};
     for (const [slot, documentType] of [['resume', 'resume'], ['coverLetter', 'cover_letter']]) {
       if (!packageData.documents?.[slot]) continue;
       const result = await api.workerFetchGptTaskDocumentBase64(taskId, documentType);
       if (!result.success) throw new Error(result.message || `Could not download the generated ${slot}.`);
       documents[documentType] = result;
+      if (!run.documentDownloadFolder) {
+        const jobPart = [
+          safeDownloadPathPart(run.jobTitle, `Job-${run.jobId}`),
+          safeDownloadPathPart(run.company, 'Company'),
+        ].join('_');
+        run.documentDownloadFolder = [
+          '$_QTS_RESUME_$',
+          safeDownloadPathPart(account.name, `Account-${run.accountId}`),
+          `${localDateTimeStamp()}_${jobPart}`,
+        ].join('/');
+        await saveRun(run.tabId, run);
+      }
+      const accountFileName = safeDownloadPathPart(account.name, `Account-${run.accountId}`);
+      const safeFileName = `${accountFileName}${documentType === 'cover_letter' ? '_Cover_Letter' : ''}.pdf`;
+      const downloadId = await chrome.downloads.download({
+        url: `data:${result.mimeType || 'application/pdf'};base64,${result.base64}`,
+        filename: `${run.documentDownloadFolder}/${safeFileName}`,
+        conflictAction: 'uniquify',
+        saveAs: false,
+      });
+      await new Promise((resolve, reject) => {
+        let settled = false;
+        const finish = (error) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeout);
+          chrome.downloads.onChanged.removeListener(onChanged);
+          if (error) reject(error);
+          else resolve();
+        };
+        const onChanged = (delta) => {
+          if (delta.id !== downloadId) return;
+          if (delta.state?.current === 'complete') finish();
+          else if (delta.state?.current === 'interrupted') {
+            finish(new Error(`${slot === 'resume' ? 'Resume' : 'Cover letter'} download failed: ${delta.error?.current || 'Chrome interrupted the download.'}`));
+          }
+        };
+        const timeout = setTimeout(
+          () => finish(new Error(`Timed out waiting for the ${slot === 'resume' ? 'resume' : 'cover letter'} download to finish.`)),
+          60000
+        );
+        chrome.downloads.onChanged.addListener(onChanged);
+        chrome.downloads.search({ id: downloadId }).then((items) => {
+          const item = items[0];
+          if (item?.state === 'complete') finish();
+          else if (item?.state === 'interrupted') {
+            finish(new Error(`${slot === 'resume' ? 'Resume' : 'Cover letter'} download failed: ${item.error || 'Chrome interrupted the download.'}`));
+          }
+        }).catch((error) => finish(error));
+      });
+      await request(
+        'DELETE',
+        `/api/v2/gpt-application-tasks/${encodeURIComponent(taskId)}/documents/${documentType}`
+      );
     }
     return documents;
   }
 
-  async function processPage(tabId, run, account, managerAnswers, pageNumber, jobDescription) {
+  async function processPage(tabId, run, account, managerAnswers, pageNumber, jobDescription, options = {}) {
+    const resumeSamePage = Boolean(options.resumeSamePage);
     const page = await scanPage(tabId, pageNumber);
     run.pageSignature = page.pageSignature || '';
     run.pageUrl = page.pageUrl || '';
@@ -155,7 +266,7 @@
       run.pageNumber = pageNumber;
       await saveRun(tabId, run);
       await watchForOutcome(tabId);
-      notify(tabId, 'Security verification found. Complete it manually; QTS will not bypass it.', 'warn');
+      notifyResume(tabId, 'Security verification found. Complete it manually, then continue; QTS will not bypass it.');
       return { paused: true };
     }
     if (!page.fields.length) {
@@ -163,28 +274,36 @@
       run.pageNumber = pageNumber;
       await saveRun(tabId, run);
       await watchForOutcome(tabId);
-      notify(tabId, 'No application fields were detected on this page. Review it and continue manually.', 'warn');
+      notifyResume(tabId, 'No application fields were detected on this page. Review it and continue manually.');
       return { paused: true };
     }
 
+    const profileFactFields = page.fields.filter(isSavedFactQuestion);
+    const gptFields = page.fields.filter((field) => !isSavedFactQuestion(field));
+    const needsGptPackage = gptFields.length > 0
+      || page.fields.some((field) => field.fieldType === 'file');
     const taskId = run.taskId;
-    const pagePayload = {
-      pageUrl: page.pageUrl,
-      pageTitle: page.pageTitle,
-      pageNumber: page.pageNumber,
-      fields: page.fields,
-      ...(jobDescription ? { jobDescription } : {}),
-    };
-    const pageSaved = await request(
-      'PUT',
-      `/api/v2/gpt-application-tasks/${encodeURIComponent(taskId)}/page`,
-      pagePayload
-    );
-    if (!pageSaved.success) throw new Error(pageSaved.message || 'Could not save the current page for the Custom GPT.');
+    let packageData = { answers: [], unresolvedFields: [] };
+    let documents = {};
+    if (needsGptPackage && !resumeSamePage) {
+      const pagePayload = {
+        pageUrl: page.pageUrl,
+        pageTitle: page.pageTitle,
+        pageNumber: page.pageNumber,
+        fields: gptFields,
+        ...(jobDescription ? { jobDescription } : {}),
+      };
+      const pageSaved = await request(
+        'PUT',
+        `/api/v2/gpt-application-tasks/${encodeURIComponent(taskId)}/page`,
+        pagePayload
+      );
+      if (!pageSaved.success) throw new Error(pageSaved.message || 'Could not save the current page for the Custom GPT.');
 
-    lastProgress(tabId, `Custom GPT is preparing answers for page ${pageNumber}…`);
-    const packageData = await getGptPackage(taskId, tabId);
-    const documents = await getGeneratedDocuments(taskId, packageData);
+      lastProgress(tabId, `Custom GPT is preparing answers for page ${pageNumber}…`);
+      packageData = await getGptPackage(taskId, tabId);
+      documents = await getGeneratedDocuments(taskId, packageData, run, account);
+    }
     const fill = await sendToTab(tabId, {
       type: 'QTS_WORKABLE_FILL',
       payload: {
@@ -193,21 +312,30 @@
         answers: packageData.answers || [],
         pageFields: page.fields,
         manualReviewFields: page.manualReviewFields || [],
+        profileFactFields: profileFactFields.map((field) => field.label),
         documents,
         gptPackage: true,
+        preserveExisting: resumeSamePage,
       },
     });
-    if (!fill?.ok) {
+    if (!fill?.ok || fill?.manualAnswerFields?.length) {
       run.phase = 'paused';
       run.pageNumber = pageNumber;
       await saveRun(tabId, run);
       await watchForOutcome(tabId);
-      notify(tabId, (fill?.failures || ['Some fields need your review.']).join(' '), 'warn');
+      const notices = [];
+      if (fill?.manualAnswerFields?.length) {
+        notices.push(
+          `No exact saved profile answer is available for: ${fill.manualAnswerFields.join('; ')}. Complete these fields manually, then continue.`
+        );
+      }
+      if (fill?.failures?.length) notices.push(fill.failures.join(' '));
+      notifyResume(tabId, notices.join(' ') || 'Some fields need your review.');
       return { paused: true };
     }
 
     const unresolved = packageData.unresolvedFields || [];
-    if (unresolved.length || (page.manualReviewFields || []).length) {
+    if (unresolved.length || (!resumeSamePage && (page.manualReviewFields || []).length)) {
       run.phase = 'paused';
       run.pageNumber = pageNumber;
       await saveRun(tabId, run);
@@ -215,7 +343,7 @@
       const reason = unresolved.length
         ? `The GPT needs facts for: ${unresolved.map((field) => field.question).join('; ')}.`
         : `Please review the consent/declaration fields: ${page.manualReviewFields.join('; ')}.`;
-      notify(tabId, `${reason} Complete them yourself, then continue.`, 'warn');
+      notifyResume(tabId, `${reason} Complete them yourself, then continue.`);
       return { paused: true };
     }
 
@@ -226,7 +354,7 @@
       run.pageNumber = pageNumber;
       await saveRun(tabId, run);
       await watchForOutcome(tabId);
-      notify(tabId, 'Workable did not advance to another page. Review validation messages and continue manually.', 'warn');
+      notifyResume(tabId, 'Workable did not advance to another page. Review validation messages and continue manually.');
       return { paused: true };
     }
     if (!next.hasNext) {
@@ -289,6 +417,8 @@
     };
 
     if (!resuming) run.phase = 'opening';
+    run.jobTitle = job.title || run.jobTitle;
+    run.company = job.company || run.company;
     await saveRun(tabId, run);
 
     let jobDescription = String(run.jobDescription || '').trim();
@@ -324,14 +454,15 @@
     if (jobDescription.length < 100) {
       run.phase = 'paused';
       await saveRun(tabId, run);
-      notify(tabId, 'QTS could not capture the job description. Add or confirm it before continuing with the GPT.', 'warn');
+      notifyResume(tabId, 'QTS could not capture the job description. Add or confirm it before continuing with the GPT.');
       return;
     }
     run.jobDescription = jobDescription;
     const pageChangedAfterPause = resuming
       && (run.pageUrl !== pageState.url || run.pageSignature !== pageState.pageSignature);
+    const resumeSamePage = resuming && Boolean(pageState.resumeSamePage) && !pageChangedAfterPause;
     let pageNumber = Math.max(1, Number(run.pageNumber || 0) + (pageChangedAfterPause ? 1 : 0));
-    if (resuming && !pageChangedAfterPause) {
+    if (resuming && !pageChangedAfterPause && !resumeSamePage) {
       notify(tabId, 'This application page is paused. Complete the requested fields and continue to the next page.', 'warn');
       return;
     }
@@ -345,7 +476,8 @@
         account,
         context.managerAnswers,
         pageNumber,
-        jobDescription
+        jobDescription,
+        { resumeSamePage }
       );
       if (!result.nextPage) return;
       pageNumber += 1;
@@ -353,10 +485,10 @@
     run.phase = 'paused';
     await saveRun(tabId, run);
     await watchForOutcome(tabId);
-    notify(tabId, 'This application has more than 50 pages. Continue manually and review before submitting.', 'warn');
+    notifyResume(tabId, 'This application has more than 50 pages. Continue manually and review before submitting.');
   }
 
-  async function begin(tabId, url, pageSignature = '') {
+  async function begin(tabId, url, pageSignature = '', explicitResume = false) {
     if (!workableUrl(url) || busyTabs.has(tabId)) return;
     busyTabs.add(tabId);
     try {
@@ -373,7 +505,8 @@
       }
       const pageChanged = savedRun.phase !== 'claimed'
         && (savedRun.pageSignature !== pageSignature || savedRun.pageUrl !== url);
-      if (savedRun.phase !== 'claimed' && !pageChanged) return;
+      const resumeSamePage = explicitResume && savedRun.phase === 'paused' && !pageChanged;
+      if (savedRun.phase !== 'claimed' && !pageChanged && !resumeSamePage) return;
 
       let context;
       try {
@@ -386,11 +519,19 @@
         || Number(context.account?.account_user_id) !== Number(savedRun.accountId)) {
         throw new Error('The reserved job row or Account no longer matches. Check the Manager job list.');
       }
-      await startAccount(tabId, context, context.account, savedRun, { url, pageSignature });
+      await startAccount(tabId, context, context.account, savedRun, {
+        url,
+        pageSignature,
+        resumeSamePage,
+      });
     } catch (error) {
       console.error('[QTS Workable] Could not process assigned Account:', error);
       const run = await readRun(tabId).catch(() => null);
-      if (run && run.status === 'processing' && run.phase !== 'waiting') {
+      if (explicitResume && run && run.phase !== 'waiting') {
+        run.phase = 'paused';
+        await saveRun(tabId, run);
+        notifyResume(tabId, error.message || 'Could not resume the Workable application.');
+      } else if (run && run.status === 'processing' && run.phase !== 'waiting') {
         await failAndContinue(run, error.message || 'Could not process the Workable application.');
       } else {
         notify(tabId, error.message || 'Could not process the Workable application.', 'error');
@@ -447,8 +588,18 @@
     }
   }
 
-  chrome.runtime.onMessage.addListener((message, sender) => {
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const tabId = sender.tab?.id;
+    if (message.type === 'QTS_WORKABLE_RESUME') {
+      const tabUrl = sender.tab?.url;
+      if (!tabId || !workableUrl(tabUrl)) {
+        sendResponse({ ok: false, error: 'Could not identify the paused Workable application tab.' });
+        return false;
+      }
+      sendResponse({ ok: true });
+      void begin(tabId, tabUrl, message.pageSignature, true);
+      return false;
+    }
     if (message.type === 'QTS_WORKABLE_PAGE_READY') {
       if (tabId && workableUrl(message.url)) void begin(tabId, message.url, message.pageSignature);
       else if (tabId && workableHost(message.url)) {

@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { NextFunction, Request, Response, Router } from 'express';
 import { z } from 'zod';
 import { execute, queryAll, queryOne } from '../../database/connection';
@@ -70,6 +70,39 @@ type TaskRow = {
   resume_text: string | null;
   resume_text_expires_at: Date | string | null;
 };
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalJson).join(',')}]`;
+  }
+  if (value && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right));
+    return `{${entries.map(([key, entry]) => `${JSON.stringify(key)}:${canonicalJson(entry)}`).join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+}
+
+function packageSubmissionHash(value: unknown): string {
+  return createHash('sha256').update(canonicalJson(value)).digest('hex');
+}
+
+function packageMetadataMatches(
+  current: Record<string, unknown>,
+  incoming: {
+    answers: Array<{ stableFieldId: string; answer: string }>;
+    unresolvedFields: Array<{ stableFieldId: string; question: string; reason: string }>;
+    notes: string;
+    documents: { resume: boolean; coverLetter: boolean };
+  }
+): boolean {
+  return canonicalJson({
+    answers: current.answers || [],
+    unresolvedFields: current.unresolvedFields || [],
+    notes: current.notes || '',
+    documents: current.documents || { resume: false, coverLetter: false },
+  }) === canonicalJson(incoming);
+}
 
 function isManager(req: NewSchemaAuthRequest, res: Response): boolean {
   if (req.newSchemaUser?.role === 'manager') return true;
@@ -397,10 +430,6 @@ router.post('/:taskId/package', requireGptActionKey, async (req, res: Response) 
     res.status(404).json({ success: false, message: 'GPT application task not found.' });
     return;
   }
-  if (task.status !== 'waiting_for_gpt') {
-    res.status(409).json({ success: false, message: 'This task is not waiting for a GPT response.' });
-    return;
-  }
   const parsed = taskPackageSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({
@@ -411,6 +440,45 @@ router.post('/:taskId/package', requireGptActionKey, async (req, res: Response) 
         message: issue.message,
       })),
     });
+    return;
+  }
+  const unresolved = parsed.data.unresolvedFields || [];
+  const submittedPackage = {
+    answers: parsed.data.answers,
+    unresolvedFields: unresolved,
+    notes: parsed.data.notes || '',
+    documents: {
+      resume: Boolean(parsed.data.resume),
+      coverLetter: Boolean(parsed.data.coverLetter),
+    },
+  };
+  const submissionHash = packageSubmissionHash(parsed.data);
+  if (task.status === 'ready') {
+    const storedHash = task.package.submissionHash;
+    const sameSubmission = typeof storedHash === 'string'
+      ? storedHash === submissionHash
+      : packageMetadataMatches(task.package, submittedPackage);
+    if (sameSubmission) {
+      res.json({
+        success: true,
+        taskId,
+        status: 'ready',
+        pageNumber: task.page_number,
+        answersStored: parsed.data.answers.length,
+        unresolvedCount: unresolved.length,
+        documents: submittedPackage.documents,
+        idempotentReplay: true,
+      });
+      return;
+    }
+    res.status(409).json({
+      success: false,
+      message: 'A different answer package has already been saved for this task.',
+    });
+    return;
+  }
+  if (task.status !== 'waiting_for_gpt') {
+    res.status(409).json({ success: false, message: 'This task is not waiting for a GPT response.' });
     return;
   }
   const page = (task.task_context.page || {}) as { fields?: Array<{ stableFieldId: string }> };
@@ -434,7 +502,6 @@ router.post('/:taskId/package', requireGptActionKey, async (req, res: Response) 
     answerIds.add(answer.stableFieldId);
   }
 
-  const unresolved = parsed.data.unresolvedFields || [];
   const mergedAnswers = new Map(
     (task.answers || []).map((answer) => [answer.stableFieldId, answer.answer])
   );
@@ -445,15 +512,7 @@ router.post('/:taskId/package', requireGptActionKey, async (req, res: Response) 
     stableFieldId,
     answer,
   }));
-  const packageData = {
-    answers: parsed.data.answers,
-    unresolvedFields: unresolved,
-    notes: parsed.data.notes || '',
-    documents: {
-      resume: Boolean(parsed.data.resume),
-      coverLetter: Boolean(parsed.data.coverLetter),
-    },
-  };
+  const packageData = { ...submittedPackage, submissionHash };
   if (!parsed.data.answers.length && !unresolved.length && !parsed.data.resume && !parsed.data.coverLetter) {
     res.status(400).json({ success: false, message: 'Package must include answers, documents, or unresolved fields.' });
     return;
@@ -595,6 +654,27 @@ router.get('/:taskId/documents/:documentType', requireNewSchemaAuth, async (req:
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `attachment; filename="${document.file_name.replace(/["\\\r\n]/g, '_')}"`);
   res.send(document.content);
+});
+
+router.delete('/:taskId/documents/:documentType', requireNewSchemaAuth, async (req: NewSchemaAuthRequest, res: Response) => {
+  if (!isManager(req, res)) return;
+  const task = await loadManagerTask(req, res, req.params.taskId);
+  if (!task) return;
+  const documentType = req.params.documentType;
+  if (documentType !== 'resume' && documentType !== 'cover_letter') {
+    res.status(400).json({ success: false, message: 'Document type must be resume or cover_letter.' });
+    return;
+  }
+  const result = await execute(
+    `DELETE FROM gpt_application_task_documents
+     WHERE task_id = $1 AND document_type = $2`,
+    [task.task_id, documentType]
+  );
+  if (!result.rowCount) {
+    res.status(404).json({ success: false, message: 'Generated document was not found or was already removed.' });
+    return;
+  }
+  res.json({ success: true, taskId: task.task_id, documentType, deleted: true });
 });
 
 router.post('/:taskId/finish', requireNewSchemaAuth, async (req: NewSchemaAuthRequest, res: Response) => {

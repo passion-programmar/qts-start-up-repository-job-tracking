@@ -848,6 +848,14 @@ function startGptPageWatch(tabId, taskId, options = {}) {
       const result = await worker.watchGptTabAfterSend(tabId, taskId, {
         timeoutMs: options.timeoutMs || 180000,
         pollMs: options.pollMs || 1200,
+        getTaskStatus: async () => {
+          const api = self.__qtsApiWorker;
+          if (!api?.workerApiRequest) return null;
+          return api.workerApiRequest(
+            'GET',
+            `/api/v2/gpt-application-tasks/${encodeURIComponent(taskId)}/extension-status`
+          );
+        },
         onStatus: (snap) => {
           if (gptPageWatchJob !== job || job.cancelled) return;
           notifyGptPageStatus(snap);
@@ -888,8 +896,11 @@ function startGptPageWatch(tabId, taskId, options = {}) {
   })();
 }
 
-async function notifyGptActionApprovalNeeded(jobTabId, taskId) {
-  const message = 'Custom GPT is waiting for Action approval. Open the pinned GPT tab and click Allow.';
+async function notifyGptActionApprovalNeeded(
+  jobTabId,
+  taskId,
+  message = 'Custom GPT is waiting for Action approval. Open the pinned GPT tab and click Allow.'
+) {
   const pinnedGptTabId = await getPinnedGptTabId();
   if (pinnedGptTabId) {
     await focusBrowserWindowForTab(pinnedGptTabId);
@@ -1188,7 +1199,7 @@ async function dispatchCustomGptTask(taskId, prompt, jobTabId, options = {}) {
       message: sendResult.message || message,
     };
 
-    if (handoff.sent) {
+    if (handoff.sent || handoff.needsManualSend) {
       await clearPendingGptDispatch();
     } else {
       await persistPendingGptDispatch({
@@ -1209,14 +1220,18 @@ async function dispatchCustomGptTask(taskId, prompt, jobTabId, options = {}) {
       await showPageDetectAlert(sourceTabId, handoffNote, handoff.sent ? 'success' : 'warn');
     }
 
-    if (handoff.sent && gptTabId) {
+    if (gptTabId && (handoff.sent || handoff.needsManualSend)) {
       startGptPageWatch(gptTabId, taskId, {
         applicationId: options.applicationId,
         pollAndApply: options.pollAndApply,
         jobTabId: sourceTabId,
       });
-    } else if (!handoff.sent) {
-      await notifyGptActionApprovalNeeded(sourceTabId, taskId);
+    }
+    if (!handoff.sent) {
+      const notice = handoff.needsManualSend
+        ? 'PROCESS_TASK may be in the GPT chat but was not confirmed. If it is still in the composer, click Send; approve any requested Action.'
+        : 'PROCESS_TASK was not sent. Open the pinned GPT tab and send it manually.';
+      await notifyGptActionApprovalNeeded(sourceTabId, taskId, notice);
       await chrome.storage.local.set({ qtsLastProcessTaskPrompt: message });
     }
 
@@ -1244,7 +1259,7 @@ self.__qtsDispatchActiveApplicationTask = async ({ taskId, jobTabId }) => {
     pollAndApply: false,
     focus: true,
   });
-  if (!result?.handoff?.sent) {
+  if (!result?.handoff?.sent && !result?.handoff?.needsManualSend) {
     throw new Error(result?.handoff?.error || 'Could not send the application task to the assigned Custom GPT.');
   }
   return result;

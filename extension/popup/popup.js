@@ -45,6 +45,7 @@ const DEFAULT_CANDIDATE_KEY = 'qtsDefaultCandidateByAccount';
 const LEGACY_DEFAULT_CANDIDATE_KEY = 'qtsDefaultCandidateByBidder';
 const AUTO_APPLY_ENABLED_KEY = 'qtsAutoApplyEnabled';
 const SELECTED_ACTION_KEY = 'qtsSelectedAction';
+const WORKABLE_STUDY_STORAGE_KEY = 'qtsWorkableStudyReports';
 const ACTION_BUTTON_IDS = ['btn-get-jd', 'btn-apply', 'btn-custom-apply'];
 
 function updateSelectedAction(actionId) {
@@ -250,6 +251,168 @@ function getQueryTabId() {
   return Number.isFinite(tabId) ? tabId : null;
 }
 
+function workableStudyStatus(message, isError = false) {
+  const status = document.getElementById('workable-study-status');
+  if (!status) return;
+  status.textContent = message;
+  status.style.color = isError ? '#991b1b' : '';
+}
+
+function appendStudyCell(row, value, tagName = 'td') {
+  const cell = document.createElement(tagName);
+  cell.textContent = value || '—';
+  row.appendChild(cell);
+  return cell;
+}
+
+function renderWorkableStudyReport(report) {
+  const pagesHost = document.getElementById('workable-study-pages');
+  if (!pagesHost) return;
+  pagesHost.replaceChildren();
+  const pages = report?.pages || [];
+  if (!pages.length) {
+    workableStudyStatus('No steps scanned yet. The report is temporary and contains field structure only, not entered answers.');
+    return;
+  }
+
+  const fieldCount = pages.reduce((total, page) => total + page.fields.length, 0);
+  workableStudyStatus(`${pages.length} step(s), ${fieldCount} field(s) scanned. This temporary report contains no entered answers.`);
+
+  for (const page of pages) {
+    const section = document.createElement('section');
+    section.className = 'workable-study-step';
+    const heading = document.createElement('h4');
+    heading.textContent = `Step ${page.stepNumber}${page.stepLabel ? ` — ${page.stepLabel}` : ''}`;
+    section.appendChild(heading);
+    const meta = document.createElement('p');
+    meta.className = 'workable-study-step-meta';
+    meta.textContent = `${page.pageTitle || 'Workable application'} · ${page.pagePath || ''} · ${page.fields.length} field(s)${page.captchaPresent ? ' · Security check detected' : ''}`;
+    section.appendChild(meta);
+
+    const table = document.createElement('table');
+    table.className = 'workable-study-table';
+    const head = document.createElement('thead');
+    const headerRow = document.createElement('tr');
+    for (const label of ['Section / question', 'Element', 'Required', 'Choices', 'Field key']) {
+      appendStudyCell(headerRow, label, 'th');
+    }
+    head.appendChild(headerRow);
+    table.appendChild(head);
+    const body = document.createElement('tbody');
+    for (const field of page.fields) {
+      const row = document.createElement('tr');
+      appendStudyCell(row, `${field.section ? `${field.section} — ` : ''}${field.label}${field.manualReview ? ' (human review)' : ''}`);
+      appendStudyCell(row, field.fieldType);
+      appendStudyCell(row, field.required ? 'Yes' : 'No');
+      appendStudyCell(row, field.options?.length ? field.options.join(', ') : '—');
+      appendStudyCell(row, field.fieldKey);
+      body.appendChild(row);
+    }
+    if (!page.fields.length) {
+      const row = document.createElement('tr');
+      const cell = appendStudyCell(row, 'No visible form fields detected.');
+      cell.colSpan = 5;
+      body.appendChild(row);
+    }
+    table.appendChild(body);
+    section.appendChild(table);
+    pagesHost.appendChild(section);
+  }
+}
+
+async function loadWorkableStudyReports() {
+  if (!chrome.storage.session) {
+    throw new Error('Temporary extension session storage is unavailable. Update Chrome and reload the extension.');
+  }
+  const stored = await chrome.storage.session.get(WORKABLE_STUDY_STORAGE_KEY);
+  return stored[WORKABLE_STUDY_STORAGE_KEY] || {};
+}
+
+async function restoreWorkableStudyReport() {
+  if (!targetTabId) return;
+  const reports = await loadWorkableStudyReports();
+  renderWorkableStudyReport(reports[String(targetTabId)]);
+}
+
+async function scanWorkableStudyStep(forceNewStep = false) {
+  const currentButton = document.getElementById('btn-study-current');
+  const nextButton = document.getElementById('btn-study-next');
+  const clearButton = document.getElementById('btn-study-clear');
+  if (currentButton) currentButton.disabled = true;
+  if (nextButton) nextButton.disabled = true;
+  if (clearButton) clearButton.disabled = true;
+  workableStudyStatus('Scanning the current Workable step…');
+  try {
+    if (!targetTabId) throw new Error('No source tab is selected. Open the Workable application and reopen QTS.');
+    const tab = await chrome.tabs.get(targetTabId);
+    const tabUrl = new URL(tab.url || '');
+    if (tabUrl.protocol !== 'https:' || !tabUrl.hostname.toLowerCase().endsWith('.workable.com')
+      || !/\/j\/[^/]+\/apply\/?$/i.test(tabUrl.pathname)) {
+      throw new Error('Open a Workable application form step before scanning.');
+    }
+    const reports = await loadWorkableStudyReports();
+    const previous = reports[String(targetTabId)] || { pages: [] };
+    const response = await chrome.tabs.sendMessage(targetTabId, {
+      type: 'QTS_WORKABLE_STUDY_SCAN',
+      pageNumber: previous.pages.length + 1,
+    });
+    if (!response?.ok || !response.page) {
+      throw new Error(response?.error || 'The Workable scanner did not return a page inventory. Reload the application tab and retry.');
+    }
+
+    const page = response.page;
+    const entry = {
+      pageUrl: page.pageUrl,
+      pagePath: new URL(page.pageUrl).pathname,
+      pageTitle: page.pageTitle,
+      stepLabel: page.stepLabel || '',
+      pageSignature: page.pageSignature,
+      captchaPresent: Boolean(page.captchaPresent),
+      fields: (page.fields || []).map((field) => ({
+        label: String(field.label || 'Unlabeled field'),
+        section: String(field.section || ''),
+        fieldType: String(field.fieldType || 'unknown'),
+        fieldKey: String(field.fieldKey || ''),
+        required: Boolean(field.required),
+        manualReview: Boolean(field.manualReview),
+        options: (field.options || []).map((option) => String(option)),
+      })),
+    };
+    const samePageIndex = previous.pages.findIndex((item) =>
+      item.pageUrl === entry.pageUrl && item.pageSignature === entry.pageSignature
+    );
+    if (!forceNewStep && samePageIndex >= 0 && samePageIndex === previous.pages.length - 1) {
+      entry.stepNumber = previous.pages[samePageIndex].stepNumber;
+      previous.pages[samePageIndex] = entry;
+    } else {
+      entry.stepNumber = previous.pages.length + 1;
+      previous.pages.push(entry);
+    }
+    reports[String(targetTabId)] = previous;
+    await chrome.storage.session.set({ [WORKABLE_STUDY_STORAGE_KEY]: reports });
+    renderWorkableStudyReport(previous);
+    workableStudyStatus(`Scanned Step ${entry.stepNumber}: ${entry.fields.length} field(s). Nothing was filled or submitted.`);
+  } catch (error) {
+    workableStudyStatus(error.message || 'Could not scan the Workable application step.', true);
+  } finally {
+    if (currentButton) currentButton.disabled = false;
+    if (nextButton) nextButton.disabled = false;
+    if (clearButton) clearButton.disabled = false;
+  }
+}
+
+async function clearWorkableStudyReport() {
+  try {
+    if (!targetTabId) throw new Error('No source tab is selected.');
+    const reports = await loadWorkableStudyReports();
+    delete reports[String(targetTabId)];
+    await chrome.storage.session.set({ [WORKABLE_STUDY_STORAGE_KEY]: reports });
+    renderWorkableStudyReport(null);
+  } catch (error) {
+    workableStudyStatus(error.message || 'Could not clear the temporary study report.', true);
+  }
+}
+
 function settleGptDispatchWaiter(msg) {
   const taskId = msg?.taskId;
   if (!taskId) return false;
@@ -438,6 +601,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     await chrome.storage.local.set({ qtsJobSourceTabId: targetTabId });
     chrome.runtime.sendMessage({ type: 'REGISTER_JOB_TAB', tabId: targetTabId }).catch(() => {});
   }
+  restoreWorkableStudyReport().catch((error) => {
+    workableStudyStatus(error.message || 'Could not restore the temporary study report.', true);
+  });
   try {
     await window.api.ensureServerUrl();
     await bootstrapPopupFast();
@@ -528,6 +694,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     }).finally(() => {
       hideLoading();
     });
+  });
+  document.getElementById('btn-study-current')?.addEventListener('click', () => {
+    scanWorkableStudyStep(false);
+  });
+  document.getElementById('btn-study-next')?.addEventListener('click', () => {
+    scanWorkableStudyStep(true);
+  });
+  document.getElementById('btn-study-clear')?.addEventListener('click', () => {
+    clearWorkableStudyReport();
   });
   document.getElementById('btn-apply').addEventListener('click', async () => {
     clearAlert('action-alert');
