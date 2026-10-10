@@ -206,7 +206,7 @@ export function PanelShell({
             >
               ☰
             </button>
-            <h1>{title}</h1>
+            {mode === 'admin' && <h1>{title}</h1>}
           </div>
           <div className="topbar-status">
             <span className={`dot ${online ? 'dot-green' : 'dot-red'}`} />
