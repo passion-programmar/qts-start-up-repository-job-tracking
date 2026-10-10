@@ -18,8 +18,13 @@
 }
 
 .loading-state--page {
-  min-height: min(50vh, 420px);
-  min-height: min(50dvh, 420px);
+  position: absolute;
+  inset: 0;
+  z-index: 200;
+  min-height: 0;
+  background: rgba(245, 247, 250, 0.88);
+  backdrop-filter: blur(3px);
+  cursor: wait;
 }
 
 .loading-state__spinner {

@@ -316,7 +316,7 @@ export function DatabaseRecordsView() {
             {error && !modal && <div className="alert alert-error">{error}</div>}
 
             {recordsLoading ? (
-              <LoadingState label="Loading records…" size="inline" />
+              <LoadingState label="Loading records…" />
             ) : (
               <>
                 <div className="table-scroll">

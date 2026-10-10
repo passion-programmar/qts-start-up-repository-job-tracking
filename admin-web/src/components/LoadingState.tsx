@@ -5,7 +5,7 @@ type LoadingStateProps = {
 
 export function LoadingState({
   label = 'Loading…',
-  size = 'section',
+  size = 'page',
 }: LoadingStateProps) {
   return (
     <div className={`loading-state loading-state--${size}`} role="status" aria-live="polite">
