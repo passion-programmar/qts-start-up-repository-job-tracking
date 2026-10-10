@@ -1,8 +1,10 @@
 {
   "framework": "express",
-  "includeFiles": [
-    "node_modules/pdf-parse/dist/pdf-parse/cjs/pdf.worker.mjs"
-  ],
+  "functions": {
+    "src/app.ts": {
+      "includeFiles": "node_modules/pdf-parse/dist/pdf-parse/cjs/pdf.worker.mjs"
+    }
+  },
   "crons": [
     {
       "path": "/api/v2/gpt-application-tasks/cleanup",
