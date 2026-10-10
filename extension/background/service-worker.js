@@ -1328,10 +1328,7 @@ const JOB_APPLICATION_HANDLERS = {
   },
 };
 
-async function startManagerJobQueue(
-  sourceTabId,
-  { preferCurrentUrl = true, accountUserId, applyRunId } = {}
-) {
+async function startManagerJobQueue(sourceTabId, { accountUserId, applyRunId } = {}) {
   const worker = self.__qtsGptWorkerHandoff;
   const api = self.__qtsApiWorker;
   if (!api?.workerApiRequest) {
@@ -1355,11 +1352,6 @@ async function startManagerJobQueue(
   await setJobQueueBadge(sourceTabId, '...', '#2563eb');
   await showPageDetectAlert(sourceTabId, 'QTS Apply: finding your next supported job…', 'info');
 
-  const sourceUrl = sourceTab.url || '';
-  const currentPageHandler = preferCurrentUrl
-    ? supportedHandlers.find(([, handler]) => handler.matchesUrl(sourceUrl))
-    : null;
-  const currentJobUrl = currentPageHandler ? sourceUrl : null;
   const claim = await api.workerApiRequest(
     'POST',
     '/api/v2/jobs/claim-next',
@@ -1367,7 +1359,6 @@ async function startManagerJobQueue(
       supportedTypes: supportedHandlers.map(([type]) => type),
       accountUserId: Number(accountUserId),
       applyRunId,
-      ...(currentJobUrl ? { url: currentJobUrl } : {}),
     }
   );
   if (!claim.success) {
@@ -1476,7 +1467,6 @@ async function startManagerJobQueue(
 
 self.__qtsStartNextApplication = (tabId, accountUserId, applyRunId) =>
   startManagerJobQueue(tabId, {
-    preferCurrentUrl: false,
     accountUserId,
     applyRunId,
   });
