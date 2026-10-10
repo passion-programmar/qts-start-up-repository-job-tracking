@@ -58,7 +58,7 @@ export function DashboardMode3View() {
     [interviews]
   );
 
-  if (loading) return <LoadingState label="Loading operations dashboard…" size="page" />;
+  if (loading) return <LoadingState label="Loading operations dashboard…" />;
   if (!stats) return <div className="text-muted">Could not load operations dashboard.</div>;
 
   const bid = stats.bidSummary || { today: 0, week: 0, month: 0 };

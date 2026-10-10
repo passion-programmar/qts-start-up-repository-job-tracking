@@ -43,7 +43,7 @@ export function DashboardView() {
     return () => { cancelled = true; };
   }, []);
 
-  if (loading) return <LoadingState label="Loading…" size="page" />;
+  if (loading) return <LoadingState label="Loading…" />;
   if (!stats) return <div className="text-muted">Could not load dashboard.</div>;
 
   const bid = stats.bidSummary || { today: 0, week: 0, month: 0 };

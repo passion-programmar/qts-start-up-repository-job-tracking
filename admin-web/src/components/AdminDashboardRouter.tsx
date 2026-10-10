@@ -10,7 +10,7 @@ import { useAdminUiMode } from '@/components/AdminUiModeProvider';
 export function AdminDashboardRouter() {
   const { adminUiMode, loading } = useAdminUiMode();
 
-  if (loading) return <LoadingState label="Loading dashboard…" size="page" />;
+  if (loading) return <LoadingState label="Loading dashboard…" />;
   if (adminUiMode === 'mode2') return <DashboardMode2View />;
   if (adminUiMode === 'mode3') return <DashboardMode3View />;
   return <DashboardView />;

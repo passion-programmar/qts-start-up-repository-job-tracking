@@ -39,7 +39,7 @@ router.get('/', async (req, res) => {
     const period = PERIODS[parsedPeriod.data];
     const where = scope.clause ? `AND ${scope.clause}` : '';
     const params = scope.params;
-    const [bidsByPeriod, interviewsByPeriod, bidsByStatus, interviewsByOutcome, byManager, byAccount] = await Promise.all([
+    const [bidsByPeriod, interviewsByPeriod, jobsByStatus, interviewsByOutcome, byManager, byAccount] = await Promise.all([
         (0, connection_1.queryAll)(`SELECT date_trunc('${period.buckets}', b.applied_date) AS bucket, count(*)::int AS count
         FROM bids b
         JOIN users manager ON manager.u_id = b.manager_user_id AND manager.role = 'manager'
@@ -52,11 +52,11 @@ router.get('/', async (req, res) => {
         JOIN users manager ON manager.u_id = b.manager_user_id AND manager.role = 'manager'
          WHERE i.interview_date >= CURRENT_DATE - INTERVAL '${period.interval}' ${where}
          GROUP BY bucket ORDER BY bucket ASC`, params),
-        (0, connection_1.queryAll)(`SELECT b.job_status AS status, count(*)::int AS count
-         FROM bids b
-         JOIN users manager ON manager.u_id = b.manager_user_id AND manager.role = 'manager'
-         WHERE b.applied_date >= NOW() - INTERVAL '${period.interval}' ${where}
-         GROUP BY b.job_status ORDER BY b.job_status`, params),
+        (0, connection_1.queryAll)(`SELECT job.status, count(*)::int AS count
+         FROM job_list job
+         JOIN users manager ON manager.u_id = job.u_id AND manager.role = 'manager'
+         WHERE job.get_date >= NOW() - INTERVAL '${period.interval}' ${where}
+         GROUP BY job.status ORDER BY job.status`, params),
         (0, connection_1.queryAll)(`SELECT COALESCE(i.outcome, 'pending') AS outcome, count(*)::int AS count
         FROM interviews i
         JOIN bids b ON b.b_id = i.b_id
@@ -118,7 +118,7 @@ router.get('/', async (req, res) => {
             period: parsedPeriod.data,
             bidsByPeriod: bidsByPeriod.map((row) => ({ bucket: row.bucket, count: Number(row.count) })),
             interviewsByPeriod: interviewsByPeriod.map((row) => ({ bucket: row.bucket, count: Number(row.count) })),
-            bidsByStatus: asCount(bidsByStatus),
+            jobsByStatus: asCount(jobsByStatus),
             interviewsByOutcome: asCount(interviewsByOutcome),
             byManager: asCount(byManager),
             byAccount: asCount(byAccount),

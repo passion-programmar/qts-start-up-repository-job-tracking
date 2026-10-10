@@ -68,7 +68,7 @@ export function DashboardMode2View() {
 
   const interviewTrend = useMemo(() => groupInterviewsByDay(interviews), [interviews]);
 
-  if (loading) return <LoadingState label="Loading analytics…" size="page" />;
+  if (loading) return <LoadingState label="Loading analytics…" />;
   if (!stats) return <div className="text-muted">Could not load analytics dashboard.</div>;
 
   const bid = stats.bidSummary || { today: 0, week: 0, month: 0 };

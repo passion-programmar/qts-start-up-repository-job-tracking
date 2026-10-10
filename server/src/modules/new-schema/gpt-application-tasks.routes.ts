@@ -23,11 +23,13 @@ const pageFieldSchema = z.object({
   label: z.string().max(1000),
   fieldType: z.string().max(100),
   fieldKey: z.string().max(300).optional(),
+  section: z.string().max(200).optional(),
   documentSlot: z.enum(['resume', 'cover_letter']).optional(),
   required: z.boolean(),
   options: z.array(z.string().max(500)).max(100).optional(),
   placeholder: z.string().max(1000).optional(),
   currentValue: z.string().max(5000).optional(),
+  manualReview: z.boolean().optional(),
 }).strict();
 
 const pageContextSchema = z.object({

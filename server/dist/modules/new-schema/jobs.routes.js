@@ -83,8 +83,7 @@ function jobProjection() {
                    JOIN users account ON account.u_id = assignment.account_user_id
                    WHERE assignment.j_id = j.j_id
                  ), '[]'::json) AS selected_accounts,
-                 j.status, j.get_date,
-                 (SELECT COUNT(*)::int FROM bids b WHERE b.j_id = j.j_id) AS bid_count
+                 j.status, j.get_date
           FROM job_list j`;
 }
 async function synchronizeAccountJobRows(tx, managerId, url, applicationType, company, title, categoryIds, selectedAccountIds) {
@@ -491,9 +490,16 @@ router.patch('/:id/status', async (req, res) => {
        FROM job_account_assignments assignment
        JOIN job_list job ON job.j_id = assignment.j_id
        WHERE job.j_id = $1 AND job.u_id = $2`, [jobId, managerId]);
-        const accountId = assignmentResult.rows[0]?.account_user_id;
-        if (!accountId)
+        const accountId = Number(assignmentResult.rows[0]?.account_user_id);
+        if (!accountId) {
+            if (parsed.data.status === 'did') {
+                const existingBid = await tx.query('SELECT 1 FROM bids WHERE j_id = $1 AND manager_user_id = $2 LIMIT 1', [jobId, managerId]);
+                if (existingBid.rows.length) {
+                    return { notFound: false, status: 'did' };
+                }
+            }
             return { notFound: true };
+        }
         await tx.query('SELECT u_id FROM users WHERE u_id = $1 AND role = \'account\' FOR UPDATE', [accountId]);
         const jobResult = await tx.query(`SELECT job.j_id, job.u_id, job.title, job.company, job.url, job.status,
               assignment.account_user_id
@@ -531,33 +537,96 @@ router.patch('/:id/status', async (req, res) => {
             await tx.query(`DELETE FROM gpt_application_tasks WHERE job_id = $1 AND status = 'failed'`, [jobId]);
             return { notFound: false, status: 'todo' };
         }
-        if (job.status !== 'processing')
+        if (parsed.data.status === 'did') {
+            if (!['processing', 'todo', 'failed'].includes(job.status)) {
+                return { conflict: true, status: job.status };
+            }
+            if (job.status === 'processing' && !parsed.data.applyRunId) {
+                return { conflict: true, status: job.status };
+            }
+            if (job.status !== 'processing') {
+                const activeRun = await tx.query(`SELECT 1
+           WHERE EXISTS (
+             SELECT 1 FROM account_apply_runs
+             WHERE account_user_id = $1
+               AND last_activity_at > NOW() - INTERVAL '24 hours'
+           )
+           OR EXISTS (
+             SELECT 1 FROM job_list active_job
+             JOIN job_account_assignments active_assignment
+               ON active_assignment.j_id = active_job.j_id
+             WHERE active_job.u_id = $2
+               AND active_assignment.account_user_id = $1
+               AND active_job.status = 'processing'
+           )`, [accountId, managerId]);
+                if (activeRun.rows.length)
+                    return { busy: true };
+            }
+            await tx.query(`INSERT INTO bids (
+           u_id, j_id, manager_user_id, job_title, company, job_url, resume_path
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+         ON CONFLICT (u_id, j_id) DO NOTHING`, [
+                accountId, job.j_id, managerId, job.title, job.company,
+                job.url, `account-profile:${accountId}`,
+            ]);
+            await tx.query(`UPDATE gpt_application_tasks
+         SET status = 'completed',
+             task_context = jsonb_build_object('jobContext', COALESCE(task_context->'jobContext', '{}'::jsonb)),
+             resume_text = NULL, resume_text_expires_at = NULL,
+             last_activity_at = NOW(), updated_at = NOW()
+         WHERE job_id = $1 AND status <> 'failed'`, [jobId]);
+            await tx.query('DELETE FROM job_list WHERE j_id = $1 AND u_id = $2', [jobId, managerId]);
+            if (parsed.data.applyRunId) {
+                await tx.query(`UPDATE account_apply_runs SET last_activity_at = NOW()
+           WHERE account_user_id = $1 AND manager_user_id = $2 AND run_id = $3`, [accountId, managerId, parsed.data.applyRunId]);
+            }
+            else {
+                await tx.query(`DELETE FROM account_apply_runs
+           WHERE account_user_id = $1 AND manager_user_id = $2`, [accountId, managerId]);
+            }
+            return { notFound: false, status: 'did', movedToBids: true };
+        }
+        if (parsed.data.status !== 'failed'
+            || (job.status !== 'processing' && job.status !== 'todo')) {
             return { conflict: true, status: job.status };
-        await tx.query(`UPDATE job_list SET status = $1 WHERE j_id = $2 AND u_id = $3`, [parsed.data.status, jobId, managerId]);
+        }
+        if (job.status === 'processing' && !parsed.data.applyRunId) {
+            return { conflict: true, status: job.status };
+        }
+        if (job.status === 'todo') {
+            const activeRun = await tx.query(`SELECT 1
+         WHERE EXISTS (
+           SELECT 1 FROM account_apply_runs
+           WHERE account_user_id = $1
+             AND last_activity_at > NOW() - INTERVAL '24 hours'
+         )
+         OR EXISTS (
+           SELECT 1 FROM job_list active_job
+           JOIN job_account_assignments active_assignment
+             ON active_assignment.j_id = active_job.j_id
+           WHERE active_job.u_id = $2
+             AND active_assignment.account_user_id = $1
+             AND active_job.status = 'processing'
+         )`, [accountId, managerId]);
+            if (activeRun.rows.length)
+                return { busy: true };
+        }
+        await tx.query(`UPDATE job_list SET status = 'failed' WHERE j_id = $1 AND u_id = $2`, [jobId, managerId]);
         if (parsed.data.applyRunId) {
             await tx.query(`UPDATE account_apply_runs SET last_activity_at = NOW()
-         WHERE account_user_id = $1 AND manager_user_id = $2 AND run_id = $3`, [job.account_user_id, managerId, parsed.data.applyRunId]);
+         WHERE account_user_id = $1 AND manager_user_id = $2 AND run_id = $3`, [accountId, managerId, parsed.data.applyRunId]);
         }
         else {
             await tx.query(`DELETE FROM account_apply_runs
-         WHERE account_user_id = $1 AND manager_user_id = $2`, [job.account_user_id, managerId]);
-        }
-        if (parsed.data.status === 'did') {
-            await tx.query(`INSERT INTO bids (
-           u_id, j_id, manager_user_id, job_title, company, job_url, job_status, resume_path
-         ) VALUES ($1, $2, $3, $4, $5, $6, 'did', $7)
-         ON CONFLICT (u_id, j_id) DO NOTHING`, [
-                job.account_user_id, job.j_id, managerId, job.title, job.company,
-                job.url, `account-profile:${job.account_user_id}`,
-            ]);
+         WHERE account_user_id = $1 AND manager_user_id = $2`, [accountId, managerId]);
         }
         await tx.query(`UPDATE gpt_application_tasks
-       SET status = $2,
+       SET status = 'failed',
            task_context = jsonb_build_object('jobContext', COALESCE(task_context->'jobContext', '{}'::jsonb)),
            resume_text = NULL, resume_text_expires_at = NULL,
            last_activity_at = NOW(), updated_at = NOW()
-       WHERE job_id = $1 AND status <> 'failed'`, [jobId, parsed.data.status === 'failed' ? 'failed' : 'completed']);
-        return { notFound: false, status: parsed.data.status };
+       WHERE job_id = $1 AND status <> 'failed'`, [jobId]);
+        return { notFound: false, status: 'failed' };
     });
     if (updated.notFound) {
         res.status(404).json({ success: false, message: 'Account-specific job row not found.' });
@@ -566,7 +635,7 @@ router.patch('/:id/status', async (req, res) => {
     if ('conflict' in updated) {
         res.status(409).json({
             success: false,
-            message: `This job row is ${updated.status}; only failed rows can be reset to todo, and only processing rows can be closed.`,
+            message: `This job row is ${updated.status}; only failed rows can be reset, and only waiting or active rows can be marked failed or applied.`,
             status: updated.status,
         });
         return;
@@ -574,7 +643,7 @@ router.patch('/:id/status', async (req, res) => {
     if ('busy' in updated) {
         res.status(409).json({
             success: false,
-            message: 'This Account has an active Apply run. Wait for it to finish before resetting a failed row.',
+            message: 'This Account has an active Apply run. Wait for it to finish before changing this job status.',
         });
         return;
     }

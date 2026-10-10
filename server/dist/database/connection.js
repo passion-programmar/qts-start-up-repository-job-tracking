@@ -289,8 +289,6 @@ async function runMigrations() {
       job_title TEXT NOT NULL,
       company TEXT NOT NULL,
       job_url TEXT NOT NULL,
-      job_status TEXT NOT NULL DEFAULT 'did'
-        CHECK (job_status IN ('processing', 'todo', 'did', 'failed')),
       resume_path TEXT NOT NULL,
       applied_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       UNIQUE (u_id, j_id)
@@ -608,24 +606,21 @@ async function migrateSchema() {
     await execute('ALTER TABLE bids ADD COLUMN IF NOT EXISTS job_title TEXT');
     await execute('ALTER TABLE bids ADD COLUMN IF NOT EXISTS company TEXT');
     await execute('ALTER TABLE bids ADD COLUMN IF NOT EXISTS job_url TEXT');
-    await execute(`ALTER TABLE bids ADD COLUMN IF NOT EXISTS job_status TEXT
-    CHECK (job_status IN ('processing', 'todo', 'did', 'failed'))`);
     await execute(`
     UPDATE bids b SET
       manager_user_id = j.u_id,
       job_title = j.title,
       company = j.company,
-      job_url = j.url,
-      job_status = j.status
+      job_url = j.url
     FROM job_list j
     WHERE j.j_id = b.j_id AND (
       b.manager_user_id IS NULL OR b.job_title IS NULL OR b.company IS NULL
-      OR b.job_url IS NULL OR b.job_status IS NULL
+      OR b.job_url IS NULL
     )
   `);
     const incompleteBids = await queryOne(`SELECT count(*)::int AS count FROM bids
      WHERE manager_user_id IS NULL OR job_title IS NULL OR company IS NULL
-       OR job_url IS NULL OR job_status IS NULL`);
+       OR job_url IS NULL`);
     if (Number(incompleteBids?.count ?? 0) > 0) {
         throw new Error('Cannot migrate bids: one or more bid records have no matching job-list snapshot.');
     }
@@ -633,9 +628,25 @@ async function migrateSchema() {
     await execute('ALTER TABLE bids ALTER COLUMN job_title SET NOT NULL');
     await execute('ALTER TABLE bids ALTER COLUMN company SET NOT NULL');
     await execute('ALTER TABLE bids ALTER COLUMN job_url SET NOT NULL');
-    await execute("ALTER TABLE bids ALTER COLUMN job_status SET DEFAULT 'did'");
-    await execute('ALTER TABLE bids ALTER COLUMN job_status SET NOT NULL');
+    await execute('ALTER TABLE bids DROP COLUMN IF EXISTS job_status');
     await execute('ALTER TABLE bids DROP CONSTRAINT IF EXISTS bids_j_id_fkey');
+    await withTransaction(async (tx) => {
+        await tx.query(`INSERT INTO bids (
+         u_id, j_id, manager_user_id, job_title, company, job_url, resume_path
+       )
+       SELECT assignment.account_user_id, job.j_id, job.u_id, job.title, job.company,
+              job.url, 'account-profile:' || assignment.account_user_id::text
+       FROM job_list job
+       JOIN job_account_assignments assignment ON assignment.j_id = job.j_id
+       WHERE job.status = 'did'
+       ON CONFLICT (u_id, j_id) DO NOTHING`);
+        await tx.query(`DELETE FROM job_list job
+       WHERE job.status = 'did'
+         AND EXISTS (
+           SELECT 1 FROM job_account_assignments assignment
+           WHERE assignment.j_id = job.j_id
+         )`);
+    });
     await execute('CREATE INDEX IF NOT EXISTS idx_bids_manager ON bids(manager_user_id)');
     await execute('CREATE INDEX IF NOT EXISTS idx_bids_manager_url ON bids(manager_user_id, job_url)');
 }
