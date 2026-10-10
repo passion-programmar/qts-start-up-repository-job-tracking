@@ -314,7 +314,9 @@ td.text-right {
 
 .sidebar-nav {
   min-height: 0;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: thin;
 }
 
 .sidebar-nav .nav-item {
@@ -599,5 +601,73 @@ td.text-right {
   .calendar-cell {
     min-height: 72px;
     padding: 6px;
+  }
+}
+
+/* Responsive QA targets: 360, 480, 768, 1024, and 1440 CSS pixels. */
+@media (max-width: 359px) {
+  .content {
+    padding-right: 10px;
+    padding-left: 10px;
+  }
+
+  .topbar h1 {
+    font-size: 16px;
+  }
+
+  .stats-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+  }
+}
+
+@media (min-width: 480px) and (max-width: 767px) {
+  .content {
+    padding-right: 18px;
+    padding-left: 18px;
+  }
+
+  .stats-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1023px) {
+  .sidebar {
+    width: 200px;
+  }
+
+  .content {
+    padding: 20px;
+  }
+
+  .topbar {
+    padding-right: 20px;
+    padding-left: 20px;
+  }
+}
+
+@media (min-width: 1024px) and (max-width: 1439px) {
+  .sidebar {
+    width: 220px;
+  }
+
+  .content {
+    padding: 24px;
+  }
+}
+
+@media (min-width: 1440px) {
+  .sidebar {
+    width: 240px;
+  }
+
+  .content {
+    padding: 28px clamp(28px, 2.2vw, 40px);
+  }
+
+  .topbar {
+    padding-right: clamp(28px, 2.2vw, 40px);
+    padding-left: clamp(28px, 2.2vw, 40px);
   }
 }

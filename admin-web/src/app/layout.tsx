@@ -1,5 +1,8 @@
 import type { Metadata, Viewport } from 'next';
+import { AntdRegistry } from '@ant-design/nextjs-registry';
+import 'antd/dist/reset.css';
 import './globals.css';
+import { AntdThemeProvider } from '@/components/AntdThemeProvider';
 import { APP_NAME } from '@/lib/branding';
 
 export const metadata: Metadata = {
@@ -23,7 +26,11 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        <AntdRegistry>
+          <AntdThemeProvider>{children}</AntdThemeProvider>
+        </AntdRegistry>
+      </body>
     </html>
   );
 }

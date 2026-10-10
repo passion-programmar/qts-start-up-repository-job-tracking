@@ -157,7 +157,7 @@ export function ManagerApplicationProfilesView() {
     value: BooleanChoice,
     onChange: (value: BooleanChoice) => void
   ) => (
-    <div className="form-group">
+    <div className="form-group application-profile__field">
       <label htmlFor={id}>{label}</label>
       <select id={id} value={value} onChange={(event) => onChange(event.target.value as BooleanChoice)}>
         <option value="">Not set</option>
@@ -168,123 +168,180 @@ export function ManagerApplicationProfilesView() {
   );
 
   return (
-    <form className="card settings-card" onSubmit={(event) => { void save(event); }}>
-      <div className="card-title">Reusable Application Answers</div>
-      <p className="text-muted">
-        These answers belong to your Manager account and are used for applications you manage. Reuse them only when
-        accurate for the Account applying; automation must ask rather than guess when an answer does not clearly apply.
-      </p>
+    <form className="application-profile" onSubmit={(event) => { void save(event); }}>
+      <header className="application-profile__header">
+        <div>
+          <span className="application-profile__eyebrow">MANAGER WORKSPACE</span>
+          <h2>Reusable application answers</h2>
+          <p>
+            Save details you use frequently. Only reuse an answer when it accurately applies to the account and job.
+          </p>
+        </div>
+      </header>
       {loading ? <p>Loading application answers…</p> : (
         <>
           {message && <div className={`alert ${isError ? 'alert-error' : 'alert-success'}`}>{message}</div>}
-          <h3>Country</h3>
-          <div className="form-group">
-            <label htmlFor="managed-country">Manager’s country</label>
-            <input id="managed-country" maxLength={100} value={profile.managedCountry}
-              onChange={(event) => update('managedCountry', event.target.value)} />
-          </div>
+          <section className="application-profile__section" aria-labelledby="profile-country-title">
+            <div className="application-profile__section-heading">
+              <h3 id="profile-country-title">Location</h3>
+              <p>Set the country associated with the manager profile.</p>
+            </div>
+            <div className="application-profile__grid">
+              <div className="form-group application-profile__field">
+                <label htmlFor="managed-country">Manager’s country</label>
+                <input id="managed-country" maxLength={100} value={profile.managedCountry}
+                  onChange={(event) => update('managedCountry', event.target.value)} />
+              </div>
+            </div>
+          </section>
 
-          <h3>Work authorization</h3>
-          {yesNoSelect('authorized-to-work', 'Authorized to work', profile.authorizedToWork,
-            (value) => update('authorizedToWork', value))}
-          <div className="form-group">
-            <label htmlFor="authorization-status">Authorization type or status</label>
-            <input id="authorization-status" maxLength={500} value={profile.authorizationStatus}
-              onChange={(event) => update('authorizationStatus', event.target.value)} />
-          </div>
-          {yesNoSelect('sponsorship-required', 'Sponsorship required', profile.sponsorshipRequired,
-            (value) => update('sponsorshipRequired', value))}
-          <div className="form-group">
-            <label htmlFor="authorization-expiry">Authorization expiration date (optional)</label>
-            <input id="authorization-expiry" type="date" value={profile.authorizationExpiresOn}
-              onChange={(event) => update('authorizationExpiresOn', event.target.value)} />
-          </div>
+          <section className="application-profile__section" aria-labelledby="profile-authorization-title">
+            <div className="application-profile__section-heading">
+              <h3 id="profile-authorization-title">Work authorization</h3>
+              <p>Capture eligibility and sponsorship details clearly.</p>
+            </div>
+            <div className="application-profile__grid">
+              {yesNoSelect('authorized-to-work', 'Authorized to work', profile.authorizedToWork,
+                (value) => update('authorizedToWork', value))}
+              <div className="form-group application-profile__field">
+                <label htmlFor="authorization-status">Authorization type or status</label>
+                <input id="authorization-status" maxLength={500} value={profile.authorizationStatus}
+                  onChange={(event) => update('authorizationStatus', event.target.value)} />
+              </div>
+              {yesNoSelect('sponsorship-required', 'Sponsorship required', profile.sponsorshipRequired,
+                (value) => update('sponsorshipRequired', value))}
+              <div className="form-group application-profile__field">
+                <label htmlFor="authorization-expiry">Authorization expiration date (optional)</label>
+                <input id="authorization-expiry" type="date" value={profile.authorizationExpiresOn}
+                  onChange={(event) => update('authorizationExpiresOn', event.target.value)} />
+              </div>
+            </div>
+          </section>
 
-          <h3>Relocation</h3>
-          {yesNoSelect('relocation-willing', 'Willing to relocate', profile.relocationWilling,
-            (value) => update('relocationWilling', value))}
-          <div className="form-group">
-            <label htmlFor="relocation-details">Reusable relocation details</label>
-            <textarea id="relocation-details" maxLength={2000} value={profile.relocationDetails}
-              onChange={(event) => update('relocationDetails', event.target.value)} />
-          </div>
+          <section className="application-profile__section" aria-labelledby="profile-relocation-title">
+            <div className="application-profile__section-heading">
+              <h3 id="profile-relocation-title">Relocation</h3>
+              <p>Describe preferences or constraints that help answer employer questions.</p>
+            </div>
+            <div className="application-profile__grid">
+              {yesNoSelect('relocation-willing', 'Willing to relocate', profile.relocationWilling,
+                (value) => update('relocationWilling', value))}
+              <div className="form-group application-profile__field application-profile__field--full">
+                <label htmlFor="relocation-details">Reusable relocation details</label>
+                <textarea id="relocation-details" maxLength={2000} value={profile.relocationDetails}
+                  onChange={(event) => update('relocationDetails', event.target.value)} />
+                <div className="application-profile__field-meta">
+                  <span>Long answers wrap automatically.</span>
+                  <span>{profile.relocationDetails.length}/2,000</span>
+                </div>
+              </div>
+            </div>
+          </section>
 
-          <h3>Notice period</h3>
-          <div className="form-group">
-            <label htmlFor="notice-period-value">Duration</label>
-            <input id="notice-period-value" type="number" min="0" step="1" value={profile.noticePeriodValue}
-              onChange={(event) => update('noticePeriodValue', event.target.value)} />
-          </div>
-          <div className="form-group">
-            <label htmlFor="notice-period-unit">Duration unit</label>
-            <select id="notice-period-unit" value={profile.noticePeriodUnit}
-              onChange={(event) => update('noticePeriodUnit', event.target.value as ProfileForm['noticePeriodUnit'])}>
-              <option value="">Not set</option><option value="days">Days</option>
-              <option value="weeks">Weeks</option><option value="months">Months</option>
-            </select>
-          </div>
-          <div className="form-group">
-            <label htmlFor="notice-period-text">Reusable notice period text</label>
-            <textarea id="notice-period-text" maxLength={1000} value={profile.noticePeriodText}
-              onChange={(event) => update('noticePeriodText', event.target.value)} />
-          </div>
+          <section className="application-profile__section" aria-labelledby="profile-notice-title">
+            <div className="application-profile__section-heading">
+              <h3 id="profile-notice-title">Notice period</h3>
+              <p>Provide a duration and an optional reusable explanation.</p>
+            </div>
+            <div className="application-profile__grid">
+              <div className="form-group application-profile__field">
+                <label htmlFor="notice-period-value">Duration</label>
+                <input id="notice-period-value" type="number" min="0" step="1" value={profile.noticePeriodValue}
+                  onChange={(event) => update('noticePeriodValue', event.target.value)} />
+              </div>
+              <div className="form-group application-profile__field">
+                <label htmlFor="notice-period-unit">Duration unit</label>
+                <select id="notice-period-unit" value={profile.noticePeriodUnit}
+                  onChange={(event) => update('noticePeriodUnit', event.target.value as ProfileForm['noticePeriodUnit'])}>
+                  <option value="">Not set</option><option value="days">Days</option>
+                  <option value="weeks">Weeks</option><option value="months">Months</option>
+                </select>
+              </div>
+              <div className="form-group application-profile__field application-profile__field--full">
+                <label htmlFor="notice-period-text">Reusable notice period text</label>
+                <textarea id="notice-period-text" maxLength={1000} value={profile.noticePeriodText}
+                  onChange={(event) => update('noticePeriodText', event.target.value)} />
+                <div className="application-profile__field-meta">
+                  <span>Optional details to reuse in applications.</span>
+                  <span>{profile.noticePeriodText.length}/1,000</span>
+                </div>
+              </div>
+            </div>
+          </section>
 
-          <h3>Salary answers</h3>
-          <p className="text-muted">Add separate currencies and pay periods; no conversion is performed.</p>
+          <section className="application-profile__section" aria-labelledby="profile-salary-title">
+            <div className="application-profile__section-heading">
+              <h3 id="profile-salary-title">Salary answers</h3>
+              <p>Add separate currencies and pay periods; no conversion is performed.</p>
+            </div>
           {profile.salaryAnswers.map((answer, index) => (
-            <fieldset className="card" key={index}>
+            <fieldset className="application-profile__entry" key={index}>
               <legend>Salary entry {index + 1}</legend>
-              <div className="form-group"><label htmlFor={`salary-currency-${index}`}>Currency code</label>
+              <div className="application-profile__grid">
+              <div className="form-group application-profile__field"><label htmlFor={`salary-currency-${index}`}>Currency code</label>
                 <input id={`salary-currency-${index}`} required maxLength={3} placeholder="EUR"
                   value={answer.currency} onChange={(event) => {
                     const rows = [...profile.salaryAnswers]; rows[index] = { ...answer, currency: event.target.value.toUpperCase() };
                     update('salaryAnswers', rows);
                   }} /></div>
-              <div className="form-group"><label htmlFor={`salary-min-${index}`}>Minimum amount (optional)</label>
+              <div className="form-group application-profile__field"><label htmlFor={`salary-min-${index}`}>Minimum amount (optional)</label>
                 <input id={`salary-min-${index}`} type="number" min="0" step="0.01" value={answer.minimumAmount}
                   onChange={(event) => { const rows = [...profile.salaryAnswers]; rows[index] = { ...answer, minimumAmount: event.target.value }; update('salaryAnswers', rows); }} /></div>
-              <div className="form-group"><label htmlFor={`salary-max-${index}`}>Maximum amount (optional)</label>
+              <div className="form-group application-profile__field"><label htmlFor={`salary-max-${index}`}>Maximum amount (optional)</label>
                 <input id={`salary-max-${index}`} type="number" min="0" step="0.01" value={answer.maximumAmount}
                   onChange={(event) => { const rows = [...profile.salaryAnswers]; rows[index] = { ...answer, maximumAmount: event.target.value }; update('salaryAnswers', rows); }} /></div>
-              <div className="form-group"><label htmlFor={`salary-period-${index}`}>Pay period</label>
+              <div className="form-group application-profile__field"><label htmlFor={`salary-period-${index}`}>Pay period</label>
                 <select id={`salary-period-${index}`} value={answer.payPeriod}
                   onChange={(event) => { const rows = [...profile.salaryAnswers]; rows[index] = { ...answer, payPeriod: event.target.value as SalaryAnswer['payPeriod'] }; update('salaryAnswers', rows); }}>
                   <option value="hour">Hourly</option><option value="day">Daily</option><option value="week">Weekly</option>
                   <option value="month">Monthly</option><option value="year">Yearly</option>
                 </select></div>
-              <div className="form-group"><label htmlFor={`salary-text-${index}`}>Reusable salary text (optional)</label>
-                <input id={`salary-text-${index}`} maxLength={1000} value={answer.answerText}
-                  onChange={(event) => { const rows = [...profile.salaryAnswers]; rows[index] = { ...answer, answerText: event.target.value }; update('salaryAnswers', rows); }} /></div>
-              <button className="btn btn-ghost" type="button"
+              <div className="form-group application-profile__field application-profile__field--full"><label htmlFor={`salary-text-${index}`}>Reusable salary text (optional)</label>
+                <textarea id={`salary-text-${index}`} maxLength={1000} value={answer.answerText}
+                  onChange={(event) => { const rows = [...profile.salaryAnswers]; rows[index] = { ...answer, answerText: event.target.value }; update('salaryAnswers', rows); }} />
+                <div className="application-profile__field-meta"><span>Optional details to include with this salary range.</span><span>{answer.answerText.length}/1,000</span></div></div>
+              <div className="application-profile__entry-actions"><button className="btn btn-ghost" type="button"
                 onClick={() => update('salaryAnswers', profile.salaryAnswers.filter((_, rowIndex) => rowIndex !== index))}>Remove salary entry</button>
+              </div></div>
             </fieldset>
           ))}
-          <button className="btn btn-ghost" type="button" onClick={() => update('salaryAnswers', [
+          <button className="btn btn-ghost application-profile__add" type="button" onClick={() => update('salaryAnswers', [
             ...profile.salaryAnswers,
             { currency: 'EUR', minimumAmount: '', maximumAmount: '', payPeriod: 'year', answerText: '' },
           ])}>Add salary entry</button>
+          </section>
 
-          <h3>Custom reusable questions</h3>
+          <section className="application-profile__section" aria-labelledby="profile-custom-title">
+            <div className="application-profile__section-heading">
+              <h3 id="profile-custom-title">Custom reusable questions</h3>
+              <p>Save matching employer questions with the answers you want to reuse.</p>
+            </div>
           {profile.customAnswers.map((answer, index) => (
-            <fieldset className="card" key={index}>
+            <fieldset className="application-profile__entry" key={index}>
               <legend>Custom answer {index + 1}</legend>
-              <div className="form-group"><label htmlFor={`answer-topic-${index}`}>Topic</label>
+              <div className="application-profile__grid">
+              <div className="form-group application-profile__field"><label htmlFor={`answer-topic-${index}`}>Topic</label>
                 <input id={`answer-topic-${index}`} required maxLength={100} value={answer.topic}
                   onChange={(event) => { const rows = [...profile.customAnswers]; rows[index] = { ...answer, topic: event.target.value }; update('customAnswers', rows); }} /></div>
-              <div className="form-group"><label htmlFor={`answer-question-${index}`}>Employer question</label>
+              <div className="form-group application-profile__field application-profile__field--full"><label htmlFor={`answer-question-${index}`}>Employer question</label>
                 <textarea id={`answer-question-${index}`} required maxLength={1000} value={answer.question}
-                  onChange={(event) => { const rows = [...profile.customAnswers]; rows[index] = { ...answer, question: event.target.value }; update('customAnswers', rows); }} /></div>
-              <div className="form-group"><label htmlFor={`answer-value-${index}`}>Reusable answer</label>
+                  onChange={(event) => { const rows = [...profile.customAnswers]; rows[index] = { ...answer, question: event.target.value }; update('customAnswers', rows); }} />
+                <div className="application-profile__field-meta"><span>Enter the question as the employer asks it.</span><span>{answer.question.length}/1,000</span></div></div>
+              <div className="form-group application-profile__field application-profile__field--full"><label htmlFor={`answer-value-${index}`}>Reusable answer</label>
                 <textarea id={`answer-value-${index}`} required maxLength={4000} value={answer.answer}
-                  onChange={(event) => { const rows = [...profile.customAnswers]; rows[index] = { ...answer, answer: event.target.value }; update('customAnswers', rows); }} /></div>
-              <button className="btn btn-ghost" type="button"
+                  onChange={(event) => { const rows = [...profile.customAnswers]; rows[index] = { ...answer, answer: event.target.value }; update('customAnswers', rows); }} />
+                <div className="application-profile__field-meta"><span>Long answers wrap automatically.</span><span>{answer.answer.length}/4,000</span></div></div>
+              <div className="application-profile__entry-actions"><button className="btn btn-ghost" type="button"
                 onClick={() => update('customAnswers', profile.customAnswers.filter((_, rowIndex) => rowIndex !== index))}>Remove custom answer</button>
+              </div></div>
             </fieldset>
           ))}
-          <button className="btn btn-ghost" type="button" onClick={() => update('customAnswers', [
+          <button className="btn btn-ghost application-profile__add" type="button" onClick={() => update('customAnswers', [
             ...profile.customAnswers, { topic: '', question: '', answer: '' },
           ])}>Add custom question and answer</button>
-          <div className="form-actions">
+          </section>
+          <div className="application-profile__actions">
+            <span>Your answers are saved to your Manager profile.</span>
             <button className="btn btn-primary" type="submit" disabled={saving}>
               {saving ? 'Saving…' : 'Save Application Answers'}
             </button>
