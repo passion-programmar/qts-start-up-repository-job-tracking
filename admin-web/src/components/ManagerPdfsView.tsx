@@ -444,7 +444,6 @@ export function ManagerPdfsView() {
             {downloadDirectory ? `Change folder (${downloadDirectory.name})` : 'Choose download folder'}
           </button>
           {downloadError && <div className="alert alert-error" role="alert">{downloadError}</div>}
-          {isLiveTemplate && <p className="text-muted">The resume updates instantly. The button downloads the generated PDF directly.</p>}
           <p className="manager-pdfs__path-note">
             {downloadDirectory ? `Path inside ${downloadDirectory.name}:` : 'Suggested folder path:'}{' '}
             <code>{suggestedPath || '$_QTS_RESUME_$/Custom/…'}</code>
