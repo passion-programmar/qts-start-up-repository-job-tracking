@@ -212,6 +212,20 @@ function updateEntry(root: HTMLElement, item: QtsResumeSectionItem) {
   });
 }
 
+function removeContentPagePadding(page: HTMLElement, selector: string) {
+  const content = page.querySelector<HTMLElement>(selector);
+  let ancestor = content?.parentElement;
+  while (ancestor && ancestor !== page) {
+    const style = page.ownerDocument.defaultView?.getComputedStyle(ancestor);
+    if (style && (parseFloat(style.paddingTop) > 0 || parseFloat(style.paddingBottom) > 0)) {
+      ancestor.style.paddingTop = '0';
+      ancestor.style.paddingBottom = '0';
+      return;
+    }
+    ancestor = ancestor.parentElement;
+  }
+}
+
 function updateFlowCvDocument(document: Document, resume: QtsResumeDocument) {
   const pages = Array.from(document.querySelectorAll<HTMLElement>('.resumePage'));
   const firstPage = pages[0];
@@ -219,6 +233,9 @@ function updateFlowCvDocument(document: Document, resume: QtsResumeDocument) {
   if (!firstPage || !secondPage) {
     throw new Error('The saved FlowCV template must contain its first two resume pages.');
   }
+
+  removeContentPagePadding(firstPage, '#profileHeading');
+  removeContentPagePadding(secondPage, '#educationHeading');
 
   setText(firstPage.querySelector('.js-fullName'), resume.candidate.fullName);
   setText(firstPage.querySelector('#js-jobTitleEl'), resume.candidate.headline);

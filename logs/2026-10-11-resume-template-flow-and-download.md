@@ -14,6 +14,8 @@
   iframe's initial viewport.
 - Removed stale page-continuation bullet fragments from the source resume so
   only the user's edited content appears in the preview and download.
+- Removed the original page-edge padding from the flowing content containers,
+  preventing doubled top and bottom margins between experience and education.
 - Included the dynamically loaded Puppeteer, Chromium, and runtime dependency
   packages in the API deployment bundle so PDF generation can launch its
   renderer in production.
