@@ -164,6 +164,15 @@
   min-width: 0;
 }
 
+.topbar-logo {
+  width: 48px;
+  height: 48px;
+  flex: 0 0 auto;
+  border-radius: 6px;
+  object-fit: contain;
+  background: #030514;
+}
+
 .topbar-left {
   display: flex;
   align-items: center;
@@ -380,7 +389,7 @@ td.text-right {
 
 .sidebar-brand {
   flex-shrink: 0;
-  padding: max(44px, calc(32px + env(safe-area-inset-top))) 12px 12px;
+  padding: 12px;
 }
 
 .sidebar-nav {
@@ -632,9 +641,6 @@ td.text-right {
     padding: 24px;
   }
 
-  .sidebar-brand {
-    padding-top: max(44px, calc(32px + env(safe-area-inset-top)));
-  }
 }
 
 @media (min-width: 1024px) {

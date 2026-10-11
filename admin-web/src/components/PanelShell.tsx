@@ -153,8 +153,6 @@ export function PanelShell({
           >
             ×
           </button>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={panelLogoUrl(mode)} alt="Logo" />
         </div>
         <nav className="sidebar-nav" aria-label="Main navigation">
           {navItems.map((item) => {
@@ -210,6 +208,8 @@ export function PanelShell({
             >
               ☰
             </button>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img className="topbar-logo" src={panelLogoUrl(mode)} alt="Logo" />
             {mode === 'admin' && <h1>{title}</h1>}
           </div>
           <div className="topbar-status">
