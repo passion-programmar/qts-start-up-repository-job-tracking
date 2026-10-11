@@ -17,6 +17,9 @@
 - Centered the job-title line below the resume name.
 - Renamed the “Professional Experience” section to “Experience” without
   removing its icon.
+- Removed the preview size/full-screen controls and retained automatic fit-to-
+  panel sizing; reduced the skills text to 16 px while keeping experience
+  bullets at 18 px.
 - Sized the live preview from the rendered resume content rather than the
   iframe's initial viewport.
 - Removed stale page-continuation bullet fragments from the source resume so

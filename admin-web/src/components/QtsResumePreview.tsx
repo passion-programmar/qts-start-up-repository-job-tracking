@@ -32,7 +32,6 @@ export type QtsResumeDocument = {
 type QtsResumePreviewProps = {
   resume: QtsResumeDocument;
   iframeRef: RefObject<HTMLIFrameElement | null>;
-  scaleMode: 'fit' | 'actual';
   onReady: (ready: boolean) => void;
   onError: (message: string) => void;
   onDocumentReady: (html: string) => void;
@@ -420,7 +419,7 @@ function makeDocument(
           }
           .resumePage #skill,
           .resumePage #skill * {
-            font-size: 18px !important;
+            font-size: 16px !important;
             line-height: 1.4 !important;
           }
           .resumePage #resumeHeaderId .js-fullName {
@@ -480,7 +479,6 @@ function makeDocument(
 export function QtsResumePreview({
   resume,
   iframeRef,
-  scaleMode,
   onReady,
   onError,
   onDocumentReady,
@@ -522,13 +520,13 @@ export function QtsResumePreview({
     if (!wrapper || !viewport) return undefined;
     const updateScale = () => {
       setViewportWidth(viewport.clientWidth);
-      setScale(scaleMode === 'actual' ? 1 : Math.min(1, viewport.clientWidth / pageWidth));
+      setScale(Math.min(1, viewport.clientWidth / pageWidth));
     };
     updateScale();
     const observer = new ResizeObserver(updateScale);
     observer.observe(viewport);
     return () => observer.disconnect();
-  }, [scaleMode]);
+  }, []);
 
   useLayoutEffect(() => {
     if (!source || !frameReady) return;
