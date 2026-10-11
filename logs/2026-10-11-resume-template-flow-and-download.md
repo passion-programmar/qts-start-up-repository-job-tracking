@@ -8,8 +8,9 @@
 
 - Replaced fixed-height FlowCV pages and forced page breaks with content-driven
   pagination, removing large empty areas when a page has less content.
-- Increased the template body text slightly to 11 pt and kept work and education
-  entries together when they fit on a page.
+- Increased the template body text to 11.75 pt (one CSS pixel larger than the
+  previous 11 pt) and kept work and education entries together when they fit
+  on a page.
 - Sized the live preview from the rendered resume content rather than the
   iframe's initial viewport.
 - Removed stale page-continuation bullet fragments from the source resume so
