@@ -242,6 +242,10 @@ function updateFlowCvDocument(document: Document, resume: QtsResumeDocument) {
   setContact(document, 'detailItem-address', resume.candidate.location);
   setContact(document, 'detailItem-phone', resume.candidate.phone, `tel:${resume.candidate.phone || ''}`);
   setContact(document, 'detailItem-displayEmail', resume.candidate.email, `mailto:${resume.candidate.email || ''}`);
+  const workHeadingLabel = firstPage.querySelector('#workHeading #work-section-heading > div > span');
+  if (workHeadingLabel) {
+    workHeadingLabel.textContent = workHeadingLabel.textContent.replace(/^Professional\s+/i, '');
+  }
   const linkedin = resume.candidate.linkedinUrl || '';
   setContact(
     document,
@@ -410,8 +414,12 @@ function makeDocument(
           }
           .resumePage #profile p,
           .resumePage [data-qts-work-entry] :is(p, li, span),
-          .resumePage [data-qts-education-entry] :is(p, li, span),
-          .resumePage #skill span {
+          .resumePage [data-qts-education-entry] :is(p, li, span) {
+            font-size: 18px !important;
+            line-height: 1.4 !important;
+          }
+          .resumePage #skill,
+          .resumePage #skill * {
             font-size: 18px !important;
             line-height: 1.4 !important;
           }
