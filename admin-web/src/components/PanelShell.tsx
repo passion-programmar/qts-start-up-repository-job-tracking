@@ -138,11 +138,12 @@ export function PanelShell({
         type="button"
         className={`sidebar-backdrop${navOpen ? ' is-visible' : ''}`}
         aria-label="Close menu"
+        aria-controls="panel-navigation"
         aria-hidden={!navOpen}
         tabIndex={navOpen ? 0 : -1}
         onClick={closeNav}
       />
-      <aside className={`sidebar${navOpen ? ' is-open' : ''}`}>
+      <aside id="panel-navigation" className={`sidebar${navOpen ? ' is-open' : ''}`}>
         <div className="sidebar-brand">
           <button
             type="button"
@@ -202,9 +203,10 @@ export function PanelShell({
             <button
               type="button"
               className="menu-btn"
-              aria-label="Open menu"
+              aria-label={navOpen ? 'Close menu' : 'Open menu'}
+              aria-controls="panel-navigation"
               aria-expanded={navOpen}
-              onClick={() => setNavOpen(true)}
+              onClick={() => setNavOpen((open) => !open)}
             >
               ☰
             </button>
