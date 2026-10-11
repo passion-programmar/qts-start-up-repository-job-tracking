@@ -343,7 +343,7 @@ td.text-right {
 
 .sidebar-backdrop {
   position: fixed;
-  inset: 0;
+  inset: 64px 0 0;
   z-index: 299;
   border: none;
   padding: 0;
@@ -362,11 +362,11 @@ td.text-right {
 
 .sidebar {
   position: fixed;
-  inset: 0 auto 0 0;
+  inset: 64px auto 0 0;
   z-index: 300;
   width: min(280px, 88vw);
-  height: 100vh;
-  height: 100dvh;
+  height: calc(100vh - 64px);
+  height: calc(100dvh - 64px);
   overflow: hidden;
   padding-bottom: env(safe-area-inset-bottom);
   transform: translateX(-100%);

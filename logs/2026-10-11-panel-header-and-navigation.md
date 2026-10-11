@@ -10,4 +10,5 @@
   white surface, subtle border and shadow, and blue interaction states.
 - Keep the navigation drawer hidden when a user opens a page at every viewport
   size; the header toggle opens and closes it on demand.
-- Preserve backdrop and close-button dismissal for the navigation drawer.
+- Keep the header toggle accessible while the drawer is open, and preserve
+  backdrop and close-button dismissal.
