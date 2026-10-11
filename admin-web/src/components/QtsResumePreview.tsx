@@ -406,7 +406,7 @@ function makeDocument(
             margin-bottom: 0 !important;
             min-height: 0 !important;
             overflow: visible !important;
-            font-size: 11.75pt !important;
+            font-size: 14pt !important;
           }
           @page { size: letter portrait; margin: 0; }
           @media print {
