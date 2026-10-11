@@ -2,7 +2,7 @@
   "framework": "express",
   "functions": {
     "src/app.ts": {
-      "includeFiles": "{node_modules/pdf-parse/dist/pdf-parse/cjs/pdf.worker.mjs,node_modules/@{puppeteer,sparticuz}/**,node_modules/{puppeteer*,chromium*,devtools*,modern*,mitt,typed*,webdriver*,ws,tar*,pump,end*,once,wrappy,b4a,fast*,streamx}/**,assets/fonts/**}"
+      "includeFiles": "{node_modules/pdf-parse/dist/pdf-parse/cjs/**,node_modules/@{puppeteer,sparticuz}/**,node_modules/{puppeteer*,chromium*,devtools*,modern*,mitt,typed*,webdriver*,ws,tar*,pump,e*,once,wrappy,b*,fast*,streamx,text-decoder}/**,assets/fonts/**}"
     }
   },
   "crons": [
