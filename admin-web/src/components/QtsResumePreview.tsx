@@ -411,10 +411,18 @@ function makeDocument(
           .resumePage #profile p,
           .resumePage [data-qts-work-entry] :is(p, li, span),
           .resumePage [data-qts-education-entry] :is(p, li, span),
-          .resumePage #skill span,
-          .resumePage #resumeHeaderId [id^="detailItem-"] span {
+          .resumePage #skill span {
             font-size: 18px !important;
             line-height: 1.4 !important;
+          }
+          .resumePage #resumeHeaderId .js-fullName {
+            align-self: stretch;
+            font-size: 26.75pt !important;
+            line-height: 1.15 !important;
+            text-align: center;
+          }
+          .resumePage #resumeHeaderId [id^="detailItem-"] span {
+            font-size: 16px !important;
           }
           @page { size: letter portrait; margin: 0; }
           @media print {

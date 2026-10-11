@@ -11,6 +11,8 @@
 - Set summary, skills, contact details, experience, and education body text to
   a consistent 18 px, overriding smaller sizes specified by the source
   template. Kept work and education entries together when they fit on a page.
+- Increased the resume name by 3 px and centered it in the header; reduced
+  contact detail text by 2 px while leaving its icons and the job title intact.
 - Sized the live preview from the rendered resume content rather than the
   iframe's initial viewport.
 - Removed stale page-continuation bullet fragments from the source resume so
