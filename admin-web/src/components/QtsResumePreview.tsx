@@ -291,6 +291,16 @@ function updateFlowCvDocument(document: Document, resume: QtsResumeDocument) {
       workRoots.push(root);
     });
   });
+  workRoots.forEach((root) => {
+    if (!root.id) return;
+    pages.forEach((page) => {
+      page.querySelectorAll<HTMLElement>('[id]').forEach((element) => {
+        if (element !== root && !root.contains(element) && element.id.startsWith(`${root.id}-`)) {
+          setVisible(element, false);
+        }
+      });
+    });
+  });
   const lastWorkRoot = workRoots[workRoots.length - 1];
   const workContainer = lastWorkRoot?.parentElement;
   while (workRoots.length < workItems.length && lastWorkRoot && workContainer) {
