@@ -96,11 +96,11 @@ function prepareHtml(html: string): string {
     html.length > MAX_HTML_LENGTH
     || !/<html\b/i.test(html)
     || !/<div\b[^>]*id=["']resumePages["']/i.test(html)
-    || (html.match(/\bresumePage\b/g) || []).length < 2
+    || !/<(?:div|article)\b[^>]*class=["'][^"']*\bresumePage\b/i.test(html)
     || /<(?:script|iframe|object|embed|form)\b/i.test(html)
     || /\son[a-z]+\s*=/i.test(html)
   ) {
-    throw new Error('The rendered FlowCV document is invalid or too large to convert to PDF.');
+    throw new Error('The rendered resume document is invalid or too large to convert to PDF.');
   }
 
   const contentSecurityPolicy = `<meta http-equiv="Content-Security-Policy" content="${CSP}">`;

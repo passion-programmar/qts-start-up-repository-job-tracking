@@ -1,33 +1,12 @@
 'use client';
 
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
-
-export type QtsResumeSectionItem = {
-  heading?: string;
-  subheading?: string;
-  dateRange?: string;
-  bullets?: string[];
-};
-
-export type QtsResumeSection = {
-  title?: string;
-  items?: QtsResumeSectionItem[];
-};
-
-export type QtsResumeDocument = {
-  candidate: {
-    fullName: string;
-    email: string;
-    phone?: string;
-    linkedinUrl?: string;
-    location?: string;
-    headline?: string;
-  };
-  targetRole: string;
-  targetCompany?: string;
-  summary?: string;
-  sections: QtsResumeSection[];
-};
+import type { QtsResumeDocument, QtsResumeSectionItem } from '@/components/ResumeDocumentTypes';
+export type {
+  QtsResumeDocument,
+  QtsResumeSection,
+  QtsResumeSectionItem,
+} from '@/components/ResumeDocumentTypes';
 
 type QtsResumePreviewProps = {
   resume: QtsResumeDocument;

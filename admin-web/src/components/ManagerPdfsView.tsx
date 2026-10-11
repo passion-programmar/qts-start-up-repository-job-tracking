@@ -4,8 +4,9 @@ import { useEffect, useRef, useState } from 'react';
 import { requestPdf } from '@/lib/api';
 import { ManagerPdfCanvasPreview } from '@/components/ManagerPdfCanvasPreview';
 import { QtsResumePreview, type QtsResumeDocument } from '@/components/QtsResumePreview';
+import { QtsResume2Preview } from '@/components/QtsResume2Preview';
 
-type ResumeTemplate = 'qts_resume_1' | 'classic' | 'compact';
+type ResumeTemplate = 'qts_resume_1' | 'qts_resume_2' | 'classic' | 'compact';
 
 type DirectoryPickerWindow = Window & {
   showDirectoryPicker?: (options?: { id?: string; mode?: 'read' | 'readwrite' }) => Promise<FileSystemDirectoryHandle>;
@@ -13,6 +14,7 @@ type DirectoryPickerWindow = Window & {
 
 const templates: Array<{ id: ResumeTemplate; label: string }> = [
   { id: 'qts_resume_1', label: 'QTS_Resume_1' },
+  { id: 'qts_resume_2', label: 'QTS_Resume_2' },
   { id: 'classic', label: '2. Classic ATS' },
   { id: 'compact', label: '3. Compact modern' },
 ];
@@ -193,9 +195,10 @@ function getSuggestedPath(value: unknown): { directories: string[]; fileName: st
 }
 
 export function ManagerPdfsView() {
-  const [template, setTemplate] = useState<ResumeTemplate>('qts_resume_1');
+  const [template, setTemplate] = useState<ResumeTemplate>('qts_resume_2');
   const [resumeJson, setResumeJson] = useState<Record<ResumeTemplate, string>>({
     qts_resume_1: defaultJson,
+    qts_resume_2: defaultJson,
     classic: defaultJson,
     compact: defaultJson,
   });
@@ -217,7 +220,7 @@ export function ManagerPdfsView() {
   const downloadUrlRef = useRef<string | null>(null);
   const livePreviewFrameRef = useRef<HTMLIFrameElement>(null);
   const json = resumeJson[template];
-  const isLiveTemplate = template === 'qts_resume_1';
+  const isLiveTemplate = template === 'qts_resume_1' || template === 'qts_resume_2';
   const parsedResume = parseResumeJson(json);
 
   useEffect(() => {
@@ -301,7 +304,7 @@ export function ManagerPdfsView() {
       let pdf = previewPdf;
       if (isLiveTemplate) {
         if (!isLivePreviewReady || !renderedHtml) {
-          setDownloadError('The FlowCV preview is not ready to download yet.');
+          setDownloadError('The live resume preview is not ready to download yet.');
           return;
         }
         const result = await requestPdf('/api/v2/resume-pdfs/preview', {
@@ -379,7 +382,7 @@ export function ManagerPdfsView() {
                 const selected = templates.find((item) => item.id === event.target.value);
                 if (selected) {
                   const selectedJson = resumeJson[selected.id];
-                  if (selected.id === 'qts_resume_1') {
+                  if (selected.id === 'qts_resume_1' || selected.id === 'qts_resume_2') {
                     const parsed = parseResumeJson(selectedJson);
                     if (parsed.resume) setLiveResume(parsed.resume);
                     setPreviewError(parsed.error || '');
@@ -469,13 +472,25 @@ export function ManagerPdfsView() {
             <>
               {livePreviewError && <div className="alert alert-error" role="alert">{livePreviewError}</div>}
               <div className="manager-pdfs__live-resume">
-                <QtsResumePreview
-                  resume={liveResume}
-                  iframeRef={livePreviewFrameRef}
-                  onReady={setIsLivePreviewReady}
-                  onError={setLivePreviewError}
-                  onDocumentReady={setRenderedHtml}
-                />
+                {template === 'qts_resume_2' ? (
+                  <QtsResume2Preview
+                    key={template}
+                    resume={liveResume}
+                    iframeRef={livePreviewFrameRef}
+                    scaleMode="fit"
+                    onReady={setIsLivePreviewReady}
+                    onError={setLivePreviewError}
+                    onDocumentReady={setRenderedHtml}
+                  />
+                ) : (
+                  <QtsResumePreview
+                    resume={liveResume}
+                    iframeRef={livePreviewFrameRef}
+                    onReady={setIsLivePreviewReady}
+                    onError={setLivePreviewError}
+                    onDocumentReady={setRenderedHtml}
+                  />
+                )}
               </div>
             </>
           ) : (

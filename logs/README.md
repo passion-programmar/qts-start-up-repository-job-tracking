@@ -11,6 +11,7 @@ instead of repeating their implementation details.
 
 ## Entries
 
+- [QTS Resume 2 template — 2026-10-11](2026-10-11-qts-resume-2-template.md)
 - [Ant Design-style panel header and closed-by-default navigation — 2026-10-11](2026-10-11-panel-header-and-navigation.md)
 - [Generating resume templates from downloaded designs](resume-template-generation/README.md)
 - [Direct resume PDF downloads — 2026-10-10](2026-10-10-direct-resume-pdf-downloads.md)

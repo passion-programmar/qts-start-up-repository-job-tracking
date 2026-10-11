@@ -29,7 +29,7 @@ export type ResumeDocumentInput = {
   sections: ResumeSection[];
 };
 
-export type ResumePdfTemplate = 'qts_resume_1' | 'flowcv' | 'classic' | 'compact';
+export type ResumePdfTemplate = 'qts_resume_1' | 'qts_resume_2' | 'flowcv' | 'classic' | 'compact';
 
 export type CoverLetterDocumentInput = {
   candidate: {
@@ -393,6 +393,9 @@ function buildResume(
   template: ResumePdfTemplate
 ): void {
   registerResumeFonts(doc);
+  if (template === 'qts_resume_2') {
+    throw new Error('QTS Resume 2 requires the rendered HTML preview.');
+  }
   if (template === 'qts_resume_1' || template === 'flowcv') {
     buildFlowCvResume(doc, resume);
   } else if (template === 'compact') {
