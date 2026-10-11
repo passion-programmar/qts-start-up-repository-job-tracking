@@ -10,6 +10,7 @@ import newSchemaJobsRoutes from './modules/new-schema/jobs.routes';
 import newSchemaBidsRoutes from './modules/new-schema/bids.routes';
 import newSchemaAnalyticsRoutes from './modules/new-schema/analytics.routes';
 import newSchemaDatabaseRoutes from './modules/new-schema/database.routes';
+import managerResumePdfRoutes from './modules/new-schema/resume-pdfs.routes';
 import managerApplicationProfileRoutes from './modules/new-schema/manager-application-profile.routes';
 import gptApplicationTasksRoutes from './modules/new-schema/gpt-application-tasks.routes';
 import { errorHandler } from './middleware/error-handler';
@@ -86,6 +87,7 @@ app.use('/api/v2/analytics', newSchemaAnalyticsRoutes);
 app.use('/api/v2/database', newSchemaDatabaseRoutes);
 app.use('/api/v2/manager-application-profile', managerApplicationProfileRoutes);
 app.use('/api/v2/gpt-application-tasks', gptApplicationTasksRoutes);
+app.use('/api/v2/resume-pdfs', managerResumePdfRoutes);
 
 app.get('/api/health', (_req, res) => {
   res.json({

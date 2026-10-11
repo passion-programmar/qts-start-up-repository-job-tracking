@@ -10,6 +10,9 @@ admin-web/.env.local
 release/
 logs/*
 !logs/.gitkeep
+!logs/*.md
+!logs/*/
+!logs/**/*.md
 .DS_Store
 server/.env.cloud
 scripts/bin/
