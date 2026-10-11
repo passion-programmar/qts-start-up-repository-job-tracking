@@ -410,7 +410,9 @@ function makeDocument(
           }
           .resumePage #profile p,
           .resumePage [data-qts-work-entry] :is(p, li, span),
-          .resumePage [data-qts-education-entry] :is(p, li, span) {
+          .resumePage [data-qts-education-entry] :is(p, li, span),
+          .resumePage #skill span,
+          .resumePage #resumeHeaderId [id^="detailItem-"] span {
             font-size: 18px !important;
             line-height: 1.4 !important;
           }
