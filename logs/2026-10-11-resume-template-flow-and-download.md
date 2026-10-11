@@ -12,5 +12,6 @@
   entries together when they fit on a page.
 - Sized the live preview from the rendered resume content rather than the
   iframe's initial viewport.
-- Included the dynamically loaded Puppeteer and Chromium packages in the API
-  deployment bundle so PDF generation can launch its renderer in production.
+- Included the dynamically loaded Puppeteer, Chromium, and runtime dependency
+  packages in the API deployment bundle so PDF generation can launch its
+  renderer in production.
