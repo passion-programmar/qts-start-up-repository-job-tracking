@@ -13,3 +13,4 @@ instead of repeating their implementation details.
 
 - [Generating resume templates from downloaded designs](resume-template-generation/README.md)
 - [Direct resume PDF downloads — 2026-10-10](2026-10-10-direct-resume-pdf-downloads.md)
+- [Resume template flow and PDF download fix — 2026-10-11](2026-10-11-resume-template-flow-and-download.md)

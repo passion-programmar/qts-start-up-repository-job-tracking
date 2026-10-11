@@ -365,10 +365,21 @@ function makeDocument(
             font-weight: 700;
             font-display: swap;
           }
-          html, body { margin: 0; padding: 0; width: 215.9mm; }
+          html, body {
+            height: auto !important;
+            margin: 0;
+            min-height: 0 !important;
+            padding: 0;
+            width: 215.9mm;
+          }
           #resumePages { width: 215.9mm; }
           .resumePage {
-            margin-bottom: 32px !important;
+            height: auto !important;
+            line-height: 1.4 !important;
+            margin-bottom: 0 !important;
+            min-height: 0 !important;
+            overflow: visible !important;
+            font-size: 11pt !important;
           }
           @page { size: letter portrait; margin: 0; }
           @media print {
@@ -390,8 +401,15 @@ function makeDocument(
             }
             .resumePage {
               margin: 0 !important;
-              break-after: page;
-              page-break-after: always;
+              break-after: auto;
+              break-inside: auto;
+              page-break-after: auto;
+              page-break-inside: auto;
+            }
+            .resumePage [data-qts-work-entry],
+            .resumePage [data-qts-education-entry] {
+              break-inside: avoid;
+              page-break-inside: avoid;
             }
             .resumePage:last-child {
               break-after: auto;
@@ -418,7 +436,7 @@ export function QtsResumePreview({
   const [frameReady, setFrameReady] = useState(false);
   const [scale, setScale] = useState(1);
   const [viewportWidth, setViewportWidth] = useState(0);
-  const [frameHeight, setFrameHeight] = useState(pageHeight * 2 + 32);
+  const [frameHeight, setFrameHeight] = useState(pageHeight);
 
   useEffect(() => {
     let cancelled = false;
@@ -463,7 +481,8 @@ export function QtsResumePreview({
     if (!frameDocument) return;
     try {
       updateFlowCvDocument(frameDocument, resume);
-      const nextHeight = Math.max(pageHeight, frameDocument.documentElement.scrollHeight);
+      const resumePages = frameDocument.getElementById('resumePages');
+      const nextHeight = Math.max(pageHeight, resumePages?.scrollHeight ?? pageHeight);
       setFrameHeight(nextHeight);
       onReady(true);
       onDocumentReady(`<!doctype html>${frameDocument.documentElement.outerHTML}`);
