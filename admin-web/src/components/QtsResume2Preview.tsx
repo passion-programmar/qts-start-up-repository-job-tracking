@@ -200,6 +200,7 @@ function paginateDocument(document: Document): number {
   const sections = Array.from(firstMain.children) as HTMLElement[];
   let page = firstPage;
   let main = firstMain;
+  let pageBlockCount = 0;
 
   for (const sourceSection of sections) {
     const heading = sourceSection.querySelector<HTMLElement>('.section-title');
@@ -213,16 +214,22 @@ function paginateDocument(document: Document): number {
     for (const block of blocks) {
       section.append(block);
       const pageContent = page.querySelector<HTMLElement>('.page-content');
-      const blockCount = main.querySelectorAll('.resume-block').length;
-      if (!pageContent || pageContent.scrollHeight <= pageContent.clientHeight || blockCount === 1) continue;
-
-      block.remove();
-      if (!section.querySelector('.resume-block')) section.remove();
-      page = createPage(document);
-      main = page.querySelector<HTMLElement>('.resume-main')!;
-      section = sourceSection.cloneNode(false) as HTMLElement;
-      section.append(heading.cloneNode(true), block);
-      main.append(section);
+      if (
+        pageContent
+        && block.getBoundingClientRect().bottom > pageContent.getBoundingClientRect().bottom
+        && pageBlockCount > 0
+      ) {
+        block.remove();
+        if (!section.querySelector('.resume-block')) section.remove();
+        page = createPage(document);
+        main = page.querySelector<HTMLElement>('.resume-main')!;
+        section = sourceSection.cloneNode(false) as HTMLElement;
+        section.append(heading.cloneNode(true), block);
+        main.append(section);
+        pageBlockCount = 1;
+      } else {
+        pageBlockCount += 1;
+      }
     }
   }
   return document.querySelectorAll('.resumePage').length;

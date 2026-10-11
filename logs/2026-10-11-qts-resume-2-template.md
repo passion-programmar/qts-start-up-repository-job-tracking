@@ -11,3 +11,14 @@
 - Matched the reference's 215.9 × 279.4 mm letter page and measured typography:
   13 pt body, 15 pt subtitle, 16 pt section headings, and 30 pt name.
 - Kept the live preview and generated PDF aligned by rendering the same HTML.
+
+## Pagination correction
+
+- **Version:** 1.2.1
+- **Date:** 2026-10-11
+- **Change type:** Fixed
+
+### Changes
+
+- Fixed long resumes moving the first content block off the header page by
+  counting only blocks already placed on the current page.
