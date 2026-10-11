@@ -421,6 +421,10 @@ function makeDocument(
             line-height: 1.15 !important;
             text-align: center;
           }
+          .resumePage #resumeHeaderId #js-jobTitleEl {
+            align-self: stretch;
+            text-align: center;
+          }
           .resumePage #resumeHeaderId [id^="detailItem-"] span {
             font-size: 16px !important;
           }
