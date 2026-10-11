@@ -406,7 +406,13 @@ function makeDocument(
             margin-bottom: 0 !important;
             min-height: 0 !important;
             overflow: visible !important;
-            font-size: 14pt !important;
+            font-size: 12pt !important;
+          }
+          .resumePage #profile p,
+          .resumePage [data-qts-work-entry] :is(p, li, span),
+          .resumePage [data-qts-education-entry] :is(p, li, span) {
+            font-size: 16px !important;
+            line-height: 1.4 !important;
           }
           @page { size: letter portrait; margin: 0; }
           @media print {
