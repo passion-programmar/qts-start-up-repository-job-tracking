@@ -411,7 +411,7 @@ function makeDocument(
           .resumePage #profile p,
           .resumePage [data-qts-work-entry] :is(p, li, span),
           .resumePage [data-qts-education-entry] :is(p, li, span) {
-            font-size: 16px !important;
+            font-size: 18px !important;
             line-height: 1.4 !important;
           }
           @page { size: letter portrait; margin: 0; }
