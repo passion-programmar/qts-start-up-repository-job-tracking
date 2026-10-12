@@ -78,6 +78,7 @@ const accountColumns = `
   u.u_id, u.username, u.name, u.role, u.parent_user_id, u.email, u.address, u.sex,
   u.birthday, u.phone, u.country, u.city, u.category_id, u.blocked_date,
   app.first_name, app.last_name, app.education, app.work_experience, app.custom_fields,
+  app.resume_pdf_template AS default_resume_template,
   (app.resume_content IS NOT NULL) AS has_resume, app.resume_file_name
 `;
 

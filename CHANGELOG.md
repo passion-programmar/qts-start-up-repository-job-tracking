@@ -2,6 +2,10 @@
 
 ## QTS_Startup
 
+### 1.13.26 — 2026-10-11
+
+- **Manager PDFs:** Match pasted `candidate.fullName` to an Account, load and save each Account's default resume template, and generate QTS cover-letter previews and PDFs.
+
 ### 1.13.25 — 2026-06-29
 
 - **Job sites:** Admin → Jobs → Job sites — manually add sources (`platform_key`, URL host).

@@ -439,6 +439,11 @@ async function runMigrations(): Promise<void> {
     ADD COLUMN IF NOT EXISTS custom_fields JSONB NOT NULL DEFAULT '[]'::jsonb
   `);
   await execute(`
+    ALTER TABLE account_application_profiles
+    ADD COLUMN IF NOT EXISTS resume_pdf_template TEXT NOT NULL DEFAULT 'qts_resume_2'
+      CHECK (resume_pdf_template IN ('qts_resume_1', 'qts_resume_2', 'qts_resume_3', 'classic', 'compact'))
+  `);
+  await execute(`
     CREATE TABLE IF NOT EXISTS gpt_application_tasks (
       task_id TEXT PRIMARY KEY,
       job_id INTEGER NOT NULL REFERENCES job_list(j_id) ON DELETE CASCADE,

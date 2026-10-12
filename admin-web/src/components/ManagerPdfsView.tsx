@@ -1,13 +1,36 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { requestPdf } from '@/lib/api';
+import { api, requestPdf } from '@/lib/api';
 import { ManagerPdfCanvasPreview } from '@/components/ManagerPdfCanvasPreview';
 import { QtsResumePreview, type QtsResumeDocument } from '@/components/QtsResumePreview';
 import { QtsResume2Preview } from '@/components/QtsResume2Preview';
 import { QtsResume3Preview } from '@/components/QtsResume3Preview';
 
 type ResumeTemplate = 'qts_resume_1' | 'qts_resume_2' | 'qts_resume_3' | 'classic' | 'compact';
+type PdfMode = 'resume' | 'cover-letter';
+type ManagerPdfAccount = {
+  u_id: number;
+  name: string;
+  first_name: string;
+  last_name: string;
+  default_resume_template: ResumeTemplate;
+};
+type CoverLetterDocument = {
+  candidate: {
+    fullName: string;
+    email: string;
+    phone?: string;
+    linkedinUrl?: string;
+  };
+  targetRole: string;
+  targetCompany: string;
+  date?: string;
+  salutation?: string;
+  bodyParagraphs: string[];
+  closing?: string;
+  signatureName?: string;
+};
 
 type PermissionedDirectoryHandle = FileSystemDirectoryHandle & {
   queryPermission(options: { mode: 'readwrite' }): Promise<PermissionState>;
@@ -151,74 +174,26 @@ const sampleResume: QtsResumeDocument = {
 
 const defaultJson = JSON.stringify(sampleResume, null, 2);
 
-const sampleResume3: QtsResumeDocument = {
+const sampleCoverLetter: CoverLetterDocument = {
   candidate: {
-    fullName: 'Taylor Morgan',
-    email: 'taylor.morgan@example.com',
-    phone: '+1 202-555-0148',
-    linkedinUrl: 'https://example.com/in/taylor-morgan',
-    location: 'Portland, Oregon',
-    headline: 'Data Scientist | Applied Machine Learning | Product Analytics',
+    fullName: 'Alex Morgan',
+    email: 'alex.morgan@example.com',
+    phone: '+1 202-555-0100',
+    linkedinUrl: 'https://example.com/alex-morgan',
   },
-  targetRole: 'Data Scientist',
-  summary: 'Data scientist with experience turning complex product data into reliable models, experiments, and clear decisions. Enjoys partnering with engineers and product teams to deliver measurable improvements.',
-  sections: [
-    {
-      title: 'Professional Experience',
-      items: [
-        {
-          heading: 'Northstar Analytics',
-          subheading: 'Data Scientist',
-          dateRange: '2023 – Present | Portland, Oregon',
-          bullets: [
-            'Built and evaluated forecasting and classification models for product and operations teams.',
-            'Partnered with engineering to improve data quality and publish reusable model insights.',
-          ],
-        },
-        {
-          heading: 'Juniper Labs',
-          subheading: 'Associate Data Scientist',
-          dateRange: '2021 – 2023 | Seattle, Washington',
-          bullets: [
-            'Designed controlled experiments and translated results into practical product recommendations.',
-          ],
-        },
-      ],
-    },
-    {
-      title: 'Education',
-      items: [
-        {
-          heading: 'B.S. in Applied Mathematics',
-          subheading: 'Cascadia State University',
-          dateRange: '2017 – 2021 | Portland, Oregon',
-        },
-      ],
-    },
-    {
-      title: 'Projects',
-      items: [
-        {
-          heading: 'Customer Retention Insights',
-          subheading: 'Independent Project',
-          bullets: [
-            'Created a reproducible analysis pipeline and interactive report using a fictional public dataset.',
-          ],
-        },
-      ],
-    },
-    {
-      title: 'Skills',
-      items: [
-        { heading: 'Analytics', subheading: 'Experiment Design, Product Metrics, Statistical Modeling' },
-        { heading: 'Technology', subheading: 'Python, SQL, scikit-learn, pandas, Jupyter' },
-        { heading: 'Collaboration', subheading: 'Data Storytelling, Documentation, Cross-functional Delivery' },
-      ],
-    },
+  targetRole: 'Software Engineer',
+  targetCompany: 'Example Company',
+  date: 'October 11, 2026',
+  salutation: 'Dear Hiring Manager,',
+  bodyParagraphs: [
+    'I am applying for the Software Engineer role at Example Company. My experience building and maintaining web applications has prepared me to contribute to your team.',
+    'I value thoughtful collaboration, reliable delivery, and clear communication. I would welcome the opportunity to discuss how my skills could support your work.',
   ],
+  closing: 'Sincerely,',
+  signatureName: 'Alex Morgan',
 };
 
-const defaultJson3 = JSON.stringify(sampleResume3, null, 2);
+const defaultCoverLetterJson = JSON.stringify(sampleCoverLetter, null, 2);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -315,7 +290,68 @@ function safePathSegment(value: string | undefined, fallback: string): string {
     .slice(0, 100) || fallback;
 }
 
-function getSuggestedPath(value: unknown): { directories: string[]; fileName: string; relativePath: string } {
+function parseCoverLetterJson(value: string): { coverLetter?: CoverLetterDocument; error?: string } {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    return { error: 'Enter valid JSON to update the cover letter.' };
+  }
+
+  if (!isRecord(parsed) || !isRecord(parsed.candidate)) {
+    return { error: 'Cover letter JSON must include a candidate object.' };
+  }
+  if (typeof parsed.candidate.fullName !== 'string' || typeof parsed.candidate.email !== 'string') {
+    return { error: 'Cover letter candidate must include a name and email address.' };
+  }
+  if (typeof parsed.targetRole !== 'string' || !parsed.targetRole.trim()) {
+    return { error: 'Cover letter JSON must include a target role.' };
+  }
+  if (typeof parsed.targetCompany !== 'string' || !parsed.targetCompany.trim()) {
+    return { error: 'Cover letter JSON must include a target company.' };
+  }
+  if (!Array.isArray(parsed.bodyParagraphs) || parsed.bodyParagraphs.length === 0 ||
+      parsed.bodyParagraphs.some((paragraph) => typeof paragraph !== 'string')) {
+    return { error: 'Cover letter JSON must include bodyParagraphs as an array of text.' };
+  }
+  for (const field of ['phone', 'linkedinUrl'] as const) {
+    if (parsed.candidate[field] !== undefined && typeof parsed.candidate[field] !== 'string') {
+      return { error: `Cover letter candidate ${field} must be text.` };
+    }
+  }
+  for (const field of ['date', 'salutation', 'closing', 'signatureName'] as const) {
+    if (parsed[field] !== undefined && typeof parsed[field] !== 'string') {
+      return { error: `${field} must be text.` };
+    }
+  }
+
+  return {
+    coverLetter: {
+      candidate: {
+        fullName: parsed.candidate.fullName,
+        email: parsed.candidate.email,
+        phone: parsed.candidate.phone as string | undefined,
+        linkedinUrl: parsed.candidate.linkedinUrl as string | undefined,
+      },
+      targetRole: parsed.targetRole,
+      targetCompany: parsed.targetCompany,
+      date: parsed.date as string | undefined,
+      salutation: parsed.salutation as string | undefined,
+      bodyParagraphs: parsed.bodyParagraphs as string[],
+      closing: parsed.closing as string | undefined,
+      signatureName: parsed.signatureName as string | undefined,
+    },
+  };
+}
+
+function normalizeAccountName(value: string): string {
+  return value.normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase();
+}
+
+function getSuggestedPath(
+  value: unknown,
+  mode: PdfMode = 'resume'
+): { directories: string[]; fileName: string; relativePath: string } {
   const resume = isRecord(value) ? value : {};
   const candidate = isRecord(resume.candidate) ? resume.candidate : {};
   const account = safePathSegment(typeof candidate.fullName === 'string' ? candidate.fullName : '', 'Account');
@@ -324,27 +360,31 @@ function getSuggestedPath(value: unknown): { directories: string[]; fileName: st
   const now = new Date();
   const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   const time = `${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}-${String(now.getSeconds()).padStart(2, '0')}`;
+  const documentFolder = mode === 'resume' ? '$_QTS_Resume_$' : '$_QTS_Cover_Letter_$';
   const directories = [
-    '$_QTS_Resume_$',
+    documentFolder,
     account,
     `${date}_${time}_${role}_${company}`,
   ];
   return {
     directories,
-    fileName: `${account}.pdf`,
-    relativePath: [...directories, `${account}.pdf`].join('/'),
+    fileName: `${account}${mode === 'cover-letter' ? '_Cover_Letter' : ''}.pdf`,
+    relativePath: [...directories, `${account}${mode === 'cover-letter' ? '_Cover_Letter' : ''}.pdf`].join('/'),
   };
 }
 
 export function ManagerPdfsView() {
+  const [mode, setMode] = useState<PdfMode>('resume');
   const [template, setTemplate] = useState<ResumeTemplate>('qts_resume_2');
-  const [resumeJson, setResumeJson] = useState<Record<ResumeTemplate, string>>({
-    qts_resume_1: defaultJson,
-    qts_resume_2: defaultJson,
-    qts_resume_3: defaultJson3,
-    classic: defaultJson,
-    compact: defaultJson,
-  });
+  const [resumeJson, setResumeJson] = useState(defaultJson);
+  const [coverLetterJson, setCoverLetterJson] = useState(defaultCoverLetterJson);
+  const [accounts, setAccounts] = useState<ManagerPdfAccount[]>([]);
+  const [accountsLoaded, setAccountsLoaded] = useState(false);
+  const [accountsError, setAccountsError] = useState('');
+  const [selectedAccountId, setSelectedAccountId] = useState('');
+  const [accountMatchStatus, setAccountMatchStatus] = useState('');
+  const [preferenceError, setPreferenceError] = useState('');
+  const [preferenceStatus, setPreferenceStatus] = useState('');
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewPdf, setPreviewPdf] = useState<Blob | null>(null);
   const [previewError, setPreviewError] = useState('');
@@ -363,9 +403,80 @@ export function ManagerPdfsView() {
   const previewUrlRef = useRef<string | null>(null);
   const downloadUrlRef = useRef<string | null>(null);
   const livePreviewFrameRef = useRef<HTMLIFrameElement>(null);
-  const json = resumeJson[template];
-  const isLiveTemplate = template === 'qts_resume_1' || template === 'qts_resume_2' || template === 'qts_resume_3';
-  const parsedResume = parseResumeJson(json);
+  const lastMatchedNameRef = useRef('');
+  const json = mode === 'resume' ? resumeJson : coverLetterJson;
+  const isLiveTemplate = mode === 'resume' &&
+    (template === 'qts_resume_1' || template === 'qts_resume_2' || template === 'qts_resume_3');
+  const parsedResume = parseResumeJson(resumeJson);
+  const parsedCoverLetter = parseCoverLetterJson(coverLetterJson);
+  const accountFullName = mode === 'resume'
+    ? parsedResume.resume?.candidate.fullName || ''
+    : parsedCoverLetter.coverLetter?.candidate.fullName || '';
+  const selectedAccount = accounts.find((account) => String(account.u_id) === selectedAccountId);
+  const activeValidationError = mode === 'resume' ? parsedResume.error : parsedCoverLetter.error;
+  const activeDocumentValid = mode === 'resume' ? Boolean(parsedResume.resume) : Boolean(parsedCoverLetter.coverLetter);
+  const previewIsReady = mode === 'resume' && isLiveTemplate
+    ? isLivePreviewReady && Boolean(renderedHtml)
+    : Boolean(previewPdf) && !isLoading;
+
+  useEffect(() => {
+    let cancelled = false;
+    api<{ success: boolean; accounts?: ManagerPdfAccount[]; message?: string }>('GET', '/api/v2/users/accounts')
+      .then((result) => {
+        if (cancelled) return;
+        if (!result.success || !result.accounts) {
+          setAccountsError(result.message || 'Could not load Accounts.');
+          return;
+        }
+        setAccounts(result.accounts);
+        setAccountsLoaded(true);
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setAccountsError(error instanceof Error ? error.message : 'Could not load Accounts.');
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!accountsLoaded || !accountFullName.trim()) return;
+    const timeout = window.setTimeout(() => {
+      const normalizedName = normalizeAccountName(accountFullName);
+      const matchKey = `${mode}:${normalizedName}`;
+      if (lastMatchedNameRef.current === matchKey) return;
+      lastMatchedNameRef.current = matchKey;
+
+      const matches = accounts.filter((account) => normalizeAccountName(account.name) === normalizedName);
+      if (matches.length === 1) {
+        const match = matches[0];
+        setSelectedAccountId(String(match.u_id));
+        const preferredTemplate = match.default_resume_template || 'qts_resume_2';
+        setTemplate(preferredTemplate);
+        const matchedResume = parseResumeJson(resumeJson).resume;
+        if (matchedResume) setLiveResume(matchedResume);
+        setIsLoading(mode === 'cover-letter' ||
+          !['qts_resume_1', 'qts_resume_2', 'qts_resume_3'].includes(preferredTemplate));
+        setIsLivePreviewReady(false);
+        setRenderedHtml('');
+        setPreviewUrl(null);
+        setPreviewPdf(null);
+        setDownloadUrl('');
+        setSuggestedPath('');
+        setAccountMatchStatus(`Matched Account: ${match.name}.`);
+        setPreferenceError('');
+        setPreferenceStatus('');
+      } else {
+        setSelectedAccountId('');
+        setAccountMatchStatus(matches.length > 1
+          ? `More than one Account matches “${accountFullName}”. Select the correct Account.`
+          : `No Account matches “${accountFullName}”. Select an Account to use its saved resume template.`);
+      }
+    }, 0);
+    return () => window.clearTimeout(timeout);
+  }, [accountFullName, accounts, accountsLoaded, mode, resumeJson]);
 
   useEffect(() => {
     let cancelled = false;
@@ -393,12 +504,12 @@ export function ManagerPdfsView() {
   }, []);
 
   useEffect(() => {
-    if (isLiveTemplate) return undefined;
+    if (mode !== 'resume' || isLiveTemplate) return undefined;
 
     let cancelled = false;
     const controller = new AbortController();
     const timeout = window.setTimeout(async () => {
-      const parsed = parseResumeJson(json);
+      const parsed = parseResumeJson(resumeJson);
       if (!parsed.resume) {
         if (!cancelled) {
           setPreviewError(parsed.error || 'Enter valid resume JSON to update the PDF.');
@@ -430,7 +541,51 @@ export function ManagerPdfsView() {
       window.clearTimeout(timeout);
       controller.abort();
     };
-  }, [isLiveTemplate, json, template]);
+  }, [isLiveTemplate, mode, resumeJson, template]);
+
+  useEffect(() => {
+    if (mode !== 'cover-letter') return undefined;
+
+    let cancelled = false;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(async () => {
+      const parsed = parseCoverLetterJson(coverLetterJson);
+      if (!parsed.coverLetter) {
+        if (!cancelled) {
+          setPreviewError(parsed.error || 'Enter valid cover-letter JSON to update the PDF.');
+          setIsLoading(false);
+        }
+        return;
+      }
+
+      const result = await requestPdf(
+        '/api/v2/resume-pdfs/cover-letter-preview',
+        { coverLetter: parsed.coverLetter },
+        controller.signal
+      );
+      if (cancelled) return;
+      setIsLoading(false);
+      if (!result.success || !result.pdf) {
+        setPreviewError(result.message || 'Could not generate cover-letter preview.');
+        return;
+      }
+
+      const nextUrl = URL.createObjectURL(result.pdf);
+      if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+      previewUrlRef.current = nextUrl;
+      setPreviewUrl(nextUrl);
+      setPreviewPdf(result.pdf);
+      setPreviewError('');
+      setDownloadUrl('');
+      setSuggestedPath('');
+    }, 450);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [coverLetterJson, mode]);
 
   useEffect(() => () => {
     if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
@@ -485,19 +640,81 @@ export function ManagerPdfsView() {
     }
   }
 
+  function selectAccount(accountId: string) {
+    setSelectedAccountId(accountId);
+    setAccountMatchStatus('');
+    setPreferenceError('');
+    setPreferenceStatus('');
+    const account = accounts.find((item) => String(item.u_id) === accountId);
+    if (account) {
+      const preferredTemplate = account.default_resume_template || 'qts_resume_2';
+      setTemplate(preferredTemplate);
+      const parsed = parseResumeJson(resumeJson);
+      if (parsed.resume) setLiveResume(parsed.resume);
+      setIsLoading(mode === 'cover-letter' || !['qts_resume_1', 'qts_resume_2', 'qts_resume_3'].includes(preferredTemplate));
+      setIsLivePreviewReady(false);
+      setRenderedHtml('');
+      setPreviewUrl(null);
+      setPreviewPdf(null);
+      setDownloadUrl('');
+      setSuggestedPath('');
+    }
+  }
+
+  async function selectResumeTemplate(nextTemplate: ResumeTemplate) {
+    setTemplate(nextTemplate);
+    setIsLoading(!['qts_resume_1', 'qts_resume_2', 'qts_resume_3'].includes(nextTemplate));
+    const parsed = parseResumeJson(resumeJson);
+    if (parsed.resume) setLiveResume(parsed.resume);
+    setPreferenceError('');
+    setPreferenceStatus('');
+    setIsLivePreviewReady(false);
+    setRenderedHtml('');
+    setPreviewUrl(null);
+    setPreviewPdf(null);
+    setDownloadUrl('');
+    setSuggestedPath('');
+
+    if (!selectedAccount) return;
+    const result = await api<{ success: boolean; resumeTemplate?: ResumeTemplate; message?: string }>(
+      'PUT',
+      `/api/v2/resume-pdfs/accounts/${selectedAccount.u_id}/preferences`,
+      { resumeTemplate: nextTemplate }
+    );
+    if (!result.success) {
+      setPreferenceError(result.message || 'Could not save the Account resume template preference.');
+      return;
+    }
+    setAccounts((current) => current.map((account) => (
+      account.u_id === selectedAccount.u_id
+        ? { ...account, default_resume_template: nextTemplate }
+        : account
+    )));
+    setPreferenceStatus(`Saved ${nextTemplate.replaceAll('_', ' ')} as ${selectedAccount.name}'s default resume template.`);
+  }
+
   async function download() {
-    const parsed = parseResumeJson(json);
-    if (!parsed.resume) {
-      setPreviewError(parsed.error || 'Enter valid resume JSON before downloading.');
+    const resume = mode === 'resume' ? parseResumeJson(resumeJson).resume : undefined;
+    const coverLetter = mode === 'cover-letter' ? parseCoverLetterJson(coverLetterJson).coverLetter : undefined;
+    const validationError = mode === 'resume'
+      ? parseResumeJson(resumeJson).error
+      : parseCoverLetterJson(coverLetterJson).error;
+    if (!resume && !coverLetter) {
+      setPreviewError(validationError || 'Enter valid JSON before downloading.');
       return;
     }
     if (savedDownloadDirectory && !downloadDirectory) {
       setDownloadError('Reconnect the saved download folder before downloading, or choose a different folder.');
       return;
     }
-    if ((!isLiveTemplate && (!previewUrl || !previewPdf || isLoading)) || isDownloading) return;
-    const account = safePathSegment(parsed.resume.candidate.fullName, 'Resume');
-    const destination = getSuggestedPath(parsed.resume);
+    if ((mode === 'resume' && !isLiveTemplate && (!previewUrl || !previewPdf || isLoading)) ||
+        (mode === 'cover-letter' && (!previewPdf || isLoading)) || isDownloading) return;
+    const documentData = resume ?? coverLetter;
+    if (!documentData) {
+      setDownloadError('Enter valid document JSON before downloading.');
+      return;
+    }
+    const destination = getSuggestedPath(documentData, mode);
     setDownloadError('');
     setDownloadStatus('');
     setSuggestedPath(destination.relativePath);
@@ -505,18 +722,25 @@ export function ManagerPdfsView() {
     setIsDownloading(true);
     try {
       let pdf = previewPdf;
-      if (isLiveTemplate) {
+      if (mode === 'resume' && isLiveTemplate) {
         if (!isLivePreviewReady || !renderedHtml) {
           setDownloadError('The live resume preview is not ready to download yet.');
           return;
         }
         const result = await requestPdf('/api/v2/resume-pdfs/preview', {
           template,
-          resume: parsed.resume,
+          resume,
           renderedHtml,
         });
         if (!result.success || !result.pdf) {
           setDownloadError(result.message || 'Could not generate the matching PDF.');
+          return;
+        }
+        pdf = result.pdf;
+      } else if (coverLetter) {
+        const result = await requestPdf('/api/v2/resume-pdfs/cover-letter-preview', { coverLetter });
+        if (!result.success || !result.pdf) {
+          setDownloadError(result.message || 'Could not generate the cover-letter PDF.');
           return;
         }
         pdf = result.pdf;
@@ -548,7 +772,7 @@ export function ManagerPdfsView() {
       }
 
       let fileUrl = previewUrl;
-      if (isLiveTemplate) {
+      if (isLiveTemplate || mode === 'cover-letter') {
         if (downloadUrlRef.current) URL.revokeObjectURL(downloadUrlRef.current);
         fileUrl = URL.createObjectURL(pdf);
         downloadUrlRef.current = fileUrl;
@@ -559,7 +783,7 @@ export function ManagerPdfsView() {
       }
       const link = document.createElement('a');
       link.href = fileUrl;
-      link.download = `${account}.pdf`;
+      link.download = destination.fileName;
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -577,74 +801,107 @@ export function ManagerPdfsView() {
       <div className="manager-pdfs__workspace">
         <section className="manager-pdfs__controls card" aria-labelledby="resume-pdf-inputs">
           <div className="form-group">
-            <label htmlFor="resume-pdf-template">PDF template</label>
+            <label htmlFor="resume-pdf-mode">Document type</label>
             <select
-              id="resume-pdf-template"
-              value={template}
+              id="resume-pdf-mode"
+              value={mode}
               onChange={(event) => {
-                const selected = templates.find((item) => item.id === event.target.value);
-                if (selected) {
-                  const selectedJson = resumeJson[selected.id];
-                  if (selected.id === 'qts_resume_1' || selected.id === 'qts_resume_2' || selected.id === 'qts_resume_3') {
-                    const parsed = parseResumeJson(selectedJson);
-                    if (parsed.resume) setLiveResume(parsed.resume);
-                    setPreviewError(parsed.error || '');
-                    setLivePreviewError('');
-                    setIsLoading(false);
-                    setIsLivePreviewReady(false);
-                    setRenderedHtml('');
-                    setPreviewUrl(null);
-                    setPreviewPdf(null);
-                  } else {
-                    setIsLoading(true);
-                    setIsLivePreviewReady(false);
-                  }
-                  setDownloadUrl('');
-                  setSuggestedPath('');
-                  setDownloadError('');
-                  setDownloadStatus('');
-                  setTemplate(selected.id);
-                }
+                const nextMode = event.target.value as PdfMode;
+                setMode(nextMode);
+                setPreviewError('');
+                setDownloadError('');
+                setDownloadStatus('');
+                setDownloadUrl('');
+                setSuggestedPath('');
+                setIsLoading(nextMode === 'cover-letter' || !['qts_resume_1', 'qts_resume_2', 'qts_resume_3'].includes(template));
+                setIsLivePreviewReady(false);
+                setRenderedHtml('');
               }}
             >
-              {templates.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+              <option value="resume">Resume</option>
+              <option value="cover-letter">Cover Letter</option>
             </select>
           </div>
+
+          <div className="form-group">
+            <label htmlFor="resume-pdf-account">Account</label>
+            <select
+              id="resume-pdf-account"
+              value={selectedAccountId}
+              onChange={(event) => selectAccount(event.target.value)}
+              disabled={!accountsLoaded || accounts.length === 0}
+            >
+              <option value="">{accountsLoaded ? 'Select an Account' : 'Loading Accounts…'}</option>
+              {accounts.map((account) => (
+                <option key={account.u_id} value={account.u_id}>{account.name}</option>
+              ))}
+            </select>
+            {accountsError && <div className="alert alert-error" role="alert">{accountsError}</div>}
+            {accountMatchStatus && <p className="text-muted" role="status">{accountMatchStatus}</p>}
+            {selectedAccount && <p className="text-muted">Selected Account: {selectedAccount.name}</p>}
+          </div>
+
+          {mode === 'resume' ? (
+            <div className="form-group">
+              <label htmlFor="resume-pdf-template">Resume template</label>
+              <select
+                id="resume-pdf-template"
+                value={template}
+                onChange={(event) => {
+                  const selected = templates.find((item) => item.id === event.target.value);
+                  if (selected) void selectResumeTemplate(selected.id);
+                }}
+              >
+                {templates.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+              </select>
+              {selectedAccount && <p className="text-muted">This template is saved as the default for {selectedAccount.name}.</p>}
+              {preferenceError && <div className="alert alert-error" role="alert">{preferenceError}</div>}
+              {preferenceStatus && <p className="text-muted" role="status">{preferenceStatus}</p>}
+            </div>
+          ) : (
+            <p className="text-muted">Template: QTS Cover Letter (standard).</p>
+          )}
+
           <div className="form-group manager-pdfs__json-field">
-            <label htmlFor="resume-pdf-json">Resume JSON data</label>
+            <label htmlFor="resume-pdf-json">{mode === 'resume' ? 'Resume JSON data' : 'Cover letter JSON data'}</label>
             <textarea
               id="resume-pdf-json"
               spellCheck={false}
               value={json}
               onChange={(event) => {
                 const nextJson = event.target.value;
-                setResumeJson((current) => ({ ...current, [template]: nextJson }));
+                if (mode === 'resume') {
+                  setResumeJson(nextJson);
+                  const parsed = parseResumeJson(nextJson);
+                  if (parsed.resume && isLiveTemplate) setLiveResume(parsed.resume);
+                  setPreviewError(parsed.error || '');
+                  setLivePreviewError('');
+                  setIsLivePreviewReady(false);
+                  setRenderedHtml('');
+                  setIsLoading(!isLiveTemplate);
+                } else {
+                  setCoverLetterJson(nextJson);
+                  const parsed = parseCoverLetterJson(nextJson);
+                  setPreviewError(parsed.error || '');
+                  setIsLoading(true);
+                }
                 setDownloadUrl('');
                 setSuggestedPath('');
                 setDownloadError('');
                 setDownloadStatus('');
-                if (isLiveTemplate) {
-                  const parsed = parseResumeJson(nextJson);
-                  if (parsed.resume) setLiveResume(parsed.resume);
-                  setPreviewError(parsed.error || '');
-                  setLivePreviewError('');
-                  setIsLoading(false);
-                  setIsLivePreviewReady(false);
-                  setRenderedHtml('');
-                } else {
-                  setIsLoading(true);
-                }
               }}
             />
             <p className="text-muted">
-              Each template starts with its own copy of the example resume JSON. Edit the selected copy;
-              {isLiveTemplate ? ' the resume updates as you type.' : ' the PDF preview refreshes automatically.'}
+              Paste JSON with <code>candidate.fullName</code> matching an Account’s full name to select it automatically.
+              {mode === 'resume'
+                ? ` The resume preview ${isLiveTemplate ? 'updates as you type.' : 'refreshes automatically.'}`
+                : ' The cover-letter PDF preview refreshes automatically.'}
             </p>
           </div>
-          {previewError && <div className="alert alert-error" role="alert">{previewError}</div>}
+          {(activeValidationError || previewError) && <div className="alert alert-error" role="alert">{activeValidationError || previewError}</div>}
           <button className="btn btn-primary" type="button" onClick={download}
-            disabled={!parsedResume.resume || (isLiveTemplate ? (!isLivePreviewReady || !renderedHtml) : !previewUrl) || isLoading || isDownloading || Boolean(previewError)}>
-            {isDownloading ? 'Generating PDF…' : isLoading ? 'Preparing preview…' : 'Download PDF'}
+            disabled={!activeDocumentValid || !previewIsReady || isLoading || isDownloading || Boolean(activeValidationError || previewError)}>
+            {isDownloading ? 'Generating PDF…' : isLoading ? 'Preparing preview…' : `Download ${mode === 'resume' ? 'Resume' : 'Cover Letter'} PDF`}
           </button>
           {savedDownloadDirectory && !downloadDirectory && (
             <button className="btn" type="button" onClick={reconnectDownloadFolder}>Reconnect saved folder</button>
@@ -655,7 +912,7 @@ export function ManagerPdfsView() {
           {downloadError && <div className="alert alert-error" role="alert">{downloadError}</div>}
           <p className="manager-pdfs__path-note">
             {downloadDirectory ? `Path inside ${downloadDirectory.name}:` : 'Suggested folder structure:'}{' '}
-            <code>{suggestedPath || 'Selected folder/$_QTS_Resume_$/…'}</code>
+            <code>{suggestedPath || `Selected folder/${mode === 'resume' ? '$_QTS_Resume_$' : '$_QTS_Cover_Letter_$'}/…`}</code>
           </p>
           {!downloadDirectory && <p className="text-muted">Choose any folder on your computer; PDFs will be saved there in organized subfolders. The picker starts in Music for convenience, and your selected folder is remembered in this browser when supported.</p>}
           {downloadStatus && <p role="status" className="manager-pdfs__path-note">{downloadStatus}</p>}
