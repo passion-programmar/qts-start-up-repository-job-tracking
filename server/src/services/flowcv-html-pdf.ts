@@ -1,13 +1,14 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import puppeteer, { type Browser } from 'puppeteer-core';
+import type { Browser } from 'puppeteer-core';
 
 type ChromiumModule = typeof import('@sparticuz/chromium');
+type PuppeteerModule = typeof import('puppeteer-core');
 
-const importEsm = new Function('specifier', 'return import(specifier)') as (
+const importEsm = new Function('specifier', 'return import(specifier)') as <T>(
   specifier: string,
-) => Promise<ChromiumModule>;
+) => Promise<T>;
 
 const MAX_HTML_LENGTH = 1_500_000;
 const CSP = [
@@ -54,9 +55,9 @@ function findLocalBrowser(): string | null {
 
 async function launchBrowser(): Promise<Browser> {
   const isVercel = Boolean(process.env.VERCEL);
-  // Keep the ESM-only Chromium package out of the CommonJS startup path.
+  const puppeteer = (await importEsm<PuppeteerModule>('puppeteer-core')).default;
   const chromium = isVercel
-    ? (await importEsm('@sparticuz/chromium')).default
+    ? (await importEsm<ChromiumModule>('@sparticuz/chromium')).default
     : null;
   const executablePath = chromium
     ? await chromium.executablePath()
