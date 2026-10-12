@@ -2,6 +2,10 @@
 
 ## QTS_Startup
 
+### 1.13.28 — 2026-10-12
+
+- **Manager PDFs:** Accept one application JSON object with shared candidate/job details and separate resume and cover-letter content to generate both PDFs together.
+
 ### 1.13.27 — 2026-10-11
 
 - **Manager PDFs:** Assign resume and cover-letter templates per Account, then save both PDFs together in a timestamped job folder with duplicate-application checks.

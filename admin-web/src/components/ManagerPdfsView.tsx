@@ -166,8 +166,6 @@ const sampleResume: QtsResumeDocument = {
   ],
 };
 
-const defaultJson = JSON.stringify(sampleResume, null, 2);
-
 const sampleCoverLetter: CoverLetterDocument = {
   candidate: {
     fullName: 'Alex Morgan',
@@ -187,7 +185,24 @@ const sampleCoverLetter: CoverLetterDocument = {
   signatureName: 'Alex Morgan',
 };
 
-const defaultCoverLetterJson = JSON.stringify(sampleCoverLetter, null, 2);
+const defaultApplicationJson = JSON.stringify({
+  candidate: sampleResume.candidate,
+  job: {
+    title: sampleResume.targetRole,
+    company: sampleCoverLetter.targetCompany,
+  },
+  resume: {
+    summary: sampleResume.summary,
+    sections: sampleResume.sections,
+  },
+  coverLetter: {
+    date: sampleCoverLetter.date,
+    salutation: sampleCoverLetter.salutation,
+    bodyParagraphs: sampleCoverLetter.bodyParagraphs,
+    closing: sampleCoverLetter.closing,
+    signatureName: sampleCoverLetter.signatureName,
+  },
+}, null, 2);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -207,20 +222,20 @@ function parseResumeJson(value: string): { resume?: QtsResumeDocument; error?: s
   if (typeof parsed.candidate.fullName !== 'string' || typeof parsed.candidate.email !== 'string') {
     return { error: 'Resume candidate must include a name and email address.' };
   }
-  if (!Array.isArray(parsed.sections)) {
-    return { error: 'Resume JSON must include a sections array.' };
+  if (!Array.isArray(parsed.sections) || parsed.sections.length === 0) {
+    return { error: 'Resume JSON must include at least one section.' };
   }
 
   const sections: QtsResumeDocument['sections'] = [];
   for (const [sectionIndex, section] of parsed.sections.entries()) {
-    if (!isRecord(section) || (section.title !== undefined && typeof section.title !== 'string')) {
-      return { error: `Section ${sectionIndex + 1} must have a text title.` };
+    if (!isRecord(section) || typeof section.title !== 'string' || !section.title.trim()) {
+      return { error: `Section ${sectionIndex + 1} must have a non-empty text title.` };
     }
-    if (section.items !== undefined && !Array.isArray(section.items)) {
-      return { error: `Items in section ${sectionIndex + 1} must be an array.` };
+    if (!Array.isArray(section.items) || section.items.length === 0) {
+      return { error: `Section ${sectionIndex + 1} must include at least one item.` };
     }
     const items: NonNullable<QtsResumeDocument['sections'][number]['items']> = [];
-    for (const [itemIndex, item] of ((section.items || []) as unknown[]).entries()) {
+    for (const [itemIndex, item] of (section.items as unknown[]).entries()) {
       if (!isRecord(item)) return { error: `Item ${itemIndex + 1} in section ${sectionIndex + 1} must be an object.` };
       for (const field of ['heading', 'subheading', 'dateRange'] as const) {
         if (item[field] !== undefined && typeof item[field] !== 'string') {
@@ -237,7 +252,7 @@ function parseResumeJson(value: string): { resume?: QtsResumeDocument; error?: s
         bullets: item.bullets as string[] | undefined,
       });
     }
-    sections.push({ title: section.title as string | undefined, items });
+    sections.push({ title: section.title, items });
   }
 
   const stringFields = ['phone', 'linkedinUrl', 'location', 'headline'] as const;
@@ -338,6 +353,51 @@ function parseCoverLetterJson(value: string): { coverLetter?: CoverLetterDocumen
   };
 }
 
+function parseApplicationJson(value: string): {
+  resume?: QtsResumeDocument;
+  coverLetter?: CoverLetterDocument;
+  error?: string;
+} {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    return { error: 'Enter valid application JSON.' };
+  }
+
+  if (!isRecord(parsed) || !isRecord(parsed.candidate) || !isRecord(parsed.job) ||
+      !isRecord(parsed.resume) || !isRecord(parsed.coverLetter)) {
+    return { error: 'Application JSON must include candidate, job, resume, and coverLetter objects.' };
+  }
+  if (typeof parsed.job.title !== 'string' || !parsed.job.title.trim()) {
+    return { error: 'Job must include a title.' };
+  }
+  if (typeof parsed.job.company !== 'string' || !parsed.job.company.trim()) {
+    return { error: 'Job must include a company.' };
+  }
+
+  const candidate = parsed.candidate;
+  const job = { targetRole: parsed.job.title, targetCompany: parsed.job.company };
+  const resumeResult = parseResumeJson(JSON.stringify({
+    candidate,
+    ...job,
+    summary: parsed.resume.summary,
+    sections: parsed.resume.sections,
+  }));
+  if (!resumeResult.resume) return { error: resumeResult.error || 'Resume data is invalid.' };
+
+  const coverLetterResult = parseCoverLetterJson(JSON.stringify({
+    candidate,
+    ...job,
+    ...parsed.coverLetter,
+  }));
+  if (!coverLetterResult.coverLetter) {
+    return { error: coverLetterResult.error || 'Cover letter data is invalid.' };
+  }
+
+  return { resume: resumeResult.resume, coverLetter: coverLetterResult.coverLetter };
+}
+
 function normalizeAccountName(value: string): string {
   return value.normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase();
 }
@@ -389,8 +449,7 @@ function getSuggestedPath(value: unknown): {
 }
 
 export function ManagerPdfsView() {
-  const [resumeJson, setResumeJson] = useState(defaultJson);
-  const [coverLetterJson, setCoverLetterJson] = useState(defaultCoverLetterJson);
+  const [applicationJson, setApplicationJson] = useState(defaultApplicationJson);
   const [accounts, setAccounts] = useState<ManagerPdfAccount[]>([]);
   const [accountsLoaded, setAccountsLoaded] = useState(false);
   const [accountsError, setAccountsError] = useState('');
@@ -417,19 +476,13 @@ export function ManagerPdfsView() {
   const coverLetterPreviewUrlRef = useRef<string | null>(null);
   const livePreviewFrameRef = useRef<HTMLIFrameElement>(null);
   const lastMatchedNameRef = useRef('');
-  const resumeCandidateName = candidateNameFromJson(resumeJson);
-  const coverLetterCandidateName = candidateNameFromJson(coverLetterJson);
-  const parsedResume = useMemo(() => parseResumeJson(resumeJson), [resumeJson]);
-  const parsedCoverLetter = useMemo(() => parseCoverLetterJson(coverLetterJson), [coverLetterJson]);
+  const parsedApplication = useMemo(() => parseApplicationJson(applicationJson), [applicationJson]);
   const selectedAccount = accounts.find((account) => String(account.u_id) === selectedAccountId);
   const template = selectedAccount?.default_resume_template;
   const coverLetterTemplate = selectedAccount?.default_cover_letter_template;
   const isLiveTemplate = template === 'qts_resume_1' || template === 'qts_resume_2' || template === 'qts_resume_3';
-  const resumeName = resumeCandidateName;
-  const coverLetterName = coverLetterCandidateName;
-  const accountNameMismatch = Boolean(resumeName && coverLetterName &&
-    normalizeAccountName(resumeName) !== normalizeAccountName(coverLetterName));
-  const activeValidationError = parsedResume.error || parsedCoverLetter.error;
+  const resumeName = candidateNameFromJson(applicationJson);
+  const activeValidationError = parsedApplication.error;
   const previewsReady = isLiveTemplate
     ? isLivePreviewReady && Boolean(renderedHtml) && Boolean(coverLetterPreviewPdf) && !isCoverLetterLoading
     : Boolean(resumePreviewPdf && coverLetterPreviewPdf) && !isResumeLoading && !isCoverLetterLoading;
@@ -457,7 +510,7 @@ export function ManagerPdfsView() {
   }, []);
 
   useEffect(() => {
-    const accountFullName = resumeName || coverLetterName;
+    const accountFullName = resumeName;
     if (!accountsLoaded || !accountFullName) return;
     const timeout = window.setTimeout(() => {
       const normalizedName = normalizeAccountName(accountFullName);
@@ -469,7 +522,7 @@ export function ManagerPdfsView() {
       if (matches.length === 1) {
         const match = matches[0];
         setSelectedAccountId(String(match.u_id));
-        const matchedResume = parseResumeJson(resumeJson).resume;
+        const matchedResume = parsedApplication.resume;
         if (matchedResume) setLiveResume(matchedResume);
         setIsResumeLoading(false);
         setIsCoverLetterLoading(false);
@@ -489,7 +542,7 @@ export function ManagerPdfsView() {
       }
     }, 0);
     return () => window.clearTimeout(timeout);
-  }, [accounts, accountsLoaded, coverLetterName, resumeName, resumeJson]);
+  }, [accounts, accountsLoaded, parsedApplication.resume, resumeName]);
 
   useEffect(() => {
     let cancelled = false;
@@ -517,9 +570,9 @@ export function ManagerPdfsView() {
   }, []);
 
   useEffect(() => {
-    const resumeDocument = parsedResume.resume;
-    const coverLetterDocument = parsedCoverLetter.coverLetter;
-    if (!selectedAccount || accountNameMismatch || !resumeDocument || !coverLetterDocument || !template) return undefined;
+    const resumeDocument = parsedApplication.resume;
+    const coverLetterDocument = parsedApplication.coverLetter;
+    if (!selectedAccount || !resumeDocument || !coverLetterDocument || !template) return undefined;
 
     let cancelled = false;
     const controller = new AbortController();
@@ -580,12 +633,9 @@ export function ManagerPdfsView() {
       controller.abort();
     };
   }, [
-    accountNameMismatch,
-    coverLetterJson,
     isLiveTemplate,
-    parsedCoverLetter.coverLetter,
-    parsedResume.resume,
-    resumeJson,
+    parsedApplication.coverLetter,
+    parsedApplication.resume,
     selectedAccount,
     template,
   ]);
@@ -656,11 +706,10 @@ export function ManagerPdfsView() {
   }
 
   async function download() {
-    const resume = parsedResume.resume;
-    const coverLetter = parsedCoverLetter.coverLetter;
+    const resume = parsedApplication.resume;
+    const coverLetter = parsedApplication.coverLetter;
     if (!resume || !coverLetter || !selectedAccount || !template || !coverLetterTemplate) return;
-    if (accountNameMismatch ||
-        normalizeAccountName(resume.candidate.fullName) !== normalizeAccountName(selectedAccount.name) ||
+    if (normalizeAccountName(resume.candidate.fullName) !== normalizeAccountName(selectedAccount.name) ||
         normalizeAccountName(coverLetter.candidate.fullName) !== normalizeAccountName(selectedAccount.name)) {
       setDownloadError('Both documents must use the selected Account’s exact full name.');
       return;
@@ -777,15 +826,15 @@ export function ManagerPdfsView() {
           </div>
 
           <div className="form-group manager-pdfs__json-field">
-            <label htmlFor="resume-pdf-json">Resume JSON data</label>
+            <label htmlFor="application-pdf-json">Application JSON data</label>
             <textarea
-              id="resume-pdf-json"
+              id="application-pdf-json"
               spellCheck={false}
-              value={resumeJson}
+              value={applicationJson}
               onChange={(event) => {
                 const nextJson = event.target.value;
-                const parsed = parseResumeJson(nextJson);
-                setResumeJson(nextJson);
+                const parsed = parseApplicationJson(nextJson);
+                setApplicationJson(nextJson);
                 if (parsed.resume && isLiveTemplate) setLiveResume(parsed.resume);
                 setPreviewError('');
                 setLivePreviewError('');
@@ -800,37 +849,19 @@ export function ManagerPdfsView() {
                 setDownloadStatus('');
               }}
             />
-          </div>
-          <div className="form-group manager-pdfs__json-field">
-            <label htmlFor="cover-letter-pdf-json">Cover letter JSON data</label>
-            <textarea
-              id="cover-letter-pdf-json"
-              spellCheck={false}
-              value={coverLetterJson}
-              onChange={(event) => {
-                setCoverLetterJson(event.target.value);
-                setPreviewError('');
-                setIsResumeLoading(false);
-                setIsCoverLetterLoading(false);
-                setCoverLetterPreviewPdf(null);
-                setResumePreviewPdf(null);
-                setSuggestedPath('');
-                setDownloadError('');
-                setDownloadStatus('');
-              }}
-            />
+            <p className="text-muted">
+              Paste one JSON object with shared <code>candidate</code> and <code>job</code> details, plus separate <code>resume</code> and <code>coverLetter</code> content. The same candidate and job information is used to generate both PDFs.
+            </p>
           </div>
           <p className="text-muted">
             Both documents must have <code>candidate.fullName</code> matching the selected Account. Resume and cover-letter templates are assigned in Account settings.
           </p>
-          {accountNameMismatch && <div className="alert alert-error" role="alert">The resume and cover letter must belong to the same Account.</div>}
           {activeValidationError && <div className="alert alert-error" role="alert">{activeValidationError}</div>}
           {previewError && <div className="alert alert-error" role="alert">{previewError}</div>}
 
           <button className="btn btn-primary" type="button" onClick={download}
-            disabled={!selectedAccount || !template || !coverLetterTemplate || !resumeName || !coverLetterName ||
-              accountNameMismatch || normalizeAccountName(resumeName) !== normalizeAccountName(selectedAccount?.name || '') ||
-              normalizeAccountName(coverLetterName) !== normalizeAccountName(selectedAccount?.name || '') ||
+            disabled={!selectedAccount || !template || !coverLetterTemplate || !resumeName ||
+              normalizeAccountName(resumeName) !== normalizeAccountName(selectedAccount?.name || '') ||
               Boolean(activeValidationError || previewError) || !previewsReady || !downloadDirectory || isDownloading}>
             {isDownloading ? 'Generating both PDFs…' : !downloadDirectory ? 'Choose a folder first' : 'Save resume and cover letter together'}
           </button>

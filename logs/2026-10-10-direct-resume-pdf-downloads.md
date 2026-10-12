@@ -52,3 +52,16 @@
   rather than overwrite existing documents.
 - Remove a newly created job folder if either PDF write fails, avoiding a
   partial application bundle.
+
+## Version 1.7.0 — Unified application JSON input
+
+- **Date:** 2026-10-12
+- **Change type:** Improved
+
+### Changes
+
+- Replace separate resume and cover-letter JSON inputs with one application
+  object containing shared `candidate` and `job` details plus `resume` and
+  `coverLetter` content.
+- Build both renderer payloads from the shared candidate and job fields so
+  names, role, and company stay consistent across the generated PDFs.
