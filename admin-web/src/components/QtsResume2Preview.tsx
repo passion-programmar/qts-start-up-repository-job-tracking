@@ -256,7 +256,6 @@ export function QtsResume2Preview({
   const [frameReady, setFrameReady] = useState(false);
   const [pageCount, setPageCount] = useState(1);
   const [scale, setScale] = useState(1);
-  const [viewportWidth, setViewportWidth] = useState(0);
 
   useLayoutEffect(() => {
     resumeRef.current = resume;
@@ -325,7 +324,6 @@ export function QtsResume2Preview({
     const viewport = wrapper?.parentElement;
     if (!wrapper || !viewport) return undefined;
     const updateScale = () => {
-      setViewportWidth(viewport.clientWidth);
       setScale(scaleMode === 'actual' ? 1 : Math.min(1, viewport.clientWidth / pageWidth));
     };
     updateScale();
@@ -340,7 +338,7 @@ export function QtsResume2Preview({
     <div
       className="qts-flowcv-preview"
       ref={wrapperRef}
-      style={{ width: `${Math.max(pageWidth * scale, viewportWidth)}px`, height: `${frameHeight * scale}px` }}
+      style={{ width: `${pageWidth * scale}px`, height: `${frameHeight * scale}px` }}
       aria-label="Live QTS Resume 2 preview"
     >
       {srcDoc ? (

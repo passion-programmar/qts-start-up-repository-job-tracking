@@ -268,14 +268,12 @@ export function QtsResume3Preview({
   const [frameReady, setFrameReady] = useState(false);
   const [pageCount, setPageCount] = useState(1);
   const [scale, setScale] = useState(1);
-  const [viewportWidth, setViewportWidth] = useState(0);
 
   useEffect(() => {
     const wrapper = wrapperRef.current;
     const viewport = wrapper?.parentElement;
     if (!wrapper || !viewport) return undefined;
     const updateScale = () => {
-      setViewportWidth(viewport.clientWidth);
       setScale(scaleMode === 'actual' ? 1 : Math.min(1, viewport.clientWidth / pageWidth));
     };
     updateScale();
@@ -323,7 +321,7 @@ export function QtsResume3Preview({
     <div
       className="qts-resume3-preview"
       ref={wrapperRef}
-      style={{ width: `${Math.max(pageWidth * scale, viewportWidth)}px`, height: `${frameHeight * scale}px` }}
+      style={{ width: `${pageWidth * scale}px`, height: `${frameHeight * scale}px` }}
       aria-label="Live QTS Resume 3 preview"
     >
       <iframe
