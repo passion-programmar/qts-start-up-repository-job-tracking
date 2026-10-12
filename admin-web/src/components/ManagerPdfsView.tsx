@@ -366,8 +366,6 @@ export function ManagerPdfsView() {
   const [isDownloading, setIsDownloading] = useState(false);
   const [isLivePreviewReady, setIsLivePreviewReady] = useState(false);
   const [renderedHtml, setRenderedHtml] = useState('');
-  const [previewScaleMode, setPreviewScaleMode] = useState<'fit' | 'actual'>('fit');
-  const [isPreviewFullscreen, setIsPreviewFullscreen] = useState(false);
   const [liveResume, setLiveResume] = useState<QtsResumeDocument>(sampleResume);
   const [downloadUrl, setDownloadUrl] = useState('');
   const [suggestedPath, setSuggestedPath] = useState('');
@@ -376,8 +374,6 @@ export function ManagerPdfsView() {
   const previewUrlRef = useRef<string | null>(null);
   const downloadUrlRef = useRef<string | null>(null);
   const livePreviewFrameRef = useRef<HTMLIFrameElement>(null);
-  const previewSectionRef = useRef<HTMLElement>(null);
-  const fullscreenPreviousScaleModeRef = useRef<'fit' | 'actual' | null>(null);
   const json = resumeJson[template];
   const isLiveTemplate = template === 'qts_resume_1' || template === 'qts_resume_2' || template === 'qts_resume_3';
   const parsedResume = parseResumeJson(json);
@@ -451,41 +447,6 @@ export function ManagerPdfsView() {
     if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
     if (downloadUrlRef.current) URL.revokeObjectURL(downloadUrlRef.current);
   }, []);
-
-  useEffect(() => {
-    const updateFullscreenState = () => {
-      const isFullscreen = document.fullscreenElement === previewSectionRef.current;
-      setIsPreviewFullscreen(isFullscreen);
-      if (!isFullscreen && fullscreenPreviousScaleModeRef.current) {
-        setPreviewScaleMode(fullscreenPreviousScaleModeRef.current);
-        fullscreenPreviousScaleModeRef.current = null;
-      }
-    };
-    document.addEventListener('fullscreenchange', updateFullscreenState);
-    return () => document.removeEventListener('fullscreenchange', updateFullscreenState);
-  }, []);
-
-  async function togglePreviewFullscreen() {
-    const section = previewSectionRef.current;
-    if (!section) return;
-    try {
-      if (document.fullscreenElement === section) {
-        await document.exitFullscreen();
-      } else {
-        fullscreenPreviousScaleModeRef.current = previewScaleMode;
-        setPreviewScaleMode('actual');
-        try {
-          await section.requestFullscreen();
-        } catch (error) {
-          setPreviewScaleMode(fullscreenPreviousScaleModeRef.current);
-          fullscreenPreviousScaleModeRef.current = null;
-          throw error;
-        }
-      }
-    } catch (error) {
-      setLivePreviewError(error instanceof Error ? error.message : 'Could not change resume preview size.');
-    }
-  }
 
   async function chooseDownloadFolder() {
     setDownloadError('');
@@ -721,34 +682,11 @@ export function ManagerPdfsView() {
             </p>
           )}
         </section>
-        <section className="manager-pdfs__preview card" aria-labelledby="resume-pdf-preview-title" ref={previewSectionRef}>
+        <section className="manager-pdfs__preview card" aria-labelledby="resume-pdf-preview-title">
           <div className="manager-pdfs__preview-header">
             <h3 id="resume-pdf-preview-title">{isLiveTemplate ? 'Live resume preview' : 'PDF preview'}</h3>
             {isLoading && <span className="text-muted" role="status">Generating PDF…</span>}
             {isLiveTemplate && !isLivePreviewReady && <span className="text-muted" role="status">Preparing live preview…</span>}
-            {isLiveTemplate && (
-              <div className="manager-pdfs__preview-actions" aria-label="Resume preview size controls">
-                <button
-                  className="btn"
-                  type="button"
-                  aria-pressed={previewScaleMode === 'fit'}
-                  onClick={() => setPreviewScaleMode('fit')}
-                >
-                  Fit to panel
-                </button>
-                <button
-                  className="btn"
-                  type="button"
-                  aria-pressed={previewScaleMode === 'actual'}
-                  onClick={() => setPreviewScaleMode('actual')}
-                >
-                  Actual size
-                </button>
-                <button className="btn" type="button" onClick={togglePreviewFullscreen}>
-                  {isPreviewFullscreen ? 'Exit full screen' : 'Full screen'}
-                </button>
-              </div>
-            )}
           </div>
           {isLiveTemplate ? (
             <>
@@ -759,7 +697,7 @@ export function ManagerPdfsView() {
                     key={template}
                     resume={liveResume}
                     iframeRef={livePreviewFrameRef}
-                    scaleMode={previewScaleMode}
+                    scaleMode="fit"
                     onReady={setIsLivePreviewReady}
                     onError={setLivePreviewError}
                     onDocumentReady={setRenderedHtml}
@@ -769,7 +707,7 @@ export function ManagerPdfsView() {
                     key={template}
                     resume={liveResume}
                     iframeRef={livePreviewFrameRef}
-                    scaleMode={previewScaleMode}
+                    scaleMode="fit"
                     onReady={setIsLivePreviewReady}
                     onError={setLivePreviewError}
                     onDocumentReady={setRenderedHtml}
@@ -779,7 +717,7 @@ export function ManagerPdfsView() {
                     key={template}
                     resume={liveResume}
                     iframeRef={livePreviewFrameRef}
-                    scaleMode={previewScaleMode}
+                    scaleMode="fit"
                     onReady={setIsLivePreviewReady}
                     onError={setLivePreviewError}
                     onDocumentReady={setRenderedHtml}
