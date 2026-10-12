@@ -9,9 +9,81 @@ import { QtsResume3Preview } from '@/components/QtsResume3Preview';
 
 type ResumeTemplate = 'qts_resume_1' | 'qts_resume_2' | 'qts_resume_3' | 'classic' | 'compact';
 
-type DirectoryPickerWindow = Window & {
-  showDirectoryPicker?: (options?: { id?: string; mode?: 'read' | 'readwrite' }) => Promise<FileSystemDirectoryHandle>;
+type PermissionedDirectoryHandle = FileSystemDirectoryHandle & {
+  queryPermission(options: { mode: 'readwrite' }): Promise<PermissionState>;
+  requestPermission(options: { mode: 'readwrite' }): Promise<PermissionState>;
 };
+
+type DirectoryPickerWindow = Window & {
+  showDirectoryPicker?: (options?: {
+    id?: string;
+    mode?: 'read' | 'readwrite';
+    startIn?: 'music';
+  }) => Promise<PermissionedDirectoryHandle>;
+};
+
+const directoryDatabaseName = 'qts-resume-pdf-settings';
+const directoryStoreName = 'settings';
+const directoryStorageKey = 'download-directory';
+
+function openDirectoryDatabase(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(directoryDatabaseName, 1);
+    request.onupgradeneeded = () => {
+      request.result.createObjectStore(directoryStoreName);
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error('Could not open saved folder settings.'));
+    request.onblocked = () => reject(new Error('Saved folder settings are blocked by another page.'));
+  });
+}
+
+async function loadSavedDirectory(): Promise<PermissionedDirectoryHandle | undefined> {
+  const database = await openDirectoryDatabase();
+  try {
+    return await new Promise((resolve, reject) => {
+      const request = database
+        .transaction(directoryStoreName, 'readonly')
+        .objectStore(directoryStoreName)
+        .get(directoryStorageKey);
+      request.onsuccess = () => resolve(request.result as PermissionedDirectoryHandle | undefined);
+      request.onerror = () => reject(request.error || new Error('Could not load the saved download folder.'));
+    });
+  } finally {
+    database.close();
+  }
+}
+
+async function saveDirectory(directory: PermissionedDirectoryHandle): Promise<void> {
+  const database = await openDirectoryDatabase();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction(directoryStoreName, 'readwrite');
+      transaction.objectStore(directoryStoreName).put(directory, directoryStorageKey);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error || new Error('Could not save the download folder.'));
+      transaction.onabort = () => reject(transaction.error || new Error('Saving the download folder was cancelled.'));
+    });
+  } finally {
+    database.close();
+  }
+}
+
+async function requestPersistentStorage(): Promise<string> {
+  if (!navigator.storage?.persist) {
+    return 'Persistent browser storage is not supported.';
+  }
+
+  try {
+    return await navigator.storage.persist()
+      ? 'Persistent browser storage is enabled.'
+      : 'Persistent browser storage was not granted.';
+  } catch (error) {
+    return error instanceof Error
+      ? `Could not enable persistent browser storage: ${error.message}`
+      : 'Could not enable persistent browser storage.';
+  }
+}
 
 const templates: Array<{ id: ResumeTemplate; label: string }> = [
   { id: 'qts_resume_1', label: 'QTS_Resume_1' },
@@ -253,7 +325,6 @@ function getSuggestedPath(value: unknown): { directories: string[]; fileName: st
   const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   const time = `${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}-${String(now.getSeconds()).padStart(2, '0')}`;
   const directories = [
-    '$_QTS_RESUME_$',
     'Custom',
     account,
     `${date}_${time}_${role}_${company}`,
@@ -287,13 +358,39 @@ export function ManagerPdfsView() {
   const [liveResume, setLiveResume] = useState<QtsResumeDocument>(sampleResume);
   const [downloadUrl, setDownloadUrl] = useState('');
   const [suggestedPath, setSuggestedPath] = useState('');
-  const [downloadDirectory, setDownloadDirectory] = useState<FileSystemDirectoryHandle | null>(null);
+  const [downloadDirectory, setDownloadDirectory] = useState<PermissionedDirectoryHandle | null>(null);
+  const [savedDownloadDirectory, setSavedDownloadDirectory] = useState<PermissionedDirectoryHandle | null>(null);
   const previewUrlRef = useRef<string | null>(null);
   const downloadUrlRef = useRef<string | null>(null);
   const livePreviewFrameRef = useRef<HTMLIFrameElement>(null);
   const json = resumeJson[template];
   const isLiveTemplate = template === 'qts_resume_1' || template === 'qts_resume_2' || template === 'qts_resume_3';
   const parsedResume = parseResumeJson(json);
+
+  useEffect(() => {
+    let cancelled = false;
+    loadSavedDirectory()
+      .then(async (directory) => {
+        if (!directory || cancelled) return;
+        setSavedDownloadDirectory(directory);
+        const permission = await directory.queryPermission({ mode: 'readwrite' });
+        if (cancelled) return;
+        if (permission === 'granted') {
+          setDownloadDirectory(directory);
+          setDownloadStatus(`Saved folder restored: ${directory.name}.`);
+        } else {
+          setDownloadStatus(`Saved folder found: ${directory.name}. Reconnect it to allow PDF downloads.`);
+        }
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setDownloadError(error instanceof Error ? error.message : 'Could not restore the saved download folder.');
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (isLiveTemplate) return undefined;
@@ -349,12 +446,42 @@ export function ManagerPdfsView() {
     }
 
     try {
-      const directory = await picker.call(window, { id: 'manager-resume-pdfs', mode: 'readwrite' });
+      const directory = await picker.call(window, {
+        id: 'manager-resume-pdfs',
+        mode: 'readwrite',
+        startIn: 'music',
+      });
       setDownloadDirectory(directory);
+      setSavedDownloadDirectory(directory);
       setDownloadStatus(`PDFs will be saved in ${directory.name} for this session.`);
+      const persistence = await requestPersistentStorage();
+      try {
+        await saveDirectory(directory);
+        setDownloadStatus(`PDFs will be saved in ${directory.name}. This folder is remembered in this browser. ${persistence} Clearing site data can still remove it.`);
+      } catch (error) {
+        setDownloadError(error instanceof Error
+          ? `Folder selected for this session, but it could not be remembered: ${error.message}`
+          : 'Folder selected for this session, but it could not be remembered.');
+      }
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') return;
       setDownloadError(error instanceof Error ? error.message : 'Could not access the selected download folder.');
+    }
+  }
+
+  async function reconnectDownloadFolder() {
+    if (!savedDownloadDirectory) return;
+    setDownloadError('');
+    try {
+      const permission = await savedDownloadDirectory.requestPermission({ mode: 'readwrite' });
+      if (permission !== 'granted') {
+        setDownloadError('Folder access was not granted. Choose the folder again or allow access in your browser.');
+        return;
+      }
+      setDownloadDirectory(savedDownloadDirectory);
+      setDownloadStatus(`PDFs will be saved in ${savedDownloadDirectory.name}.`);
+    } catch (error) {
+      setDownloadError(error instanceof Error ? error.message : 'Could not reconnect the saved download folder.');
     }
   }
 
@@ -362,6 +489,10 @@ export function ManagerPdfsView() {
     const parsed = parseResumeJson(json);
     if (!parsed.resume) {
       setPreviewError(parsed.error || 'Enter valid resume JSON before downloading.');
+      return;
+    }
+    if (savedDownloadDirectory && !downloadDirectory) {
+      setDownloadError('Reconnect the saved download folder before downloading, or choose a different folder.');
       return;
     }
     if ((!isLiveTemplate && (!previewUrl || !previewPdf || isLoading)) || isDownloading) return;
@@ -396,7 +527,7 @@ export function ManagerPdfsView() {
       }
 
       if (downloadDirectory) {
-        let directory = downloadDirectory;
+        let directory: FileSystemDirectoryHandle = downloadDirectory;
         for (const segment of destination.directories) {
           directory = await directory.getDirectoryHandle(segment, { create: true });
         }
@@ -515,15 +646,19 @@ export function ManagerPdfsView() {
             disabled={!parsedResume.resume || (isLiveTemplate ? (!isLivePreviewReady || !renderedHtml) : !previewUrl) || isLoading || isDownloading || Boolean(previewError)}>
             {isDownloading ? 'Generating PDF…' : isLoading ? 'Preparing preview…' : 'Download PDF'}
           </button>
+          {savedDownloadDirectory && !downloadDirectory && (
+            <button className="btn" type="button" onClick={reconnectDownloadFolder}>Reconnect saved folder</button>
+          )}
           <button className="btn" type="button" onClick={chooseDownloadFolder}>
-            {downloadDirectory ? `Change folder (${downloadDirectory.name})` : 'Choose download folder'}
+            {downloadDirectory || savedDownloadDirectory ? 'Choose a different folder' : 'Choose download folder'}
           </button>
           {downloadError && <div className="alert alert-error" role="alert">{downloadError}</div>}
           <p className="manager-pdfs__path-note">
-            {downloadDirectory ? `Path inside ${downloadDirectory.name}:` : 'Suggested folder path:'}{' '}
-            <code>{suggestedPath || '$_QTS_RESUME_$/Custom/…'}</code>
+            {downloadDirectory ? `Path inside ${downloadDirectory.name}:` : 'Suggested folder structure:'}{' '}
+            <code>{suggestedPath || 'Selected folder/Custom/…'}</code>
           </p>
-            {downloadStatus && <p role="status" className="manager-pdfs__path-note">{downloadStatus}</p>}
+          {!downloadDirectory && <p className="text-muted">Choose any folder on your computer; PDFs will be saved there in organized subfolders. The picker starts in Music for convenience, and your selected folder is remembered in this browser when supported.</p>}
+          {downloadStatus && <p role="status" className="manager-pdfs__path-note">{downloadStatus}</p>}
 
           {downloadUrl && (
             <p className="manager-pdfs__download-url">
