@@ -1,8 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import chromium from '@sparticuz/chromium';
-import puppeteer, { type Browser } from 'puppeteer-core';
+import type { Browser } from 'puppeteer-core';
 
 const MAX_HTML_LENGTH = 1_500_000;
 const CSP = [
@@ -17,6 +16,11 @@ const CSP = [
 ].join('; ');
 
 let browserPromise: Promise<Browser> | null = null;
+
+const importEsm = new Function(
+  'specifier',
+  'return import(specifier)'
+) as <Module>(specifier: string) => Promise<Module>;
 
 function findLocalBrowser(): string | null {
   const configuredPath = process.env.CHROME_EXECUTABLE_PATH;
@@ -49,16 +53,26 @@ function findLocalBrowser(): string | null {
 
 async function launchBrowser(): Promise<Browser> {
   const isVercel = Boolean(process.env.VERCEL);
-  const executablePath = isVercel
-    ? await chromium.executablePath()
-    : findLocalBrowser();
+  const puppeteer = (await importEsm<typeof import('puppeteer-core')>('puppeteer-core')).default;
+  const chromium = isVercel
+    ? (await importEsm<typeof import('@sparticuz/chromium')>('@sparticuz/chromium')).default
+    : null;
+  let executablePath: string | null;
+  let args: string[];
+  if (isVercel) {
+    if (!chromium) {
+      throw new Error('Could not load the serverless Chromium package.');
+    }
+    executablePath = await chromium.executablePath();
+    args = await puppeteer.defaultArgs({ args: chromium.args, headless: 'shell' });
+  } else {
+    executablePath = findLocalBrowser();
+    args = ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'];
+  }
   if (!executablePath) {
     throw new Error('Could not find Chrome or Chromium. Install a local browser or set CHROME_EXECUTABLE_PATH.');
   }
 
-  const args = isVercel
-    ? await puppeteer.defaultArgs({ args: chromium.args, headless: 'shell' })
-    : ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'];
   return puppeteer.launch({
     args,
     defaultViewport: { width: 816, height: 1056, deviceScaleFactor: 1 },
