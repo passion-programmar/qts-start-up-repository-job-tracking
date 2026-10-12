@@ -91,8 +91,9 @@ before(async () => {
     [processingJobId, account.u_id]
   );
 
-  const [{ default: express }, { default: profileRouter }, { default: gptTasksRouter }, { errorHandler }, jwtModule, { config }] = await Promise.all([
+  const [{ default: express }, { default: authRouter }, { default: profileRouter }, { default: gptTasksRouter }, { errorHandler }, jwtModule, { config }] = await Promise.all([
     import('express'),
+    import('./auth.routes'),
     import('./manager-application-profile.routes'),
     import('./gpt-application-tasks.routes'),
     import('../../middleware/error-handler'),
@@ -105,6 +106,7 @@ before(async () => {
 
   const app = express();
   app.use(express.json());
+  app.use('/api/v2/auth', authRouter);
   app.use('/api/v2/manager-application-profile', profileRouter);
   app.use('/api/v2/gpt-application-tasks', gptTasksRouter);
   app.use(errorHandler as ErrorRequestHandler);
@@ -132,6 +134,41 @@ after(async () => {
       if (temporaryDatabasePath) await rm(temporaryDatabasePath, { recursive: true, force: true });
     }
   }
+});
+
+it('returns the authenticated Manager Custom GPT assignment after login', async () => {
+  const customGpt = await (await import('../../database/connection')).queryOne<{
+    custom_gpt_id: number;
+  }>(
+    `INSERT INTO custom_gpts (name, url, gpt_id)
+     VALUES ('Scanner Assigned GPT Test', 'https://chatgpt.com/g/g-scanner-assigned-test', 'g-scanner-assigned-test')
+     RETURNING custom_gpt_id`
+  );
+  assert.ok(customGpt);
+  await (await import('../../database/connection')).execute(
+    `INSERT INTO manager_custom_gpt_assignments (manager_user_id, custom_gpt_id)
+     VALUES ($1, $2)`,
+    [managerId, customGpt.custom_gpt_id]
+  );
+
+  const response = await fetch(`${serverUrl}/api/v2/auth/custom-gpt-assignment`, {
+    headers: { Authorization: `Bearer ${managerToken}` },
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    success: true,
+    customGpt: {
+      id: customGpt.custom_gpt_id,
+      name: 'Scanner Assigned GPT Test',
+      url: 'https://chatgpt.com/g/g-scanner-assigned-test',
+      source: 'super_assignment',
+    },
+  });
+
+  const accountResponse = await fetch(`${serverUrl}/api/v2/auth/custom-gpt-assignment`, {
+    headers: { Authorization: `Bearer ${accountToken}` },
+  });
+  assert.equal(accountResponse.status, 403);
 });
 
 it('saves reusable question/answers with Manager-scoped template rules and keeps revisions', async () => {
