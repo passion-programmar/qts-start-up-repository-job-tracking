@@ -2,7 +2,7 @@
   "framework": "express",
   "functions": {
     "src/app.ts": {
-      "includeFiles": "{node_modules/pdf-parse/dist/pdf-parse/cjs/pdf.worker.mjs,node_modules/@sparticuz/chromium/bin/**,node_modules/@sparticuz/chromium/build/**,node_modules/@sparticuz/chromium/package.json,node_modules/puppeteer-core/**,node_modules/@puppeteer/browsers/**,node_modules/chromium-bidi/**,node_modules/devtools-protocol/**,node_modules/typed-query-selector/**,node_modules/webdriver-bidi-protocol/**,node_modules/ws/**,node_modules/tar-fs/**,node_modules/modern-tar/**,node_modules/yargs/**,node_modules/mitt/**,node_modules/zod/**,node_modules/pump/**,node_modules/tar-stream/**,node_modules/cliui/**,node_modules/escalade/**,node_modules/get-caller-file/**,node_modules/require-directory/**,node_modules/string-width/**,node_modules/y18n/**,node_modules/yargs-parser/**,node_modules/end-of-stream/**,node_modules/once/**,node_modules/b4a/**,node_modules/bare-fs/**,node_modules/fast-fifo/**,node_modules/streamx/**,node_modules/strip-ansi/**,node_modules/wrap-ansi/**,node_modules/emoji-regex/**,node_modules/is-fullwidth-code-point/**,node_modules/wrappy/**,node_modules/bare-events/**,node_modules/bare-path/**,node_modules/bare-stream/**,node_modules/bare-url/**,node_modules/events-universal/**,node_modules/text-decoder/**,node_modules/bare-os/**,node_modules/teex/**,node_modules/color-convert/**,node_modules/color-name/**,node_modules/ansi-regex/**,node_modules/ansi-styles/**,assets/fonts/**}"
+      "includeFiles": "{node_modules/pdf-parse/dist/pdf-parse/cjs/pdf.worker.mjs,node_modules/{@sparticuz/chromium,@puppeteer,puppeteer-core,chromium-bidi,devtools-protocol,webdriver-bidi-protocol,ws,zod,mitt,tar-*,streamx,pump,yargs*}/**,assets/fonts/**}"
     }
   },
   "crons": [
