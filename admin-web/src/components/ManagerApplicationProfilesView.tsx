@@ -193,7 +193,10 @@ export function ManagerApplicationProfilesView() {
           <section className="application-profile__section" aria-labelledby="profile-authorization-title">
             <div className="application-profile__section-heading">
               <h3 id="profile-authorization-title">Work authorization</h3>
-              <p>Capture eligibility and sponsorship details clearly.</p>
+              <p>
+                These legacy Manager-wide values are not used to answer candidate applications.
+                Store each Account’s work authorization and sponsorship answers in that Account’s profile.
+              </p>
             </div>
             <div className="application-profile__grid">
               {yesNoSelect('authorized-to-work', 'Authorized to work', profile.authorizedToWork,
@@ -253,7 +256,10 @@ export function ManagerApplicationProfilesView() {
           <section className="application-profile__section" aria-labelledby="profile-salary-title">
             <div className="application-profile__section-heading">
               <h3 id="profile-salary-title">Salary answers</h3>
-              <p>Add separate currencies and pay periods; no conversion is performed.</p>
+              <p>
+                These Manager-wide amounts are not used for candidate salary-expectation questions.
+                Store each candidate’s expectations in that Account’s reusable Q&amp;A; no currency conversion is performed.
+              </p>
             </div>
           {profile.salaryAnswers.map((answer, index) => (
             <fieldset className="application-profile__entry" key={index}>
@@ -296,8 +302,9 @@ export function ManagerApplicationProfilesView() {
             <div className="application-profile__section-heading">
               <h3 id="profile-custom-title">Custom reusable questions</h3>
               <p>
-                Add global answers such as work schedule or travel. For example, “Are you willing to travel?”
-                or “What work schedules are you available for?” These are shared across your Accounts.
+                These answers are shared across all assigned Accounts. Use them only when the same answer is accurate
+                for every candidate; store candidate-specific eligibility, compensation, education, referral, schedule,
+                and availability answers in the individual Account profile.
               </p>
             </div>
           {profile.customAnswers.map((answer, index) => (

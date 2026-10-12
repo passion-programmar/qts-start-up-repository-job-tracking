@@ -123,6 +123,46 @@ async function fetchApplicationDocument(applicationId, docType) {
     return { success: false, message: 'Cannot download document from server.' };
   }
 
+  async function fetchManagerGptTaskDocument(taskId, documentType) {
+    const [serverUrl, token] = await Promise.all([getServerUrl(), getToken()]);
+    const url = `${serverUrl.replace(/\/$/, '')}/api/v2/gpt-application-tasks/${encodeURIComponent(taskId)}/documents/${encodeURIComponent(documentType)}`;
+    let response;
+    try {
+      response = await fetch(url, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+    } catch {
+      return { success: false, message: 'Cannot download the generated document from server.' };
+    }
+
+    if (!response.ok) {
+      let message = `Generated document download failed (${response.status}).`;
+      try {
+        const err = await response.json();
+        if (err.message) message = err.message;
+      } catch {
+        // ignore
+      }
+      return { success: false, message };
+    }
+
+    const blob = await response.blob();
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    let binary = '';
+    const chunkSize = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+    }
+    const disposition = response.headers.get('Content-Disposition') || '';
+    const match = disposition.match(/filename="?([^"]+)"?/i);
+    return {
+      success: true,
+      fileName: match?.[1] || (documentType === 'cover_letter' ? 'cover-letter.pdf' : 'resume.pdf'),
+      mimeType: blob.type || 'application/pdf',
+      base64: btoa(binary),
+    };
+  }
+
   if (!response.ok) {
     let message = `Document download failed (${response.status}).`;
     try {
@@ -157,6 +197,29 @@ async function fetchApplicationDocument(applicationId, docType) {
   };
 }
 
+async function saveApplicationTemplateDraft(payload) {
+  return apiRequest('POST', '/api/application-templates/from-discovery', payload);
+}
+
+async function getReusableApplicationTemplate(query = {}) {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query || {})) {
+    if (value !== undefined && value !== null && value !== '') {
+      params.append(key, String(value));
+    }
+  }
+  const qs = params.toString();
+  return apiRequest('GET', `/api/application-templates/reuse${qs ? `?${qs}` : ''}`);
+}
+
+async function getApplicationLearningQueue(applicationId) {
+  return apiRequest('GET', `/api/application-sessions/${encodeURIComponent(String(applicationId))}/learning-queue`);
+}
+
+async function confirmApplicationLearning(applicationId, payload) {
+  return apiRequest('POST', `/api/application-sessions/${encodeURIComponent(String(applicationId))}/learning-confirmation`, payload);
+}
+
 window.api = {
   DEFAULT_SERVER,
   formatApiMessage,
@@ -173,13 +236,28 @@ window.api = {
     `/api/auth/extension-bootstrap${accountId ? `?accountId=${encodeURIComponent(accountId)}` : ''}`
   ),
   getAssignedCustomGpt: () => apiRequest('GET', '/api/v2/auth/custom-gpt-assignment'),
+  getManagerApplicationProfile: () => apiRequest('GET', '/api/v2/manager-application-profile'),
+  getManagerScannerRules: (templateId) =>
+    apiRequest('GET', `/api/v2/manager-application-profile/scanner-rules/${encodeURIComponent(String(templateId))}`),
+  saveManagerScannerRule: (rule) =>
+    apiRequest('POST', '/api/v2/manager-application-profile/scanner-rules', rule),
+  updateManagerScannerRuleEvidence: (evidence) =>
+    apiRequest('POST', '/api/v2/manager-application-profile/scanner-rules/evidence', evidence),
   extensionStatus: () => apiRequest('GET', '/api/auth/extension-status'),
   health: () => apiRequest('GET', '/api/health'),
   getCandidates: () => apiRequest('GET', '/api/candidates?active=true'),
   getCandidateStacks: () => apiRequest('GET', '/api/settings/candidate-stacks'),
   getManagerAccounts: () => apiRequest('GET', '/api/v2/users/accounts'),
   getJobCategories: () => apiRequest('GET', '/api/v2/categories'),
-  getJobs: () => apiRequest('GET', '/api/v2/jobs'),
+  getJobs: (filters = {}) => {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(filters || {})) {
+      if (value !== undefined && value !== null && value !== '') params.append(key, String(value));
+    }
+    const query = params.toString();
+    return apiRequest('GET', `/api/v2/jobs${query ? `?${query}` : ''}`);
+  },
+  claimScannerJob: (data) => apiRequest('POST', '/api/v2/jobs/claim-next', data),
   checkJobByUrl: (url) =>
     apiRequest('GET', `/api/v2/jobs/check-url?url=${encodeURIComponent(url)}`),
   createJob: (data) => apiRequest('POST', '/api/v2/jobs', data),
@@ -205,6 +283,20 @@ window.api = {
     apiRequest('GET', `/api/application-tasks/${encodeURIComponent(taskId)}/status`),
   getApplicationTaskContext: (taskId) =>
     apiRequest('GET', `/api/application-tasks/${encodeURIComponent(taskId)}/context`),
+  createManagerGptTaskForJob: (jobId, data) =>
+    apiRequest('POST', `/api/v2/gpt-application-tasks/jobs/${encodeURIComponent(jobId)}`, data),
+  setManagerGptTaskPage: (taskId, data) =>
+    apiRequest('PUT', `/api/v2/gpt-application-tasks/${encodeURIComponent(taskId)}/page`, data),
+  acknowledgeManagerGptTaskPage: (taskId) =>
+    apiRequest('POST', `/api/v2/gpt-application-tasks/${encodeURIComponent(taskId)}/scanner-acknowledge`, {}),
+  getManagerGptTaskStatus: (taskId) =>
+    apiRequest('GET', `/api/v2/gpt-application-tasks/${encodeURIComponent(taskId)}/extension-status`),
+  fetchManagerGptTaskDocument: (taskId, documentType) =>
+    fetchManagerGptTaskDocument(taskId, documentType),
   fetchApplicationDocument: (applicationId, docType) =>
     fetchApplicationDocument(applicationId, docType),
+  saveApplicationTemplateDraft: (payload) => saveApplicationTemplateDraft(payload),
+  getReusableApplicationTemplate: (query) => getReusableApplicationTemplate(query),
+  getApplicationLearningQueue: (applicationId) => getApplicationLearningQueue(applicationId),
+  confirmApplicationLearning: (applicationId, payload) => confirmApplicationLearning(applicationId, payload),
 };

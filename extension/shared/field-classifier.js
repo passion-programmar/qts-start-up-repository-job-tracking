@@ -87,6 +87,11 @@ function isChoiceOrUploadField(fieldType) {
 function classifyField(field) {
   const fieldType = field.fieldType || 'text';
   const text = normalizeText(field.label, field.placeholder, field.sectionHeading, field.nameAttr);
+  const status = field.status || 'ambiguous';
+
+  if (status === 'unresolved' && fieldType !== 'file') {
+    return { category: 'needs_review', reason: 'field_unresolved' };
+  }
 
   if (!isChoiceOrUploadField(fieldType)) {
     const autocompleteHint = inferFromAutocomplete(field.autocompleteAttr);
@@ -129,6 +134,11 @@ function classifyField(field) {
     return { category: 'saved_answer', savedAnswerKey: 'terms_accepted' };
   }
 
+  const riskyPatterns = [/passport/i, /social security/i, /ssn/i, /national id/i, /id number/i, /citizenship/i, /visa/i];
+  if (matchesAny(text, riskyPatterns) && status !== 'matched') {
+    return { category: 'needs_review', reason: 'sensitive_field_unresolved' };
+  }
+
   const looksNarrative = matchesAny(text, NARRATIVE_HINTS) || isLongText;
   if (looksNarrative) {
     return { category: 'ai_generation' };
@@ -149,18 +159,29 @@ function classifyField(field) {
     return { category: 'unknown' };
   }
 
+  if (status === 'ambiguous' && field.required) {
+    return { category: 'needs_review', reason: 'ambiguous_required_field' };
+  }
+
   return { category: 'unknown' };
 }
 
 function classifyFields(fields) {
   return fields.map((field) => {
     const inferred = classifyField(field);
+    const requiresReview = field.status === 'ambiguous'
+      || field.status === 'unresolved'
+      || inferred.category === 'needs_review'
+      || inferred.category === 'unknown';
+
     return {
       ...field,
       category: inferred.category,
       profileKey: inferred.profileKey || null,
       savedAnswerKey: inferred.savedAnswerKey || null,
       documentSlot: inferred.documentSlot || null,
+      requiresReview,
+      statusReason: inferred.reason || null,
     };
   });
 }

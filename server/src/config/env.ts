@@ -38,7 +38,9 @@ export const config = {
   callerUsername: process.env.CALLER_USERNAME || 'caller',
   callerPassword: process.env.CALLER_PASSWORD || 'user',
   useEmbeddedPg: String(process.env.EMBEDDED_PG ?? 'true').toLowerCase() === 'true',
-  pgliteDataPath: path.resolve(getAppRoot(), 'data', 'pglite'),
+  pgliteDataPath: path.resolve(
+    process.env.PGLITE_DATA_PATH || path.join(getAppRoot(), 'data', 'pglite')
+  ),
   databaseUrl: buildDatabaseUrl(),
   databaseSsl: String(process.env.DATABASE_SSL || 'false').toLowerCase() === 'true',
   databasePoolMax: parseInt(process.env.DATABASE_POOL_MAX || '10', 10),

@@ -1,6 +1,6 @@
 # QTS Application Workflow — Extension + Custom GPT + Server
 
-> **Current system (June 2026):** See [docs/CURRENT-SYSTEM.md](docs/CURRENT-SYSTEM.md) � extension v1.13.25+, job sites, one-step auto-apply.
+> **Historical workflow guide:** The Workable application handler and Manager Apply controls described below have been removed. Workable job capture, manual job tracking, and read-only site discovery remain available. See [docs/CURRENT-SYSTEM.md](docs/CURRENT-SYSTEM.md) for current behavior. Do not use the retired instructions in this document to run a Workable application.
 
 **File:** `QTS-APPLICATION-WORKFLOW.md`  
 **Version:** Extension **v1.7.7** · corrected architecture and operating rules  
@@ -9,6 +9,8 @@
 
 Related guides:
 
+- `docs/UNIVERSAL-JOB-APPLICATION-RULES.md` — reusable profile/Q&A prefilling,
+  per-page GPT batching, and review rules
 - `QTS-JOB-TRACKING-EXTENSION-GUIDE.md` — extension installation and job capture
 - `QTS-JOB-TRACKING-CUSTOM-GPT-GUIDE.md` — Custom GPT setup, instructions, authentication, and Actions
 - `docs/JUSTJOIN-APPLY-TEMPLATES.md` — justjoin.it application templates
@@ -16,9 +18,9 @@ Related guides:
 
 ---
 
-## 1. System purpose
+## 1. System purpose (historical)
 
-The system helps an Account user prepare and fill a job application while keeping final submission under the user’s control.
+The sections below document the previous application workflow for maintenance and migration reference. They do not describe functionality currently shipped for Workable.
 
 The three main components are:
 
@@ -32,7 +34,7 @@ The Custom GPT does **not** inspect the job website, click job-site controls, up
 
 ### Manager Job List and Bids
 
-Manager-added jobs are stored as Account-specific rows in `job_list`. The Jobs page shows those active rows and lets the Manager change a waiting job to Failed or confirm it as Applied; Processing is controlled by the Apply workflow. When Workable confirms a successful submission (or the Manager confirms Applied), QTS inserts the application details into `bids` and removes the active row from `job_list`. The Manager's Bids page lists those submissions; application status is tracked only in the active Job List, not in `bids`. Existing Applied job rows are moved into `bids` during the database migration.
+Historically, Manager-added jobs were stored as Account-specific rows in `job_list`, and the retired Workable Apply handler could move a row through automated processing. That handler has been removed. Managers can still capture and track job rows and record outcomes manually through the current Jobs and Bids workflows; see `docs/CURRENT-SYSTEM.md`.
 
 ```text
 ┌─────────────────┐    scan / fill / upload    ┌──────────────────┐

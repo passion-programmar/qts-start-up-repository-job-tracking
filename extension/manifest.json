@@ -38,15 +38,6 @@
         "content/chatgpt-handoff.js"
       ],
       "run_at": "document_idle"
-    },
-    {
-      "matches": [
-        "https://*.workable.com/*"
-      ],
-      "js": [
-        "content/workable-application.js"
-      ],
-      "run_at": "document_idle"
     }
   ],
   "web_accessible_resources": [

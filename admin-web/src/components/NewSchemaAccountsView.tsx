@@ -19,6 +19,7 @@ type Profile = NewSchemaAccountProfile & {
   education?: EducationRecord[] | null;
   work_experience?: WorkExperienceRecord[] | null;
   custom_fields?: AccountCustomField[] | null;
+  custom_answers?: AccountCustomAnswer[] | null;
   has_resume?: boolean;
   resume_file_name?: string | null;
 };
@@ -26,6 +27,12 @@ type Profile = NewSchemaAccountProfile & {
 type AccountCustomField = {
   fieldName: string;
   value: string;
+};
+
+type AccountCustomAnswer = {
+  topic: string;
+  question: string;
+  answer: string;
 };
 
 type EducationRecord = {
@@ -61,6 +68,7 @@ const emptyForm = () => ({
   education: [] as EducationRecord[],
   workExperience: [] as WorkExperienceRecord[],
   customFields: [] as AccountCustomField[],
+  customAnswers: [] as AccountCustomAnswer[],
 });
 
 export function NewSchemaAccountsView() {
@@ -106,7 +114,7 @@ export function NewSchemaAccountsView() {
     setEditingId(profile.u_id);
     setForm({
       firstName: profile.first_name || profile.name.split(/\s+/)[0] || '',
-      lastName: profile.last_name || profile.name.split(/\s+/).slice(1).join(' ') || profile.name,
+      lastName: profile.last_name ?? profile.name.split(/\s+/).slice(1).join(' '),
       email: profile.email,
       address: profile.address,
       sex: profile.sex,
@@ -135,6 +143,11 @@ export function NewSchemaAccountsView() {
       customFields: (profile.custom_fields || []).map((item) => ({
         fieldName: item.fieldName || '',
         value: item.value || '',
+      })),
+      customAnswers: (profile.custom_answers || []).map((item) => ({
+        topic: item.topic || '',
+        question: item.question || '',
+        answer: item.answer || '',
       })),
     });
     setResumeFile(null);
@@ -175,6 +188,11 @@ export function NewSchemaAccountsView() {
       customFields: form.customFields.map((item) => ({
         fieldName: item.fieldName.trim(),
         value: item.value.trim(),
+      })),
+      customAnswers: form.customAnswers.map((item) => ({
+        topic: item.topic.trim(),
+        question: item.question.trim(),
+        answer: item.answer.trim(),
       })),
     };
     const result = editingId
@@ -254,11 +272,13 @@ export function NewSchemaAccountsView() {
             ['birthday', 'Birthday'], ['phone', 'Phone'], ['country', 'Country'], ['city', 'City'],
           ] as const).map(([key, label]) => (
             <div className="form-group" key={key}>
-              <label htmlFor={`account-${key}`}>{label}</label>
+              <label htmlFor={`account-${key}`}>
+                {label}{key === 'lastName' ? ' (if applicable)' : ''}
+              </label>
               <input
                 id={`account-${key}`}
                 type={key === 'email' ? 'email' : key === 'birthday' ? 'date' : 'text'}
-                required
+                required={key !== 'lastName'}
                 maxLength={key === 'firstName' || key === 'lastName' ? 100 : key === 'address' ? 500 : key === 'country' || key === 'city' ? 100 : key === 'sex' ? 50 : undefined}
                 value={form[key]}
                 onChange={(event) => setForm({ ...form, [key]: event.target.value })}
@@ -418,6 +438,53 @@ export function NewSchemaAccountsView() {
             ...form,
             customFields: [...form.customFields, { fieldName: '', value: '' }],
           })}>Add additional fact</button>
+          <h3>Reusable application questions and answers</h3>
+          <p className="text-muted">
+            These answers belong to this Account and are reused only when an application question matches.
+          </p>
+          {form.customAnswers.map((item, index) => (
+            <fieldset className="card" key={index}>
+              <legend>Saved answer {index + 1}</legend>
+              <div className="form-group">
+                <label htmlFor={`account-answer-topic-${index}`}>Topic</label>
+                <input id={`account-answer-topic-${index}`} required maxLength={100} value={item.topic}
+                  onChange={(event) => {
+                    const customAnswers = [...form.customAnswers];
+                    customAnswers[index] = { ...item, topic: event.target.value };
+                    setForm({ ...form, customAnswers });
+                  }} />
+              </div>
+              <div className="form-group">
+                <label htmlFor={`account-answer-question-${index}`}>Application question</label>
+                <textarea id={`account-answer-question-${index}`} required maxLength={1000} value={item.question}
+                  onChange={(event) => {
+                    const customAnswers = [...form.customAnswers];
+                    customAnswers[index] = { ...item, question: event.target.value };
+                    setForm({ ...form, customAnswers });
+                  }} />
+              </div>
+              <div className="form-group">
+                <label htmlFor={`account-answer-value-${index}`}>Reusable answer</label>
+                <textarea id={`account-answer-value-${index}`} required maxLength={4000} value={item.answer}
+                  onChange={(event) => {
+                    const customAnswers = [...form.customAnswers];
+                    customAnswers[index] = { ...item, answer: event.target.value };
+                    setForm({ ...form, customAnswers });
+                  }} />
+              </div>
+              <button className="btn btn-ghost" type="button"
+                onClick={() => setForm({
+                  ...form,
+                  customAnswers: form.customAnswers.filter((_, row) => row !== index),
+                })}>
+                Remove saved answer
+              </button>
+            </fieldset>
+          ))}
+          <button className="btn btn-ghost" type="button" onClick={() => setForm({
+            ...form,
+            customAnswers: [...form.customAnswers, { topic: '', question: '', answer: '' }],
+          })}>Add reusable question and answer</button>
         </form>
         {formError && <div className="alert alert-error">{formError}</div>}
       </Modal>

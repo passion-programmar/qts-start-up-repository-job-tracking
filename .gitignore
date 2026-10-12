@@ -8,8 +8,14 @@ admin-web/.next/
 admin-web/.env.production.local
 admin-web/.env.local
 release/
+/data/
+/pdf template from outside/
+/startbootstrap-sb-admin-gh-pages/
 logs/*
 !logs/.gitkeep
+!logs/*.md
+!logs/*/
+!logs/**/*.md
 .DS_Store
 server/.env.cloud
 scripts/bin/

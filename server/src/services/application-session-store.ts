@@ -3,7 +3,7 @@
 import { createPublicTaskId } from '../modules/application-sessions/application-task-id';
 import { normalizeUrl } from '../utilities/normalize-url';
 
-const SESSION_TTL_MS = 4 * 60 * 60 * 1000;
+export const MEMORY_APPLICATION_SESSION_TTL_MS = 4 * 60 * 60 * 1000;
 const CLEANUP_INTERVAL_MS = 15 * 60 * 1000;
 
 export type ApplicationSessionStatus =
@@ -62,6 +62,9 @@ export interface MemorySession {
   generated_answers: Record<string, string>;
   status: ApplicationSessionStatus;
   metadata: Record<string, unknown>;
+  template_version: string | null;
+  page_fingerprint: string | null;
+  mode: 'DISCOVERY' | 'REAL_APPLICATION' | null;
   started_at: string;
   last_activity_at: string;
   completed_at: string | null;
@@ -87,6 +90,9 @@ type CreateSessionInput = {
   currentStep?: string | null;
   discoveredPages?: unknown[];
   metadata?: Record<string, unknown>;
+  templateVersion?: string | null;
+  pageFingerprint?: string | null;
+  mode?: 'DISCOVERY' | 'REAL_APPLICATION' | null;
   candidate?: {
     name?: string | null;
     email?: string | null;
@@ -126,6 +132,11 @@ let nextFieldId = 1;
 const sessionsById = new Map<number, MemorySession>();
 const sessionIdByTaskId = new Map<string, number>();
 const fieldsBySessionId = new Map<number, Map<string, MemorySessionField>>();
+const sessionCleanupListeners = new Set<(sessionId: number) => void>();
+
+export function registerMemorySessionCleanupListener(listener: (sessionId: number) => void): void {
+  sessionCleanupListeners.add(listener);
+}
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -137,7 +148,7 @@ function touchSession(session: MemorySession): void {
 }
 
 function pruneExpiredSessions(): void {
-  const cutoff = Date.now() - SESSION_TTL_MS;
+  const cutoff = Date.now() - MEMORY_APPLICATION_SESSION_TTL_MS;
   for (const [id, session] of sessionsById) {
     const last = Date.parse(session.last_activity_at || session.created_at);
     if (!Number.isFinite(last) || last < cutoff) {
@@ -145,6 +156,9 @@ function pruneExpiredSessions(): void {
       fieldsBySessionId.delete(id);
       const taskId = readPublicTaskIdFromSession(session);
       if (taskId) sessionIdByTaskId.delete(taskId);
+      for (const listener of sessionCleanupListeners) {
+        listener(id);
+      }
     }
   }
 }
@@ -163,10 +177,16 @@ export function createMemoryApplicationSession(input: CreateSessionInput): Memor
   const passedTaskId = typeof passedRaw === 'string' && passedRaw.startsWith('task_') ? passedRaw : null;
   const publicTaskId = passedTaskId ?? createPublicTaskId();
   const timestamp = nowIso();
+  const normalizedMode = input.mode === 'DISCOVERY' || input.mode === 'REAL_APPLICATION' ? input.mode : null;
+  const templateVersion = input.templateVersion ?? (typeof input.metadata?.templateVersion === 'string' ? input.metadata.templateVersion : null);
+  const pageFingerprint = input.pageFingerprint ?? (typeof input.metadata?.pageFingerprint === 'string' ? input.metadata.pageFingerprint : null);
   const metadata = {
     ...(input.metadata ?? {}),
     publicTaskId,
     taskId: publicTaskId,
+    ...(templateVersion ? { templateVersion } : {}),
+    ...(pageFingerprint ? { pageFingerprint } : {}),
+    ...(normalizedMode ? { mode: normalizedMode } : {}),
   };
 
   const session: MemorySession = {
@@ -186,6 +206,9 @@ export function createMemoryApplicationSession(input: CreateSessionInput): Memor
     generated_answers: {},
     status: 'scanning',
     metadata,
+    template_version: templateVersion,
+    page_fingerprint: pageFingerprint,
+    mode: normalizedMode,
     started_at: timestamp,
     last_activity_at: timestamp,
     completed_at: null,
@@ -205,10 +228,12 @@ export function createMemoryApplicationSession(input: CreateSessionInput): Memor
 }
 
 export function getMemoryApplicationSession(sessionId: number): MemorySession | null {
+  pruneExpiredSessions();
   return sessionsById.get(sessionId) ?? null;
 }
 
 export function resolveMemorySessionIdFromTaskId(taskIdParam: string): number | null {
+  pruneExpiredSessions();
   const trimmed = String(taskIdParam || '').trim();
   if (!trimmed) return null;
   const byTask = sessionIdByTaskId.get(trimmed);
@@ -292,7 +317,7 @@ export function listMemorySessionFields(sessionId: number): MemorySessionField[]
 
 export function updateMemorySession(
   sessionId: number,
-  patch: Partial<Pick<MemorySession, 'status' | 'current_step' | 'discovered_pages' | 'generated_answers' | 'metadata' | 'completed_at'>>
+  patch: Partial<Pick<MemorySession, 'status' | 'current_step' | 'discovered_pages' | 'generated_answers' | 'metadata' | 'completed_at' | 'template_version' | 'page_fingerprint' | 'mode'>>
 ): MemorySession | null {
   const session = sessionsById.get(sessionId);
   if (!session) return null;
@@ -300,7 +325,37 @@ export function updateMemorySession(
   if (patch.current_step !== undefined) session.current_step = patch.current_step;
   if (patch.discovered_pages !== undefined) session.discovered_pages = patch.discovered_pages;
   if (patch.generated_answers !== undefined) session.generated_answers = patch.generated_answers;
-  if (patch.metadata !== undefined) session.metadata = patch.metadata;
+  if (patch.metadata !== undefined) {
+    const nextMetadata = { ...(session.metadata ?? {}), ...patch.metadata };
+    session.metadata = nextMetadata;
+    if (typeof nextMetadata.templateVersion === 'string') {
+      session.template_version = nextMetadata.templateVersion;
+    }
+    if (typeof nextMetadata.pageFingerprint === 'string') {
+      session.page_fingerprint = nextMetadata.pageFingerprint;
+    }
+    if (nextMetadata.mode === 'DISCOVERY' || nextMetadata.mode === 'REAL_APPLICATION') {
+      session.mode = nextMetadata.mode;
+    }
+  }
+  if (patch.template_version !== undefined) {
+    session.template_version = patch.template_version;
+    if (patch.template_version) {
+      session.metadata = { ...session.metadata, templateVersion: patch.template_version };
+    }
+  }
+  if (patch.page_fingerprint !== undefined) {
+    session.page_fingerprint = patch.page_fingerprint;
+    if (patch.page_fingerprint) {
+      session.metadata = { ...session.metadata, pageFingerprint: patch.page_fingerprint };
+    }
+  }
+  if (patch.mode !== undefined) {
+    session.mode = patch.mode === 'DISCOVERY' || patch.mode === 'REAL_APPLICATION' ? patch.mode : null;
+    if (session.mode) {
+      session.metadata = { ...session.metadata, mode: session.mode };
+    }
+  }
   if (patch.completed_at !== undefined) session.completed_at = patch.completed_at;
   touchSession(session);
   return session;

@@ -257,6 +257,16 @@
       line-height: 1.5;
       text-align: center;
     }
+    .application-disabled-note {
+      margin: 14px 0 0;
+      padding: 10px;
+      border: 1px solid #fed7aa;
+      border-radius: 8px;
+      background: #fff7ed;
+      color: #9a3412;
+      font-size: 12px;
+      line-height: 1.45;
+    }
     .action-buttons {
       display: grid;
       gap: 10px;
@@ -270,82 +280,36 @@
       color: #fff;
       box-shadow: 0 0 0 3px #bbf7d0;
     }
-    .workable-study {
+    .site-discovery {
       margin-top: 18px;
       padding: 14px;
       border: 1px solid #cbd5e1;
       border-radius: 12px;
       background: #fff;
     }
-    .workable-study h3 {
+    .site-discovery h3 {
       margin: 0 0 6px;
       color: #0f172a;
       font-size: 15px;
     }
-    .workable-study > p {
+    .site-discovery > p {
       margin: 0 0 10px;
       color: #64748b;
       font-size: 12px;
       line-height: 1.45;
     }
-    .workable-study-actions {
+    .site-discovery-actions {
       display: grid;
       gap: 6px;
     }
-    .workable-study-actions .btn {
+    .site-discovery-actions .btn {
       min-height: 34px;
     }
-    .workable-study .workable-study-status {
+    .site-discovery .site-discovery-status {
       margin: 10px 0 0;
       color: #475569;
       font-size: 11px;
       line-height: 1.4;
-    }
-    .workable-study-pages {
-      display: grid;
-      gap: 10px;
-      max-height: 360px;
-      margin-top: 10px;
-      overflow: auto;
-    }
-    .workable-study-step {
-      min-width: 0;
-      padding: 10px;
-      border: 1px solid #e2e8f0;
-      border-radius: 8px;
-      background: #f8fafc;
-    }
-    .workable-study-step h4 {
-      margin: 0 0 3px;
-      color: #0f172a;
-      font-size: 12px;
-    }
-    .workable-study-step-meta {
-      margin: 0 0 8px;
-      color: #64748b;
-      font-size: 10px;
-      overflow-wrap: anywhere;
-    }
-    .workable-study-table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 10px;
-      text-align: left;
-    }
-    .workable-study-table th,
-    .workable-study-table td {
-      padding: 5px 3px;
-      border-top: 1px solid #e2e8f0;
-      vertical-align: top;
-      overflow-wrap: anywhere;
-    }
-    .workable-study-table th {
-      color: #475569;
-      font-weight: 700;
-    }
-    .workable-study-table td:first-child {
-      color: #0f172a;
-      font-weight: 600;
     }
     #get-jd-confirmation {
       width: min(340px, calc(100% - 40px));
@@ -373,66 +337,37 @@
       justify-content: flex-end;
       gap: 8px;
     }
-    #apply-account-confirmation {
-      width: min(420px, calc(100% - 40px));
-      max-height: min(620px, calc(100vh - 40px));
-      overflow: auto;
-      padding: 22px;
-      border: 1px solid #e2e8f0;
-      border-radius: 14px;
-      color: #0f172a;
+    #scanner-save-status {
+      margin: 0;
+      padding: 8px 16px 12px;
+      color: #475569;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+    #scanner-document-review {
+      width: min(720px, calc(100% - 24px));
+      max-width: 100%;
+      max-height: calc(100vh - 24px);
+      padding: 16px;
+      border: 1px solid #cbd5e1;
+      border-radius: 12px;
       box-shadow: 0 16px 40px rgba(15, 23, 42, 0.24);
     }
-    #apply-account-confirmation::backdrop {
-      background: rgba(15, 23, 42, 0.48);
+    #scanner-document-review::backdrop {
+      background: rgba(15, 23, 42, 0.58);
     }
-    .apply-account-options {
-      display: grid;
-      gap: 8px;
-      max-height: 300px;
-      overflow-y: auto;
-      margin: 0 0 18px;
-    }
-    .apply-account-option {
-      display: grid;
-      grid-template-columns: 18px minmax(0, 1fr);
-      align-items: start;
-      gap: 10px;
-      padding: 11px 12px;
+    #scanner-document-preview {
+      width: 100%;
+      height: min(62vh, 620px);
       border: 1px solid #cbd5e1;
-      border-radius: 10px;
-      cursor: pointer;
-    }
-    .apply-account-option:has(input:checked) {
-      border-color: #00a884;
-      background: #f0fdf4;
-    }
-    .apply-account-option.is-disabled {
-      cursor: not-allowed;
-      opacity: 0.65;
+      border-radius: 6px;
       background: #f8fafc;
     }
-    .apply-account-option input {
-      margin: 3px 0 0;
-      accent-color: #008f70;
-    }
-    .apply-account-option-name {
-      display: block;
-      font-size: 13px;
-      font-weight: 700;
-      line-height: 1.4;
-    }
-    .apply-account-option-status {
-      display: block;
-      margin-top: 3px;
-      color: #64748b;
-      font-size: 11px;
-      line-height: 1.4;
-    }
-    .apply-account-confirmation-actions {
+    .scanner-document-review-actions {
       display: flex;
       justify-content: flex-end;
       gap: 8px;
+      margin-top: 12px;
     }
     .job-mode-actions {
       display: flex;
@@ -568,20 +503,19 @@
           <div id="action-alert" aria-live="polite"></div>
           <div class="action-buttons">
             <button class="btn btn-primary" id="btn-get-jd" type="button" aria-pressed="false">Get JD</button>
-            <button class="btn btn-primary" id="btn-apply" type="button" aria-pressed="false">Apply</button>
             <button class="btn btn-primary" id="btn-custom-apply" type="button" aria-pressed="false">Custom Apply</button>
             <button class="btn btn-ghost" id="btn-action-logout" type="button">Logout</button>
           </div>
-          <section class="workable-study" aria-labelledby="workable-study-title">
-            <h3 id="workable-study-title">Study application form</h3>
-            <p>Read the current Workable step without filling fields or advancing the application. Move to each next step yourself, then scan it.</p>
-            <div class="workable-study-actions">
-              <button class="btn btn-ghost btn-sm" id="btn-study-current" type="button">Scan / update this step</button>
-              <button class="btn btn-ghost btn-sm" id="btn-study-next" type="button">Record as a new step</button>
-              <button class="btn btn-ghost btn-sm" id="btn-study-clear" type="button">Clear report</button>
+          <p class="application-disabled-note hidden" id="application-disabled-note">
+            The Manager Apply queue and final submission are disabled. Scanner assist requires your confirmation and never submits an application.
+          </p>
+          <section class="site-discovery" aria-labelledby="site-discovery-title">
+            <h3 id="site-discovery-title">Scanner</h3>
+            <p>Managers click Scan for the current step, review job details extracted through Get JD, and choose an Account. Save Job &amp; Scan saves or updates the job, starts that Account's row, then scans the form. New steps are checked twice automatically; later unchanged scans use one check, and differences pause for Manager review. Profile and Reusable answers require confirmation; generated answers and resume or cover-letter uploads use the job's GPT task and require Manager review. Scanner never advances pages or submits.</p>
+            <div class="site-discovery-actions">
+              <button class="btn btn-ghost btn-sm" id="btn-discover-site-step" type="button">Scan current step</button>
             </div>
-            <p class="workable-study-status" id="workable-study-status" role="status" aria-live="polite">No steps scanned yet. The report is temporary and contains field structure only, not entered answers.</p>
-            <div class="workable-study-pages" id="workable-study-pages"></div>
+            <p class="site-discovery-status" id="site-discovery-status" role="status" aria-live="polite">Scanner has not scanned this step yet.</p>
           </section>
         </div>
       </div>
@@ -598,15 +532,13 @@
       </form>
     </dialog>
 
-    <dialog id="apply-account-confirmation" aria-labelledby="apply-account-confirmation-title">
-      <h2 class="get-jd-confirmation-title" id="apply-account-confirmation-title">Choose an Account</h2>
-      <p class="get-jd-confirmation-message">
-        Apply will process supported jobs for one Account at a time. Counts include all job statuses.
-      </p>
-      <div id="apply-account-options" class="apply-account-options" role="radiogroup" aria-label="Manager Accounts"></div>
-      <form method="dialog" class="apply-account-confirmation-actions">
-        <button class="btn btn-ghost" type="submit" value="cancel">Cancel</button>
-        <button class="btn btn-primary" id="btn-confirm-apply-account" type="submit" value="start" disabled>Apply selected Account</button>
+    <dialog id="scanner-document-review" aria-labelledby="scanner-document-review-title" aria-describedby="scanner-document-review-description">
+      <h2 id="scanner-document-review-title">Review generated document</h2>
+      <p id="scanner-document-review-description"></p>
+      <iframe id="scanner-document-preview" title="Generated PDF preview"></iframe>
+      <form method="dialog" class="scanner-document-review-actions">
+        <button class="btn btn-ghost" type="submit" value="reject">Do not upload</button>
+        <button class="btn btn-primary" type="submit" value="approve">Approve upload</button>
       </form>
     </dialog>
 
@@ -686,6 +618,14 @@
         </div>
       </div>
 
+      <div id="learning-review-panel" class="learning-review-panel hidden" aria-live="polite">
+        <div class="learning-review-head">
+          <span class="learning-review-title">Learned answer review</span>
+        </div>
+        <div id="learning-review-status" class="learning-review-status" role="status" aria-live="polite"></div>
+        <ul id="learning-review-list" class="learning-review-list"></ul>
+      </div>
+
       <!-- DEV ONLY: temporary field-capture inspector — remove before production GPT handoff -->
       <div id="dev-capture-debug" class="dev-capture-debug hidden" aria-label="Development capture debug">
         <div class="dev-capture-head">
@@ -742,6 +682,7 @@
         <textarea id="f-desc" class="desc-textbox" placeholder="Full job description…" spellcheck="true"></textarea>
         <div class="field-error" id="err-desc">Could not save the description.</div>
       </div>
+      <p class="site-discovery-status hidden" id="scanner-save-status" role="status" aria-live="polite"></p>
     </div>
     </div>
   </div>
@@ -749,6 +690,7 @@
   <div class="actions-bar" id="action-bar">
     <button class="btn btn-ghost" id="btn-refresh" type="button">↻ Refresh</button>
     <button class="btn btn-primary" id="btn-save" type="button">Save Job</button>
+    <button class="btn btn-primary hidden" id="btn-save-and-scan" type="button">Save Job &amp; Scan</button>
   </div>
 
   <div id="qts-toast-host" class="qts-toast-host" aria-live="polite" aria-atomic="true"></div>
@@ -778,10 +720,12 @@
   <script src="../shared/field-classifier.js"></script>
   <script src="../shared/candidate-matcher.js"></script>
   <script src="../shared/fill-policy.js"></script>
+  <script src="../shared/scanner-capture.js"></script>
   <script src="../shared/custom-gpt.js"></script>
   <script src="../shared/account-auth-storage.js"></script>
   <script src="../shared/apply-session-store.js"></script>
   <script src="api-client.js"></script>
+  <script src="learning-review-panel.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

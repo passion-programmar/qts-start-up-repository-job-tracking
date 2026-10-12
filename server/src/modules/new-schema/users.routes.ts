@@ -43,12 +43,19 @@ const accountCustomFieldSchema = z.object({
   value: z.string().trim().min(1).max(4000),
 }).strict();
 
+const accountCustomAnswerSchema = z.object({
+  topic: z.string().trim().min(1).max(100),
+  question: z.string().trim().min(1).max(1000),
+  answer: z.string().trim().min(1).max(4000),
+}).strict();
+
 const accountApplicationProfileSchema = z.object({
   firstName: z.string().trim().min(1).max(100),
-  lastName: z.string().trim().min(1).max(100),
+  lastName: z.string().trim().max(100).default(''),
   education: z.array(educationSchema).max(20).default([]),
   workExperience: z.array(workExperienceSchema).max(30).default([]),
   customFields: z.array(accountCustomFieldSchema).max(100).default([]),
+  customAnswers: z.array(accountCustomAnswerSchema).max(100).default([]),
 });
 
 const accountProfileSchema = accountApplicationProfileSchema.extend({
@@ -78,6 +85,13 @@ const accountColumns = `
   u.u_id, u.username, u.name, u.role, u.parent_user_id, u.email, u.address, u.sex,
   u.birthday, u.phone, u.country, u.city, u.category_id, u.blocked_date,
   app.first_name, app.last_name, app.education, app.work_experience, app.custom_fields,
+  COALESCE((
+    SELECT jsonb_agg(jsonb_build_object(
+      'topic', answer.topic, 'question', answer.question, 'answer', answer.answer
+    ) ORDER BY answer.custom_answer_id)
+    FROM account_custom_application_answers answer
+    WHERE answer.account_user_id = u.u_id
+  ), '[]'::jsonb) AS custom_answers,
   (app.resume_content IS NOT NULL) AS has_resume, app.resume_file_name
 `;
 
@@ -209,7 +223,7 @@ router.post('/', async (req: NewSchemaAuthRequest, res: Response) => {
         ) VALUES ($1, $2, 'account', NULL, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         RETURNING u_id`,
         [
-          username, `${data.firstName} ${data.lastName}`, actor.id, data.email, data.address, data.sex,
+          username, [data.firstName, data.lastName].filter(Boolean).join(' '), actor.id, data.email, data.address, data.sex,
           data.birthday, data.phone, data.country, data.city, data.categoryId,
         ]
       );
@@ -224,6 +238,14 @@ router.post('/', async (req: NewSchemaAuthRequest, res: Response) => {
           JSON.stringify(data.customFields),
         ]
       );
+      for (const answer of data.customAnswers) {
+        await tx.query(
+          `INSERT INTO account_custom_application_answers (
+            account_user_id, topic, question, answer
+          ) VALUES ($1, $2, $3, $4)`,
+          [created.u_id, answer.topic, answer.question, answer.answer]
+        );
+      }
       return created;
     });
     const account = await queryOne(accountSelect('WHERE u.u_id = $1'), [row.u_id]);
@@ -317,14 +339,14 @@ router.put('/:id', async (req: NewSchemaAuthRequest, res: Response) => {
     );
     const firstName = data.firstName ?? currentProfile?.first_name;
     const lastName = data.lastName ?? currentProfile?.last_name;
-    if (!firstName || !lastName) {
-      res.status(400).json({ success: false, message: 'Enter the Account’s first and last names.' });
+    if (!firstName) {
+      res.status(400).json({ success: false, message: 'Enter the Account’s first name.' });
       return;
     }
     await withTransaction(async (tx) => {
       if (data.firstName !== undefined || data.lastName !== undefined) {
         assignments.push(`name = $${values.length + 1}`);
-        values.push(`${firstName} ${lastName}`);
+        values.push([firstName, lastName].filter(Boolean).join(' '));
       }
       if (assignments.length) {
         values.push(userId);
@@ -348,6 +370,20 @@ router.put('/:id', async (req: NewSchemaAuthRequest, res: Response) => {
           JSON.stringify(data.customFields ?? currentProfile?.custom_fields ?? []),
         ]
       );
+      if (data.customAnswers !== undefined) {
+        await tx.query(
+          'DELETE FROM account_custom_application_answers WHERE account_user_id = $1',
+          [userId]
+        );
+        for (const answer of data.customAnswers) {
+          await tx.query(
+            `INSERT INTO account_custom_application_answers (
+              account_user_id, topic, question, answer
+            ) VALUES ($1, $2, $3, $4)`,
+            [userId, answer.topic, answer.question, answer.answer]
+          );
+        }
+      }
     });
     const account = await queryOne(accountSelect('WHERE u.u_id = $1'), [userId]);
     res.json({ success: true, account });

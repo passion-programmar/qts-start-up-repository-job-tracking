@@ -14,19 +14,28 @@ interface BrowseTable {
   count: number;
 }
 
+function recordId(record: Record<string, unknown>, primaryKey: string | readonly string[]): string {
+  if (typeof primaryKey === 'string') {
+    return String(record[primaryKey]);
+  }
+  return JSON.stringify(primaryKey.map((column) => record[column]));
+}
+
 interface BrowseResult {
   success: boolean;
   message?: string;
   table?: BrowseTable & {
     columns: string[];
-    primaryKey: string;
+    primaryKey: string | readonly string[];
     fields: Array<{
       name: string;
-      type: 'text' | 'password' | 'integer' | 'boolean' | 'date' | 'datetime' | 'time' | 'url' | 'integer-array' | 'enum';
+      type: 'text' | 'password' | 'integer' | 'boolean' | 'date' | 'datetime' | 'time' | 'url'
+        | 'integer-array' | 'enum' | 'numeric' | 'json' | 'uuid' | 'binary';
       nullable?: boolean;
       required?: boolean;
       options?: string[];
       maxLength?: number;
+      min?: number;
     }>;
   };
   records?: Array<Record<string, unknown>>;
@@ -153,7 +162,9 @@ export function NewSchemaDatabaseView() {
 
   function formatFieldValue(fieldType: NonNullable<BrowseResult['table']>['fields'][number]['type'], value: unknown): unknown {
     if (value === null || value === undefined) return '';
-    if (fieldType === 'integer-array' && Array.isArray(value)) return JSON.stringify(value);
+    if ((fieldType === 'integer-array' || fieldType === 'json') && typeof value !== 'string') {
+      return JSON.stringify(value);
+    }
     if (fieldType === 'datetime' && typeof value === 'string') {
       const date = new Date(value);
       if (Number.isNaN(date.getTime())) return '';
@@ -168,6 +179,9 @@ export function NewSchemaDatabaseView() {
     for (const field of tableInfo.fields) {
       if (field.type === 'boolean') draft[field.name] = false;
       else if (field.type === 'integer-array') draft[field.name] = '[]';
+      else if (field.type === 'json') {
+        draft[field.name] = field.name === 'task_context' || field.name === 'package' ? '{}' : '[]';
+      }
       else if (field.name === 'role' && selectedTable === 'users') draft[field.name] = 'manager';
       else draft[field.name] = '';
     }
@@ -202,8 +216,10 @@ export function NewSchemaDatabaseView() {
         const value = recordDraft[field.name];
         if (field.type === 'integer-array') {
           payload[field.name] = typeof value === 'string' ? JSON.parse(value || '[]') : value;
-        } else if (field.type === 'integer' && value !== '' && value !== null) {
+        } else if ((field.type === 'integer' || field.type === 'numeric') && value !== '' && value !== null) {
           payload[field.name] = Number(value);
+        } else if (field.type === 'json') {
+          payload[field.name] = typeof value === 'string' ? JSON.parse(value || 'null') : value;
         } else if (field.type === 'datetime' && value) {
           payload[field.name] = new Date(String(value)).toISOString();
         } else {
@@ -216,9 +232,8 @@ export function NewSchemaDatabaseView() {
       return;
     }
 
-    const recordId = editingRecord?.[tableInfo.primaryKey];
     const path = `/api/v2/database/tables/${encodeURIComponent(selectedTable)}`
-      + (editingRecord ? `/${encodeURIComponent(String(recordId))}` : '');
+      + (editingRecord ? `/${encodeURIComponent(recordId(editingRecord, tableInfo.primaryKey))}` : '');
     const result = await api<{ success: boolean; message?: string }>(
       editingRecord ? 'PUT' : 'POST',
       path,
@@ -239,14 +254,14 @@ export function NewSchemaDatabaseView() {
 
   async function deleteRecord(record: Record<string, unknown>) {
     if (!tableInfo) return;
-    const primaryValue = record[tableInfo.primaryKey];
+    const primaryValue = recordId(record, tableInfo.primaryKey);
     const confirmation = selectedTable === 'job_list'
       ? `Permanently delete job ${String(primaryValue)} from live Neon, including its Account-specific job row, Bids, and related interview records? Recovery will require restoring your database backup.`
       : `Delete ${tableInfo.label} record ${String(primaryValue)}? Related records may also be removed.`;
     if (!window.confirm(confirmation)) return;
     const result = await api<{ success: boolean; message?: string }>(
       'DELETE',
-      `/api/v2/database/tables/${encodeURIComponent(selectedTable)}/${encodeURIComponent(String(primaryValue))}`
+      `/api/v2/database/tables/${encodeURIComponent(selectedTable)}/${encodeURIComponent(primaryValue)}`
     );
     if (!result.success) {
       setError(result.message || 'Could not delete this record.');
@@ -260,6 +275,9 @@ export function NewSchemaDatabaseView() {
 
   const pageStart = total ? offset + 1 : 0;
   const pageEnd = Math.min(offset + records.length, total);
+  const createRequiresProtectedBinary = Boolean(
+    tableInfo?.fields.some((field) => field.type === 'binary' && field.required)
+  );
 
   if (user?.role !== 'super') {
     return <div className="alert alert-error">Only Super users can browse database tables.</div>;
@@ -301,7 +319,17 @@ export function NewSchemaDatabaseView() {
                 </p>
               </div>
               <div className="search-row">
-                <button className="btn btn-primary" type="button" onClick={beginCreateRecord}>+ Create record</button>
+                <button
+                  className="btn btn-primary"
+                  type="button"
+                  disabled={createRequiresProtectedBinary}
+                  title={createRequiresProtectedBinary
+                    ? 'Create document records through the application workflow to protect their binary content.'
+                    : undefined}
+                  onClick={beginCreateRecord}
+                >
+                  + Create record
+                </button>
                 <input
                   aria-label="Search table records"
                   value={searchInput}
@@ -327,7 +355,7 @@ export function NewSchemaDatabaseView() {
                     </thead>
                     <tbody>
                       {records.map((record, index) => (
-                        <tr key={String(record[tableInfo?.columns[0] || 'id'] ?? index)}>
+                        <tr key={tableInfo ? recordId(record, tableInfo.primaryKey) : index}>
                           {tableInfo?.columns.map((column) => {
                             const value = displayValue(record[column]);
                             return <td key={column} title={value}>{value.length > 120 ? `${value.slice(0, 117)}…` : value}</td>;
@@ -372,6 +400,32 @@ export function NewSchemaDatabaseView() {
         {recordError && <div className="alert alert-error">{recordError}</div>}
         <form id="database-record-form" className="job-form" onSubmit={(event) => { void saveRecord(event); }}>
           {tableInfo?.fields.map((field) => {
+            if (field.type === 'binary') {
+              return (
+                <div className="form-group" key={field.name}>
+                  <label>{field.name.replaceAll('_', ' ')}</label>
+                  {(() => {
+                    const binaryMetadata = recordDraft[field.name];
+                    const byteCount = typeof binaryMetadata === 'object'
+                      && binaryMetadata !== null
+                      && 'bytes' in binaryMetadata
+                      && typeof binaryMetadata.bytes === 'number'
+                      ? binaryMetadata.bytes
+                      : null;
+                    return (
+                      <p className="text-muted">
+                        {byteCount !== null
+                          ? `${byteCount} bytes stored. Binary content is managed through the profile or document workflow.`
+                          : 'Binary content is managed through the profile or document workflow.'}
+                      </p>
+                    );
+                  })()}
+                </div>
+              );
+            }
+            if (editingRecord && (Array.isArray(tableInfo.primaryKey)
+              ? tableInfo.primaryKey.includes(field.name)
+              : tableInfo.primaryKey === field.name)) return null;
             if (field.type === 'password' && editingRecord && recordDraft.role === 'account') return null;
             const role = recordDraft.role;
             const accountOnlyFields = ['email', 'address', 'sex', 'birthday', 'phone', 'country', 'city', 'category_id'];
@@ -404,27 +458,28 @@ export function NewSchemaDatabaseView() {
                     checked={Boolean(recordDraft[field.name])}
                     onChange={(event) => updateValue(event.target.checked)}
                   />
-                ) : field.type === 'integer-array' || field.name === 'prompt_content' ? (
+                ) : field.type === 'integer-array' || field.type === 'json' || field.name === 'prompt_content' ? (
                   <textarea
                     id={`database-field-${field.name}`}
                     required={isRequired}
-                    value={String(recordDraft[field.name] ?? (field.type === 'integer-array' ? '[]' : ''))}
+                    value={String(recordDraft[field.name] ?? (field.type === 'integer-array' || field.type === 'json' ? '[]' : ''))}
                     onChange={(event) => updateValue(event.target.value)}
                     maxLength={field.maxLength}
-                    placeholder={field.type === 'integer-array' ? '[1, 2]' : undefined}
+                    placeholder={field.type === 'integer-array' ? '[1, 2]' : field.type === 'json' ? 'Valid JSON' : undefined}
                   />
                 ) : (
                   <input
                     id={`database-field-${field.name}`}
                     type={field.type === 'password' ? 'password'
                       : field.type === 'date' ? 'date'
-                        : field.type === 'integer' ? 'number'
+                        : field.type === 'integer' || field.type === 'numeric' ? 'number'
                           : field.type === 'url' ? 'url'
                             : field.type === 'time' ? 'time'
                               : field.type === 'datetime' ? 'datetime-local'
                                 : 'text'}
                     required={isRequired}
-                    min={field.type === 'integer' ? 1 : undefined}
+                    min={field.type === 'integer' ? field.min ?? 1 : field.type === 'numeric' ? 0 : undefined}
+                    step={field.type === 'numeric' ? 'any' : undefined}
                     maxLength={field.maxLength}
                     value={String(recordDraft[field.name] ?? '')}
                     onChange={(event) => updateValue(event.target.value)}

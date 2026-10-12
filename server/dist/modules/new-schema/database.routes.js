@@ -160,9 +160,242 @@ const TABLES = {
             prompt_content: { type: 'text', required: true, maxLength: 50000 },
         },
     },
+    custom_gpts: {
+        label: 'Custom GPTs',
+        description: 'Custom GPT references configured for Manager assignments.',
+        columns: ['custom_gpt_id', 'name', 'url', 'gpt_id', 'created_by', 'created_date', 'updated_date'],
+        searchColumns: ['name', 'url', 'gpt_id'],
+        orderBy: 'custom_gpt_id',
+        primaryKey: 'custom_gpt_id',
+        fields: {
+            name: { type: 'text', required: true, maxLength: 200 },
+            url: { type: 'url', required: true, maxLength: 2000 },
+            gpt_id: { type: 'text', required: true, maxLength: 500 },
+            created_by: { type: 'integer', nullable: true },
+        },
+    },
+    manager_custom_gpt_assignments: {
+        label: 'Manager GPT assignments',
+        description: 'The assigned Custom GPT for each Manager.',
+        columns: ['manager_user_id', 'custom_gpt_id', 'assigned_by', 'assigned_date'],
+        searchColumns: ['manager_user_id', 'custom_gpt_id'],
+        orderBy: 'manager_user_id',
+        primaryKey: 'manager_user_id',
+        fields: {
+            manager_user_id: { type: 'integer', required: true, primaryKey: true },
+            custom_gpt_id: { type: 'integer', required: true },
+            assigned_by: { type: 'integer', nullable: true },
+        },
+    },
+    account_apply_runs: {
+        label: 'Active Apply runs',
+        description: 'Account-level run locks used while applications are processing.',
+        columns: ['account_user_id', 'manager_user_id', 'run_id', 'last_activity_at'],
+        searchColumns: ['account_user_id', 'manager_user_id', 'run_id'],
+        orderBy: 'last_activity_at',
+        primaryKey: 'account_user_id',
+        fields: {
+            account_user_id: { type: 'integer', required: true, primaryKey: true },
+            manager_user_id: { type: 'integer', required: true },
+            run_id: { type: 'uuid', required: true },
+            last_activity_at: { type: 'datetime' },
+        },
+    },
+    manager_application_profiles: {
+        label: 'Manager application profiles',
+        description: 'Manager-level defaults used by application workflows.',
+        columns: [
+            'manager_user_id', 'authorized_to_work', 'authorization_status', 'sponsorship_required',
+            'authorization_expires_on', 'relocation_willing', 'relocation_details',
+            'notice_period_value', 'notice_period_unit', 'notice_period_text', 'updated_date',
+        ],
+        searchColumns: ['manager_user_id', 'authorization_status', 'relocation_details', 'notice_period_text'],
+        orderBy: 'manager_user_id',
+        primaryKey: 'manager_user_id',
+        fields: {
+            manager_user_id: { type: 'integer', required: true, primaryKey: true },
+            authorized_to_work: { type: 'boolean', nullable: true },
+            authorization_status: { type: 'text', nullable: true, maxLength: 500 },
+            sponsorship_required: { type: 'boolean', nullable: true },
+            authorization_expires_on: { type: 'date', nullable: true },
+            relocation_willing: { type: 'boolean', nullable: true },
+            relocation_details: { type: 'text', nullable: true, maxLength: 5000 },
+            notice_period_value: { type: 'integer', nullable: true, min: 0 },
+            notice_period_unit: { type: 'enum', nullable: true, options: ['days', 'weeks', 'months'] },
+            notice_period_text: { type: 'text', nullable: true, maxLength: 1000 },
+        },
+    },
+    manager_salary_answers: {
+        label: 'Manager salary answers',
+        description: 'Reusable salary expectations shared by a Manager.',
+        columns: [
+            'salary_answer_id', 'manager_user_id', 'currency', 'minimum_amount',
+            'maximum_amount', 'pay_period', 'answer_text',
+        ],
+        searchColumns: ['manager_user_id', 'currency', 'pay_period', 'answer_text'],
+        orderBy: 'salary_answer_id',
+        primaryKey: 'salary_answer_id',
+        fields: {
+            manager_user_id: { type: 'integer', required: true },
+            currency: { type: 'text', required: true, maxLength: 3 },
+            minimum_amount: { type: 'numeric', nullable: true },
+            maximum_amount: { type: 'numeric', nullable: true },
+            pay_period: { type: 'enum', required: true, options: ['hour', 'day', 'week', 'month', 'year'] },
+            answer_text: { type: 'text', nullable: true, maxLength: 2000 },
+        },
+    },
+    manager_custom_application_answers: {
+        label: 'Manager application Q&A',
+        description: 'Reusable Manager-wide application questions and answers.',
+        columns: ['custom_answer_id', 'manager_user_id', 'topic', 'question', 'answer'],
+        searchColumns: ['manager_user_id', 'topic', 'question', 'answer'],
+        orderBy: 'custom_answer_id',
+        primaryKey: 'custom_answer_id',
+        fields: {
+            manager_user_id: { type: 'integer', required: true },
+            topic: { type: 'text', required: true, maxLength: 200 },
+            question: { type: 'text', required: true, maxLength: 1000 },
+            answer: { type: 'text', required: true, maxLength: 5000 },
+        },
+    },
+    account_application_profiles: {
+        label: 'Account application profiles',
+        description: 'Account resume and structured education, experience, and profile facts. Resume bytes are protected from direct editing here.',
+        columns: [
+            'account_user_id', 'first_name', 'last_name', 'resume_file_name', 'resume_content',
+            'education', 'work_experience', 'custom_fields', 'updated_date',
+        ],
+        searchColumns: ['account_user_id', 'first_name', 'last_name', 'resume_file_name'],
+        orderBy: 'account_user_id',
+        primaryKey: 'account_user_id',
+        fields: {
+            account_user_id: { type: 'integer', required: true, primaryKey: true },
+            first_name: { type: 'text', required: true, maxLength: 100 },
+            last_name: { type: 'text', required: true, maxLength: 100 },
+            resume_file_name: { type: 'text', nullable: true, maxLength: 500 },
+            resume_content: { type: 'binary', nullable: true },
+            education: { type: 'json', required: true },
+            work_experience: { type: 'json', required: true },
+            custom_fields: { type: 'json', required: true },
+        },
+    },
+    account_custom_application_answers: {
+        label: 'Account application Q&A',
+        description: 'Reusable questions and answers belonging to an individual Account.',
+        columns: ['custom_answer_id', 'account_user_id', 'topic', 'question', 'answer'],
+        searchColumns: ['account_user_id', 'topic', 'question', 'answer'],
+        orderBy: 'custom_answer_id',
+        primaryKey: 'custom_answer_id',
+        fields: {
+            account_user_id: { type: 'integer', required: true },
+            topic: { type: 'text', required: true, maxLength: 200 },
+            question: { type: 'text', required: true, maxLength: 1000 },
+            answer: { type: 'text', required: true, maxLength: 5000 },
+        },
+    },
+    gpt_application_tasks: {
+        label: 'GPT application tasks',
+        description: 'Current application page context, GPT responses, and task state. Contains candidate information.',
+        columns: [
+            'task_id', 'job_id', 'status', 'page_number', 'task_context', 'package',
+            'answers', 'resume_text', 'resume_text_expires_at', 'created_at',
+            'last_activity_at', 'updated_at',
+        ],
+        searchColumns: ['task_id', 'job_id', 'status', 'task_context', 'package', 'answers'],
+        orderBy: 'updated_at',
+        primaryKey: 'task_id',
+        fields: {
+            task_id: { type: 'text', required: true, maxLength: 100, primaryKey: true },
+            job_id: { type: 'integer', nullable: true },
+            status: { type: 'enum', required: true, options: ['waiting_for_page', 'waiting_for_gpt', 'ready', 'failed', 'completed'] },
+            page_number: { type: 'integer', required: true },
+            task_context: { type: 'json', required: true },
+            package: { type: 'json', required: true },
+            answers: { type: 'json', required: true },
+            resume_text: { type: 'text', nullable: true, maxLength: 500000 },
+            resume_text_expires_at: { type: 'datetime', nullable: true },
+        },
+    },
+    gpt_application_task_documents: {
+        label: 'GPT application documents',
+        description: 'Generated resume and cover-letter files. Binary file content is protected from direct editing here.',
+        columns: ['task_id', 'document_type', 'file_name', 'content', 'updated_at'],
+        searchColumns: ['task_id', 'document_type', 'file_name'],
+        orderBy: 'updated_at',
+        primaryKey: ['task_id', 'document_type'],
+        fields: {
+            task_id: { type: 'text', required: true, primaryKey: true, maxLength: 100 },
+            document_type: { type: 'enum', required: true, primaryKey: true, options: ['resume', 'cover_letter'] },
+            file_name: { type: 'text', required: true, maxLength: 500 },
+            content: { type: 'binary', required: true },
+        },
+    },
 };
+const EXCLUDED_TABLES = new Set(['qts_schema_migrations']);
 function isTableName(value) {
     return Object.prototype.hasOwnProperty.call(TABLES, value);
+}
+function tableDefinition(table) {
+    return TABLES[table];
+}
+function primaryKeyColumns(definition) {
+    return Array.isArray(definition.primaryKey)
+        ? [...definition.primaryKey]
+        : [definition.primaryKey];
+}
+function selectedColumn(table, column) {
+    if (tableDefinition(table).fields[column]?.type === 'binary') {
+        return `CASE WHEN "${column}" IS NULL THEN NULL ELSE jsonb_build_object('bytes', octet_length("${column}")) END AS "${column}"`;
+    }
+    return `"${column}"`;
+}
+function parseRecordId(table, rawId) {
+    const definition = tableDefinition(table);
+    const keys = primaryKeyColumns(definition);
+    let rawValues;
+    if (keys.length > 1) {
+        try {
+            const parsed = JSON.parse(rawId);
+            if (!Array.isArray(parsed) || parsed.length !== keys.length)
+                return null;
+            rawValues = parsed;
+        }
+        catch {
+            return null;
+        }
+    }
+    else {
+        rawValues = [rawId];
+    }
+    const values = [];
+    for (const key of keys) {
+        const value = rawValues[values.length];
+        const field = definition.fields[key];
+        if (field?.type === 'integer') {
+            const parsed = Number(value);
+            if (!Number.isSafeInteger(parsed) || parsed <= 0)
+                return null;
+            values.push(parsed);
+        }
+        else if (field?.type === 'uuid') {
+            const parsed = zod_1.z.string().uuid().safeParse(value);
+            if (!parsed.success)
+                return null;
+            values.push(parsed.data);
+        }
+        else if (typeof value === 'string' && value.length > 0 && value.length <= 500) {
+            values.push(value);
+        }
+        else {
+            return null;
+        }
+    }
+    return values;
+}
+function primaryKeyWhere(definition, values, startAt = 1) {
+    return primaryKeyColumns(definition)
+        .map((column, index) => `"${column}" = $${startAt + index}`)
+        .join(' AND ');
 }
 function requireSuper(req, res) {
     if (req.newSchemaUser?.role === 'super')
@@ -200,10 +433,36 @@ function parseFieldValue(name, definition, value) {
     }
     if (definition.type === 'integer') {
         const parsed = typeof value === 'number' ? value : Number(value);
-        if (!Number.isSafeInteger(parsed) || parsed <= 0) {
-            return { success: false, message: `${name} must be a positive integer.` };
+        const minimum = definition.min ?? 1;
+        if (!Number.isSafeInteger(parsed) || parsed < minimum) {
+            return { success: false, message: `${name} must be an integer greater than or equal to ${minimum}.` };
         }
         return { success: true, value: parsed };
+    }
+    if (definition.type === 'numeric') {
+        const parsed = typeof value === 'number' ? value : Number(value);
+        if (!Number.isFinite(parsed))
+            return { success: false, message: `${name} must be a valid number.` };
+        return { success: true, value: parsed };
+    }
+    if (definition.type === 'json') {
+        if (typeof value !== 'string')
+            return { success: true, value };
+        try {
+            return { success: true, value: JSON.parse(value) };
+        }
+        catch {
+            return { success: false, message: `${name} must contain valid JSON.` };
+        }
+    }
+    if (definition.type === 'uuid') {
+        const parsed = zod_1.z.string().uuid().safeParse(value);
+        return parsed.success
+            ? { success: true, value: parsed.data }
+            : { success: false, message: `${name} must be a valid UUID.` };
+    }
+    if (definition.type === 'binary') {
+        return { success: false, message: `${name} is managed through the profile or document workflow.` };
     }
     if (definition.type === 'integer-array') {
         if (!Array.isArray(value) || value.some((item) => !Number.isSafeInteger(item) || Number(item) <= 0)) {
@@ -246,11 +505,22 @@ function parseRecord(table, value, creating) {
     if (!isRecord(value))
         return { success: false, message: 'Provide a record object.' };
     const fields = TABLES[table].fields;
+    const primaryKeyFields = new Set((Array.isArray(TABLES[table].primaryKey)
+        ? TABLES[table].primaryKey
+        : [TABLES[table].primaryKey]));
     const unknownField = Object.keys(value).find((name) => !Object.prototype.hasOwnProperty.call(fields, name));
     if (unknownField)
         return { success: false, message: `Field ${unknownField} cannot be changed.` };
     const values = {};
     for (const [name, field] of Object.entries(fields)) {
+        if (field.type === 'binary') {
+            if (creating && field.required) {
+                return { success: false, message: `${name} can only be created through the profile or document workflow.` };
+            }
+            continue;
+        }
+        if (!creating && primaryKeyFields.has(name))
+            continue;
         if (!Object.prototype.hasOwnProperty.call(value, name)) {
             if (creating && field.required) {
                 if (table === 'users' && name === 'username' && value.role === 'account')
@@ -326,8 +596,8 @@ router.get('/tables', async (req, res, next) => {
     if (!requireSuper(req, res))
         return;
     try {
-        const tables = await Promise.all(Object.keys(TABLES).map(async (key) => {
-            const definition = TABLES[key];
+        const tables = await Promise.all(Object.keys(TABLES).filter((key) => !EXCLUDED_TABLES.has(key)).map(async (key) => {
+            const definition = tableDefinition(key);
             const result = await (0, connection_1.queryOne)(`SELECT count(*)::int AS count FROM "${key}"`);
             return {
                 id: key,
@@ -355,7 +625,8 @@ router.get('/tables/:table', async (req, res, next) => {
         return;
     }
     const { q, limit, offset } = parsed.data;
-    const definition = TABLES[req.params.table];
+    const table = req.params.table;
+    const definition = tableDefinition(table);
     try {
         const searchCondition = q
             ? `WHERE ${definition.searchColumns
@@ -364,7 +635,7 @@ router.get('/tables/:table', async (req, res, next) => {
             : '';
         const params = q ? [q] : [];
         const count = await (0, connection_1.queryOne)(`SELECT count(*)::int AS count FROM "${req.params.table}" ${searchCondition}`, params);
-        const records = await (0, connection_1.queryAll)(`SELECT ${definition.columns.map((column) => `"${column}"`).join(', ')}
+        const records = await (0, connection_1.queryAll)(`SELECT ${definition.columns.map((column) => selectedColumn(table, column)).join(', ')}
        FROM "${req.params.table}" ${searchCondition}
        ORDER BY "${definition.orderBy}" DESC
        LIMIT $${params.length + 1} OFFSET $${params.length + 2}`, [...params, limit, offset]);
@@ -422,7 +693,8 @@ router.post('/tables/:table', async (req, res, next) => {
         }
         const columns = Object.keys(values);
         const placeholders = columns.map((_column, index) => `$${index + 1}`);
-        const returnColumns = TABLES[table].columns.map((column) => `"${column}"`).join(', ');
+        const definition = tableDefinition(table);
+        const returnColumns = definition.columns.map((column) => selectedColumn(table, column)).join(', ');
         const record = await (0, connection_1.queryOne)(`INSERT INTO "${table}" (${columns.map((column) => `"${column}"`).join(', ')})
        VALUES (${placeholders.join(', ')})
        RETURNING ${returnColumns}`, columns.map((column) => values[column]));
@@ -440,9 +712,9 @@ router.put('/tables/:table/:id', async (req, res, next) => {
         return;
     }
     const table = req.params.table;
-    const definition = TABLES[table];
-    const recordId = table === 'app_settings' ? req.params.id : Number(req.params.id);
-    if (table !== 'app_settings' && (!Number.isSafeInteger(recordId) || Number(recordId) <= 0)) {
+    const definition = tableDefinition(table);
+    const recordIdValues = parseRecordId(table, req.params.id);
+    if (!recordIdValues) {
         res.status(400).json({ success: false, message: 'Invalid record ID.' });
         return;
     }
@@ -458,10 +730,10 @@ router.put('/tables/:table/:id', async (req, res, next) => {
         const values = { ...parsed.values };
         if (table === 'users') {
             const current = values.role
-                ? await (0, connection_1.queryOne)('SELECT role FROM users WHERE u_id = $1', [recordId])
+                ? await (0, connection_1.queryOne)('SELECT role FROM users WHERE u_id = $1', recordIdValues)
                 : undefined;
             if (current?.role === 'super' && values.role !== 'super') {
-                if (Number(recordId) === req.newSchemaUser.id) {
+                if (Number(recordIdValues[0]) === req.newSchemaUser.id) {
                     res.status(400).json({ success: false, message: 'You cannot change the role of the Super account you are using.' });
                     return;
                 }
@@ -500,11 +772,11 @@ router.put('/tables/:table/:id', async (req, res, next) => {
         }
         const columns = Object.keys(values);
         const params = columns.map((column) => values[column]);
-        params.push(recordId);
         const assignments = columns.map((column, index) => `"${column}" = $${index + 1}`);
-        const returnColumns = definition.columns.map((column) => `"${column}"`).join(', ');
+        params.push(...recordIdValues);
+        const returnColumns = definition.columns.map((column) => selectedColumn(table, column)).join(', ');
         const record = await (0, connection_1.queryOne)(`UPDATE "${table}" SET ${assignments.join(', ')}
-       WHERE "${definition.primaryKey}" = $${params.length}
+       WHERE ${primaryKeyWhere(definition, recordIdValues, columns.length + 1)}
        RETURNING ${returnColumns}`, params);
         if (!record) {
             res.status(404).json({ success: false, message: 'Record not found.' });
@@ -524,19 +796,19 @@ router.delete('/tables/:table/:id', async (req, res, next) => {
         return;
     }
     const table = req.params.table;
-    const definition = TABLES[table];
-    const recordId = table === 'app_settings' ? req.params.id : Number(req.params.id);
-    if (table !== 'app_settings' && (!Number.isSafeInteger(recordId) || Number(recordId) <= 0)) {
+    const definition = tableDefinition(table);
+    const recordIdValues = parseRecordId(table, req.params.id);
+    if (!recordIdValues) {
         res.status(400).json({ success: false, message: 'Invalid record ID.' });
         return;
     }
-    if (table === 'users' && Number(recordId) === req.newSchemaUser.id) {
+    if (table === 'users' && Number(recordIdValues[0]) === req.newSchemaUser.id) {
         res.status(400).json({ success: false, message: 'You cannot delete the Super account you are using.' });
         return;
     }
     try {
         if (table === 'users') {
-            const target = await (0, connection_1.queryOne)('SELECT role FROM users WHERE u_id = $1', [recordId]);
+            const target = await (0, connection_1.queryOne)('SELECT role FROM users WHERE u_id = $1', recordIdValues);
             if (target?.role === 'super') {
                 const count = await (0, connection_1.queryOne)("SELECT count(*)::int AS count FROM users WHERE role = 'super'");
                 if (Number(count?.count ?? 0) <= 1) {
@@ -547,11 +819,11 @@ router.delete('/tables/:table/:id', async (req, res, next) => {
         }
         if (table === 'job_list') {
             const deleted = await (0, connection_1.withTransaction)(async (tx) => {
-                const lockedJob = await tx.query('SELECT j_id FROM job_list WHERE j_id = $1 FOR UPDATE', [recordId]);
+                const lockedJob = await tx.query('SELECT j_id FROM job_list WHERE j_id = $1 FOR UPDATE', recordIdValues);
                 if (!lockedJob.rows.length)
                     return null;
-                const bids = await tx.query('DELETE FROM bids WHERE j_id = $1 RETURNING b_id', [recordId]);
-                await tx.query('DELETE FROM job_list WHERE j_id = $1', [recordId]);
+                const bids = await tx.query('DELETE FROM bids WHERE j_id = $1 RETURNING b_id', recordIdValues);
+                await tx.query('DELETE FROM job_list WHERE j_id = $1', recordIdValues);
                 return {
                     bidsDeleted: bids.rowCount ?? bids.rows.length,
                 };
@@ -567,7 +839,7 @@ router.delete('/tables/:table/:id', async (req, res, next) => {
             });
             return;
         }
-        const result = await (0, connection_1.execute)(`DELETE FROM "${table}" WHERE "${definition.primaryKey}" = $1`, [recordId]);
+        const result = await (0, connection_1.execute)(`DELETE FROM "${table}" WHERE ${primaryKeyWhere(definition, recordIdValues)}`, recordIdValues);
         if (!result.rowCount) {
             res.status(404).json({ success: false, message: 'Record not found.' });
             return;

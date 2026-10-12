@@ -632,10 +632,13 @@ td.text-right {
     padding: 16px 24px;
   }
 
-  .menu-btn,
   .sidebar-close,
   .sidebar-backdrop {
     display: none;
+  }
+
+  .menu-btn {
+    display: inline-flex;
   }
 
   .sidebar {
@@ -647,8 +650,13 @@ td.text-right {
     height: 100dvh;
     overflow: hidden;
     transform: none;
-    transition: none;
+    transition: width 0.22s ease;
     box-shadow: none;
+  }
+
+  .sidebar-collapsed .sidebar {
+    width: 0;
+    border-right-width: 0;
   }
 
   .sidebar-brand {

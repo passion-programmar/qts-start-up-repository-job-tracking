@@ -12,6 +12,7 @@ const normalize_url_1 = require("../../utilities/normalize-url");
 const logger_1 = require("../../utilities/logger");
 const env_1 = require("../../config/env");
 const application_session_store_1 = require("../../services/application-session-store");
+const application_learning_store_1 = require("../../services/application-learning-store");
 const application_task_id_1 = require("./application-task-id");
 const application_documents_routes_1 = __importDefault(require("./application-documents.routes"));
 const router = (0, express_1.Router)();
@@ -23,9 +24,10 @@ const FieldCategorySchema = zod_1.z.enum([
     'saved_answer',
     'ai_generation',
     'document_upload',
+    'needs_review',
     'unknown',
 ]);
-const FillStatusSchema = zod_1.z.enum(['pending', 'filled', 'skipped', 'awaiting_answer', 'error', 'manual']);
+const FillStatusSchema = zod_1.z.enum(['pending', 'filled', 'skipped', 'awaiting_answer', 'needs_review', 'error', 'manual']);
 const CreateSessionSchema = zod_1.z.object({
     candidateId: zod_1.z.number().int().positive(),
     jobId: zod_1.z.number().int().positive().optional().nullable(),
@@ -34,6 +36,9 @@ const CreateSessionSchema = zod_1.z.object({
     company: zod_1.z.string().optional().nullable(),
     jobDescription: zod_1.z.string().optional().nullable(),
     platform: zod_1.z.string().optional().nullable(),
+    templateVersion: zod_1.z.string().max(64).optional().nullable(),
+    mode: zod_1.z.enum(['DISCOVERY', 'REAL_APPLICATION']).optional().nullable(),
+    pageFingerprint: zod_1.z.string().max(512).optional().nullable(),
     currentStep: zod_1.z.string().optional().nullable(),
     discoveredPages: zod_1.z.array(zod_1.z.record(zod_1.z.unknown())).optional(),
     metadata: zod_1.z.record(zod_1.z.unknown()).optional(),
@@ -61,13 +66,54 @@ const SessionFieldSchema = zod_1.z.object({
     fillValue: zod_1.z.string().optional().nullable(),
     fillStatus: FillStatusSchema.optional().default('pending'),
     generatedAnswer: zod_1.z.string().optional().nullable(),
+    matchMethod: zod_1.z.string().max(64).optional().nullable(),
+    confidence: zod_1.z.number().min(0).max(1).optional().nullable(),
+    status: zod_1.z.enum(['matched', 'ambiguous', 'unresolved', 'needs_review']).optional().nullable(),
+    requiresReview: zod_1.z.boolean().optional().nullable(),
+    statusReason: zod_1.z.string().max(250).optional().nullable(),
 });
 const PatchFieldsSchema = zod_1.z.object({
     fields: zod_1.z.array(SessionFieldSchema).min(1),
     currentStep: zod_1.z.string().optional().nullable(),
     discoveredPages: zod_1.z.array(zod_1.z.record(zod_1.z.unknown())).optional(),
     status: zod_1.z.enum(['active', 'scanning', 'filling', 'awaiting_ai', 'apply', 'completed', 'abandoned', 'error']).optional(),
+    templateVersion: zod_1.z.string().max(64).optional().nullable(),
+    pageFingerprint: zod_1.z.string().max(512).optional().nullable(),
+    mode: zod_1.z.enum(['DISCOVERY', 'REAL_APPLICATION']).optional().nullable(),
+    metadata: zod_1.z.record(zod_1.z.unknown()).optional(),
 });
+async function applyAssistSafetyGate(sessionId, field) {
+    const isAssistCandidate = field.category === 'candidate_profile'
+        || field.category === 'ai_generation'
+        || field.fillStatus === 'awaiting_answer'
+        || Boolean(field.generatedAnswer && field.generatedAnswer.trim());
+    const candidateValue = field.fillValue ?? field.generatedAnswer ?? field.currentValue ?? null;
+    if (!isAssistCandidate || !candidateValue || !candidateValue.trim()) {
+        return field;
+    }
+    const decision = await (0, application_learning_store_1.evaluateAssistDecision)(sessionId, {
+        stableFieldId: field.stableFieldId,
+        question: field.label ?? field.nameAttr ?? field.sectionHeading ?? null,
+        fieldType: field.fieldType,
+        sectionHeading: field.sectionHeading ?? null,
+    });
+    if (decision.allowed) {
+        return {
+            ...field,
+            requiresReview: false,
+            status: field.status ?? 'matched',
+            statusReason: field.statusReason ?? 'Approved by learning policy.',
+        };
+    }
+    return {
+        ...field,
+        category: 'needs_review',
+        fillStatus: 'needs_review',
+        requiresReview: true,
+        status: 'needs_review',
+        statusReason: decision.reason,
+    };
+}
 const SubmitAnswersSchema = zod_1.z.object({
     answers: zod_1.z.array(zod_1.z.object({
         stableFieldId: zod_1.z.string().min(1),
@@ -111,6 +157,14 @@ async function getSessionForRequest(req, sessionId) {
     return (0, connection_1.queryOne)(query, params);
 }
 function mapSessionRow(row) {
+    const metadata = (row.metadata ?? {});
+    const reviewRequired = metadata.reviewRequired === true
+        || metadata.reviewRequired === 'true'
+        || Number(metadata.reviewCount ?? 0) > 0;
+    const reviewCount = Number(metadata.reviewCount ?? 0) || 0;
+    const reviewReasons = Array.isArray(metadata.reviewReasons)
+        ? metadata.reviewReasons.filter((value) => typeof value === 'string')
+        : [];
     return {
         applicationId: row.id,
         candidateId: row.candidate_id,
@@ -127,7 +181,13 @@ function mapSessionRow(row) {
         discoveredPages: row.discovered_pages ?? [],
         generatedAnswers: row.generated_answers ?? {},
         status: row.status,
-        metadata: row.metadata ?? {},
+        metadata,
+        reviewRequired,
+        reviewCount,
+        reviewReasons,
+        templateVersion: (typeof metadata.templateVersion === 'string' ? metadata.templateVersion : row.template_version) ?? null,
+        pageFingerprint: (typeof metadata.pageFingerprint === 'string' ? metadata.pageFingerprint : row.page_fingerprint) ?? null,
+        mode: (typeof metadata.mode === 'string' ? metadata.mode : row.mode) ?? null,
         startedAt: row.started_at,
         lastActivityAt: row.last_activity_at,
         completedAt: row.completed_at,
@@ -141,7 +201,25 @@ function mapSessionRow(row) {
         },
     };
 }
+function getSelectorHintValue(selectorHints, key) {
+    if (!selectorHints || typeof selectorHints !== 'object')
+        return undefined;
+    if (Object.prototype.hasOwnProperty.call(selectorHints, key))
+        return selectorHints[key];
+    return undefined;
+}
+function buildSelectorHints(field) {
+    return {
+        ...(field.selectorHints ?? {}),
+        ...(field.matchMethod ? { matchMethod: field.matchMethod } : {}),
+        ...(field.confidence != null ? { confidence: field.confidence } : {}),
+        ...(field.status ? { status: field.status } : {}),
+        ...(field.requiresReview != null ? { requiresReview: field.requiresReview } : {}),
+        ...(field.statusReason ? { statusReason: field.statusReason } : {}),
+    };
+}
 function mapFieldRow(row) {
+    const selectorHints = (row.selector_hints ?? {});
     return {
         id: row.id,
         stableFieldId: row.stable_field_id,
@@ -157,7 +235,7 @@ function mapFieldRow(row) {
         nameAttr: row.name_attr,
         autocompleteAttr: row.autocomplete_attr,
         validationMessage: row.validation_message,
-        selectorHints: row.selector_hints ?? {},
+        selectorHints,
         fieldFingerprint: row.field_fingerprint,
         category: row.category,
         profileKey: row.profile_key,
@@ -166,6 +244,11 @@ function mapFieldRow(row) {
         fillValue: row.fill_value,
         fillStatus: row.fill_status,
         generatedAnswer: row.generated_answer,
+        matchMethod: getSelectorHintValue(selectorHints, 'matchMethod') ?? null,
+        confidence: getSelectorHintValue(selectorHints, 'confidence') ?? null,
+        status: getSelectorHintValue(selectorHints, 'status') ?? null,
+        requiresReview: getSelectorHintValue(selectorHints, 'requiresReview') ?? false,
+        statusReason: getSelectorHintValue(selectorHints, 'statusReason') ?? null,
         discoveredAt: row.discovered_at,
         updatedAt: row.updated_at,
     };
@@ -206,6 +289,9 @@ router.post('/', async (req, res) => {
         ...(data.metadata ?? {}),
         publicTaskId,
         taskId: publicTaskId,
+        ...(data.templateVersion ? { templateVersion: data.templateVersion } : {}),
+        ...(data.pageFingerprint ? { pageFingerprint: data.pageFingerprint } : {}),
+        ...(data.mode ? { mode: data.mode } : {}),
     };
     if (!env_1.config.applicationSessionPersistDb) {
         const inserted = (0, application_session_store_1.createMemoryApplicationSession)({
@@ -294,7 +380,8 @@ router.patch('/:id/fields', async (req, res) => {
         res.status(404).json({ success: false, message: 'Application session not found.' });
         return;
     }
-    const { fields, currentStep, discoveredPages, status } = parsed.data;
+    const { fields: rawFields, currentStep, discoveredPages, status, templateVersion, pageFingerprint, mode, metadata } = parsed.data;
+    const fields = await Promise.all(rawFields.map(async (field) => applyAssistSafetyGate(sessionId, field)));
     const aiPending = fields.some((f) => (f.category === 'ai_generation' || f.category === 'document_upload')
         && (f.fillStatus === 'pending' || f.fillStatus === 'awaiting_answer'));
     const nextStatus = status ?? (aiPending ? 'awaiting_ai' : 'filling');
@@ -313,7 +400,7 @@ router.patch('/:id/fields', async (req, res) => {
             nameAttr: field.nameAttr ?? null,
             autocompleteAttr: field.autocompleteAttr ?? null,
             validationMessage: field.validationMessage ?? null,
-            selectorHints: field.selectorHints ?? {},
+            selectorHints: buildSelectorHints(field),
             fieldFingerprint: field.fieldFingerprint,
             category: field.category ?? 'unknown',
             profileKey: field.profileKey ?? null,
@@ -328,6 +415,15 @@ router.patch('/:id/fields', async (req, res) => {
             discoveredPages: discoveredPages ?? undefined,
             status: nextStatus,
         });
+        const currentMetadata = (session?.metadata ?? {});
+        const metadataPatch = {
+            ...currentMetadata,
+            ...(metadata ?? {}),
+            ...(templateVersion ? { templateVersion } : {}),
+            ...(pageFingerprint ? { pageFingerprint } : {}),
+            ...(mode ? { mode } : {}),
+        };
+        (0, application_session_store_1.updateMemorySession)(sessionId, { metadata: metadataPatch });
         res.json({
             success: true,
             fields: updatedFields.map((row) => mapFieldRow(row)),
@@ -339,6 +435,7 @@ router.patch('/:id/fields', async (req, res) => {
     }
     await (0, connection_1.withTransaction)(async (client) => {
         for (const field of fields) {
+            const selectorHints = buildSelectorHints(field);
             await client.query(`INSERT INTO application_session_fields (
           session_id, stable_field_id, label, field_type, required, options,
           current_value, placeholder, section_heading, page_step, page_url,
@@ -386,7 +483,7 @@ router.patch('/:id/fields', async (req, res) => {
                 field.nameAttr ?? null,
                 field.autocompleteAttr ?? null,
                 field.validationMessage ?? null,
-                JSON.stringify(field.selectorHints ?? {}),
+                JSON.stringify(selectorHints),
                 field.fieldFingerprint,
                 field.category ?? 'unknown',
                 field.profileKey ?? null,
@@ -398,9 +495,16 @@ router.patch('/:id/fields', async (req, res) => {
             ]);
         }
         const nextStatus = status ?? (aiPending ? 'awaiting_ai' : 'filling');
+        const metadataPatch = {
+            ...(metadata ?? {}),
+            ...(templateVersion ? { templateVersion } : {}),
+            ...(pageFingerprint ? { pageFingerprint } : {}),
+            ...(mode ? { mode } : {}),
+        };
         await client.query(`UPDATE application_sessions
        SET current_step = COALESCE($2, current_step),
            discovered_pages = COALESCE($3::jsonb, discovered_pages),
+           metadata = metadata || $5::jsonb,
            status = $4,
            last_activity_at = NOW(),
            updated_at = NOW()
@@ -409,6 +513,7 @@ router.patch('/:id/fields', async (req, res) => {
             currentStep ?? null,
             discoveredPages ? JSON.stringify(discoveredPages) : null,
             nextStatus,
+            JSON.stringify(metadataPatch),
         ]);
     });
     const updatedFields = await (0, connection_1.queryAll)('SELECT * FROM application_session_fields WHERE session_id = $1 ORDER BY id ASC', [sessionId]);

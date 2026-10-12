@@ -114,6 +114,21 @@
   async function runAutoApplicationPipeline(tabId, options = {}) {
     if (!deps) throw new Error('Auto application pipeline is not initialized.');
 
+    const appFlow = global.__qtsApplicationFlow;
+    const mode = appFlow?.normalizeApplicationMode?.(options.mode) || 'DISCOVERY';
+    if (mode === 'REAL_APPLICATION' && !options.userApproved) {
+      const recovery = appFlow?.buildRecoveryErrorPayload?.({
+        sessionId: options.sessionId || `tab:${tabId}`,
+        stepId: 'AUTO_PIPELINE',
+        errorCode: 'REAL_APPLICATION_MODE_REQUIRES_APPROVAL',
+        recoverable: true,
+        attempts: 1,
+        action: 'USER_REQUIRED',
+        diagnostics: { mode, reason: 'Real application mode requires explicit user approval before auto-filling or navigation.' },
+      });
+      return { ok: false, blocked: true, mode, reason: 'REAL_APPLICATION_MODE_REQUIRES_APPROVAL', recovery };
+    }
+
     const candidateId = options.candidateId || await resolveDefaultCandidateId();
     if (!candidateId) return { ok: false, skipped: true, reason: 'no_default_candidate' };
 
@@ -121,6 +136,10 @@
     if (!tab?.id || !tab.url) throw new Error('Job tab not found.');
 
     const jobUrl = normalizePipelineUrl(options.jobUrl || tab.url);
+    const jobHost = new URL(jobUrl).hostname.toLowerCase();
+    if (jobHost === 'workable.com' || jobHost.endsWith('.workable.com')) {
+      throw new Error('Workable applications are disabled. Use read-only site discovery; QTS will not fill or submit this form.');
+    }
 
     const applyCheck = await isDefaultCandidateAlreadyApplied(jobUrl, candidateId);
     if (applyCheck.applied) {
@@ -155,6 +174,7 @@
     const discoverResponse = await deps.discoverApplicationFormOnTab(tabId, {
       openApplyForm: true,
       expandDynamic: false,
+      mode,
     });
     if (discoverResponse?.error) {
       throw new Error(discoverResponse.error);
@@ -181,6 +201,42 @@
     let classifiedFields = classifier.classifyFields(scannedFields);
     classifiedFields = matcher.applyFieldClassificationFill(classifiedFields, fullCandidate, []);
 
+    const reviewState = appFlow?.summarizeReviewState?.(classifiedFields) || {
+      reviewRequired: false,
+      reviewCount: 0,
+      reviewReasons: [],
+      fields: [],
+    };
+    const reviewGate = appFlow?.shouldBlockRealApplication?.(classifiedFields, { mode }) || {
+      blocked: false,
+      reason: null,
+      reviewState,
+    };
+    if (reviewGate.blocked) {
+      const recovery = appFlow?.buildRecoveryErrorPayload?.({
+        sessionId: options.sessionId || `tab:${tabId}`,
+        stepId: 'AUTO_PIPELINE_REVIEW_GATE',
+        errorCode: 'REAL_APPLICATION_REQUIRES_FIELD_REVIEW',
+        recoverable: true,
+        attempts: 1,
+        action: 'USER_REQUIRED',
+        diagnostics: {
+          mode,
+          reason: 'Real application mode requires a human review of unresolved or ambiguous fields before autofill.',
+          reviewCount: reviewState.reviewCount,
+          reviewReasons: reviewState.reviewReasons,
+        },
+      });
+      return {
+        ok: false,
+        blocked: true,
+        mode,
+        reason: reviewGate.reason,
+        reviewState,
+        recovery,
+      };
+    }
+
     const fillPolicy = fillPolicyApi?.getFillPolicyForTemplate?.(discovery.templateId);
     const fillPolicyContext = { candidate: fullCandidate, savedAnswers: [] };
     if (fillPolicy && fillPolicyApi?.applyFillPolicy) {
@@ -199,7 +255,10 @@
 
     if (earlyProfileFields.length) {
       lastProgress(tabId, 'Filling name & email on application form…');
-      const earlyFillResponse = await deps.fillApplicationFormOnTab(tabId, earlyProfileFields);
+      const earlyFillResponse = await deps.fillApplicationFormOnTab(tabId, earlyProfileFields, {
+        mode,
+        allowUserApprovedFill: true,
+      });
       const earlyResults = earlyFillResponse?.fill?.results || [];
       if (earlyFillResponse?.error) {
         throw new Error(earlyFillResponse.error);
@@ -224,6 +283,19 @@
     const jobDescription = extract?.description || extract?.jobDescription || '';
 
     lastProgress(tabId, 'Preparing apply session…');
+    const templateVersion = discovery.templateVersion || 'legacy-v1';
+    const pageFingerprint = discovery.pageSignature || scanMeta.pageSignature || null;
+    const sessionMeta = {
+      sourceTabId: tabId,
+      extensionVersion: chrome.runtime.getManifest().version,
+      autoPipeline: true,
+      templateVersion,
+      pageFingerprint,
+      mode,
+      reviewRequired: reviewState.reviewRequired,
+      reviewCount: reviewState.reviewCount,
+      reviewReasons: reviewState.reviewReasons,
+    };
     const sessionRes = await api.workerApiRequest('POST', '/api/application-sessions', {
       candidateId,
       jobId: applyCheck.jobId || options.existingJobId || null,
@@ -232,12 +304,11 @@
       company,
       jobDescription,
       platform: detectPlatformFromUrl(jobUrl),
+      templateVersion,
+      pageFingerprint,
+      mode,
       currentStep: 'scan',
-      metadata: {
-        sourceTabId: tabId,
-        extensionVersion: chrome.runtime.getManifest().version,
-        autoPipeline: true,
-      },
+      metadata: sessionMeta,
     });
     if (!sessionRes.success || !sessionRes.session) {
       throw new Error(sessionRes.message || 'Could not create application session.');
@@ -259,7 +330,10 @@
 
     if (fillableFields.length) {
       lastProgress(tabId, `Filling ${fillableFields.length} additional profile field(s)…`);
-      const fillResponse = await deps.fillApplicationFormOnTab(tabId, fillableFields);
+      const fillResponse = await deps.fillApplicationFormOnTab(tabId, fillableFields, {
+        mode,
+        allowUserApprovedFill: true,
+      });
       const fillResults = fillResponse?.fill?.results || [];
       const fillResultById = new Map(fillResults.map((item) => [item.stableFieldId, item]));
 
@@ -287,7 +361,15 @@
         ...page,
         flowType: discovery.flowType,
       })),
+      templateVersion: discovery.templateVersion || 'legacy-v1',
+      pageFingerprint: discovery.pageSignature || scanMeta.pageSignature || null,
+      mode,
       status: 'awaiting_ai',
+      metadata: {
+        reviewRequired: reviewState.reviewRequired,
+        reviewCount: reviewState.reviewCount,
+        reviewReasons: reviewState.reviewReasons,
+      },
     });
     if (!patchRes.success) {
       throw new Error(patchRes.message || 'Could not save application fields.');

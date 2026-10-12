@@ -797,6 +797,10 @@ export declare const GptApplicationPackageSchema: z.ZodObject<{
         targetCompany?: string | undefined;
         summary?: string | undefined;
     } | undefined;
+    answers?: {
+        answer: string;
+        stableFieldId: string;
+    }[] | undefined;
     coverLetter?: {
         candidate: {
             email: string;
@@ -812,10 +816,6 @@ export declare const GptApplicationPackageSchema: z.ZodObject<{
         closing?: string | undefined;
         signatureName?: string | undefined;
     } | undefined;
-    answers?: {
-        answer: string;
-        stableFieldId: string;
-    }[] | undefined;
     remainingFields?: {
         answer: string;
         stableFieldId: string;

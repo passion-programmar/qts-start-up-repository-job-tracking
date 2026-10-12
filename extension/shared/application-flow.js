@@ -21,6 +21,19 @@
     UNKNOWN: 'unknown',
   };
 
+  const APPLICATION_MODES = {
+    DISCOVERY: 'DISCOVERY',
+    REAL_APPLICATION: 'REAL_APPLICATION',
+  };
+
+  const ACTION_CLASSIFICATIONS = {
+    VERIFIED_TEST_NAVIGATION: 'VERIFIED_TEST_NAVIGATION',
+    POSSIBLE_NEXT_REQUIRES_REVIEW: 'POSSIBLE_NEXT_REQUIRES_REVIEW',
+    FINAL_SUBMIT: 'FINAL_SUBMIT',
+    UNKNOWN_OR_SIDE_EFFECT: 'UNKNOWN_OR_SIDE_EFFECT',
+    BLOCKED: 'BLOCKED',
+  };
+
   const FLOW_TYPE_LABELS = {
     inline_single: 'Single-page form',
     modal: 'Modal popup form',
@@ -176,9 +189,384 @@
     };
   }
 
+  function summarizeReviewState(fields) {
+    const list = Array.isArray(fields) ? fields : [];
+    const reviewItems = list.filter((field) => {
+      const status = String(field?.status || '').toLowerCase();
+      const fillStatus = String(field?.fillStatus || '').toLowerCase();
+      return Boolean(
+        field?.requiresReview
+        || field?.category === 'needs_review'
+        || status === 'ambiguous'
+        || status === 'unresolved'
+        || fillStatus === 'needs_review'
+      );
+    });
+
+    const reasons = [...new Set(reviewItems
+      .map((field) => field?.statusReason || field?.reason || `Field requires review: ${field?.label || field?.stableFieldId || 'unknown'}`)
+      .filter(Boolean))];
+
+    return {
+      reviewRequired: reviewItems.length > 0,
+      reviewCount: reviewItems.length,
+      reviewReasons: reasons,
+      fields: reviewItems,
+    };
+  }
+
+  function shouldBlockRealApplication(fields, options = {}) {
+    const mode = normalizeApplicationMode(options.mode);
+    if (mode !== APPLICATION_MODES.REAL_APPLICATION) {
+      return {
+        blocked: false,
+        reason: null,
+        reviewState: summarizeReviewState(fields),
+      };
+    }
+
+    const reviewState = summarizeReviewState(fields);
+    if (!reviewState.reviewRequired) {
+      return {
+        blocked: false,
+        reason: null,
+        reviewState,
+      };
+    }
+
+    return {
+      blocked: true,
+      reason: 'REAL_APPLICATION_REQUIRES_FIELD_REVIEW',
+      reviewState,
+    };
+  }
+
+  function normalizeApplicationMode(mode) {
+    const value = String(mode || APPLICATION_MODES.DISCOVERY).toUpperCase();
+    if (value === APPLICATION_MODES.REAL_APPLICATION) return APPLICATION_MODES.REAL_APPLICATION;
+    return APPLICATION_MODES.DISCOVERY;
+  }
+
+  function classifyNavigationAction(action, options = {}) {
+    const label = String(action || '').trim();
+    const normalized = label.toLowerCase();
+    const mode = normalizeApplicationMode(options.mode);
+    const nextLabel = label || 'unknown';
+
+    if (/^(submit|final submit|submit application|send application|send|finish and submit|complete application|apply now)$/i.test(nextLabel)) {
+      return {
+        classification: ACTION_CLASSIFICATIONS.FINAL_SUBMIT,
+        reason: 'Final submit control detected.',
+        safe: false,
+        allowedInDiscoveryOnly: false,
+      };
+    }
+
+    if (/(captcha|one.time.password|\botp\b|verify|verification|sign in|log in|login|create account|consent|attestation|e-sign|signature)/i.test(normalized)) {
+      return {
+        classification: ACTION_CLASSIFICATIONS.UNKNOWN_OR_SIDE_EFFECT,
+        reason: 'Authentication, verification, or consent flow detected.',
+        safe: false,
+        allowedInDiscoveryOnly: false,
+      };
+    }
+
+    if (/(cancel|close|back|previous)/i.test(normalized)) {
+      return {
+        classification: ACTION_CLASSIFICATIONS.BLOCKED,
+        reason: 'Browser navigation or close action may discard session state or trigger autosave.',
+        safe: false,
+        allowedInDiscoveryOnly: false,
+      };
+    }
+
+    if (/^(next|continue|save and continue|proceed|weiter|dalej|kontynuuj)$/i.test(nextLabel)) {
+      const verifiedTestNavigation = mode === APPLICATION_MODES.DISCOVERY
+        && options.authorizedTestEnvironment === true
+        && options.allowTestNavigation === true
+        && options.navigationVerified === true;
+      return {
+        classification: verifiedTestNavigation
+          ? ACTION_CLASSIFICATIONS.VERIFIED_TEST_NAVIGATION
+          : ACTION_CLASSIFICATIONS.POSSIBLE_NEXT_REQUIRES_REVIEW,
+        reason: verifiedTestNavigation
+          ? 'Navigation is verified for an explicitly authorized test environment.'
+          : 'Navigation may save or mutate application state and requires user review.',
+        safe: verifiedTestNavigation,
+        allowedInDiscoveryOnly: true,
+      };
+    }
+
+    return {
+      classification: ACTION_CLASSIFICATIONS.UNKNOWN_OR_SIDE_EFFECT,
+      reason: 'Action was not recognized as safe or blocked.',
+      safe: false,
+      allowedInDiscoveryOnly: false,
+    };
+  }
+
+  function buildDiscoveryCheckpoint(discovery = {}, previous = {}) {
+    const signature = String(discovery.pageSignature || discovery.scanMeta?.pageSignature || '').trim();
+    const scannedFields = Array.isArray(discovery.fields) ? discovery.fields : [];
+    const pageStep = String(discovery.scanMeta?.pageStep || '').replace(/\s+/g, ' ').trim();
+    const sections = [...new Set(scannedFields
+      .map((field) => String(field?.sectionHeading || '').replace(/\s+/g, ' ').trim())
+      .filter(Boolean))].sort();
+    const stepDescriptor = pageStep || sections.join('|');
+    const stableStepMaterial = stepDescriptor ? [discovery.siteKey || '', stepDescriptor].join('|') : '';
+    let stepHash = 0;
+    for (let index = 0; index < stableStepMaterial.length; index += 1) {
+      stepHash = ((stepHash << 5) - stepHash) + stableStepMaterial.charCodeAt(index);
+      stepHash |= 0;
+    }
+    const stepId = stableStepMaterial.replace(/\|/g, '')
+      ? `step-${Math.abs(stepHash).toString(36)}`
+      : (signature || `step-${Date.now()}`);
+    const previousSteps = Array.isArray(previous.steps) ? previous.steps : [];
+    const oldStep = previousSteps.find((step) => step.stepId === stepId);
+    const oldFields = new Map((oldStep?.fields || []).map((field) => [String(field?.fieldId || ''), field]));
+    const fields = scannedFields.slice(0, 300).map((field) => ({
+      fieldId: String(field?.stableFieldId || field?.fieldId || 'unknown-field').slice(0, 255),
+      question: String(field?.question || field?.label || '').replace(/\s+/g, ' ').trim().slice(0, 1000) || null,
+      fieldType: String(field?.fieldType || field?.type || 'unknown').slice(0, 64),
+      required: Boolean(field?.required),
+      matchMethod: String(field?.matchMethod || 'unknown').slice(0, 64),
+      confidence: Math.max(0, Math.min(1, Number(field?.confidence ?? 0) || 0)),
+      status: field?.status === 'ambiguous' || field?.status === 'unresolved' ? field.status : 'matched',
+      selectorHints: field?.selectorHints && typeof field.selectorHints === 'object' ? field.selectorHints : undefined,
+      domEvidence: field?.domEvidence && typeof field.domEvidence === 'object' ? field.domEvidence : undefined,
+      scannerCapture: field?.scannerCapture && typeof field.scannerCapture === 'object'
+        ? field.scannerCapture
+        : oldFields.get(String(field?.stableFieldId || field?.fieldId || ''))?.scannerCapture,
+    }));
+    const actions = (Array.isArray(discovery.navigationCandidates)
+      ? discovery.navigationCandidates
+      : (Array.isArray(discovery.continueButtons) ? discovery.continueButtons : []))
+      .slice(0, 50)
+      .map((action) => ({
+        label: String(action?.label || 'unknown').replace(/\s+/g, ' ').trim().slice(0, 180),
+        classification: String(action?.classification || ACTION_CLASSIFICATIONS.UNKNOWN_OR_SIDE_EFFECT),
+        reason: String(action?.reason || 'Action was detected but not activated.').slice(0, 240),
+        tag: String(action?.tag || '').slice(0, 24),
+        type: String(action?.type || '').slice(0, 24),
+      }));
+    const timestamp = new Date().toISOString();
+    const step = {
+      stepId,
+      pageStep: pageStep.slice(0, 180),
+      fieldCount: fields.length,
+      fields,
+      actions,
+      firstSeenAt: oldStep?.firstSeenAt || timestamp,
+      lastSeenAt: timestamp,
+    };
+    const orderedSteps = previousSteps.filter((item) => item?.stepId !== stepId).concat(step).slice(-50);
+    let remainingFields = 300;
+    const steps = orderedSteps.slice().reverse().map((item) => {
+      const retainedFields = (Array.isArray(item.fields) ? item.fields : []).slice(0, remainingFields);
+      remainingFields -= retainedFields.length;
+      return { ...item, fields: retainedFields };
+    }).reverse();
+    const previousCurrent = String(previous.currentStepId || '');
+    const transitions = Array.isArray(previous.transitions) ? previous.transitions.slice(-99) : [];
+    if (previousCurrent && previousCurrent !== stepId
+      && !transitions.some((transition) => transition.from === previousCurrent && transition.to === stepId)) {
+      transitions.push({
+        from: previousCurrent,
+        to: stepId,
+        action: 'unobserved_user_navigation',
+        status: 'observed_unverified',
+        observedAt: timestamp,
+      });
+    }
+
+    return {
+      schemaVersion: 1,
+      siteKey: String(discovery.siteKey || previous.siteKey || '').slice(0, 255),
+      platform: String(discovery.platform || previous.platform || '').slice(0, 64),
+      host: String(discovery.host || previous.host || '').toLowerCase().slice(0, 255),
+      status: 'partial',
+      currentStepId: stepId,
+      steps,
+      transitions,
+      finalBoundaryFound: Boolean(previous.finalBoundaryFound || actions.some(
+        (action) => action.classification === ACTION_CLASSIFICATIONS.FINAL_SUBMIT
+      )),
+      updatedAt: timestamp,
+    };
+  }
+
+  function buildRecoveryErrorPayload({
+    sessionId = '',
+    stepId = 'unknown',
+    fieldId = null,
+    errorCode = 'UNKNOWN',
+    recoverable = true,
+    attempts = 0,
+    action = 'RETRY',
+    diagnostics = {},
+  } = {}) {
+    return {
+      sessionId,
+      stepId,
+      fieldId,
+      errorCode,
+      recoverable,
+      attempts,
+      action,
+      diagnostics: Object.fromEntries(Object.entries(diagnostics || {}).map(([key, value]) => {
+        if (typeof value === 'string') return [key, value.replace(/\s+/g, ' ').trim()];
+        return [key, value];
+      })),
+    };
+  }
+
+  function buildTemplateDraftFromDiscovery(discovery = {}, options = {}) {
+    const fields = Array.isArray(discovery.fields) ? discovery.fields.map((field) => ({
+      fieldId: field?.fieldId || field?.stableFieldId || field?.id || 'unknown-field',
+      question: field?.question || field?.label || null,
+      fieldType: field?.fieldType || field?.type || 'unknown',
+      required: Boolean(field?.required),
+      matchMethod: field?.matchMethod || 'unknown',
+      confidence: Number(field?.confidence ?? 0) || 0,
+      status: field?.status === 'ambiguous' || field?.status === 'unresolved' ? field.status : 'matched',
+      selectorHints: field?.selectorHints && typeof field.selectorHints === 'object' ? field.selectorHints : undefined,
+      domEvidence: field?.domEvidence && typeof field.domEvidence === 'object' ? field.domEvidence : undefined,
+      scannerCapture: field?.scannerCapture && typeof field.scannerCapture === 'object' ? field.scannerCapture : undefined,
+    })) : [];
+
+    const coverage = discovery.coverage && typeof discovery.coverage === 'object'
+      ? { ...discovery.coverage }
+      : {
+          visibleFields: fields.length,
+          matchedFields: fields.filter((field) => field.status === 'matched').length,
+          unresolvedFields: fields.filter((field) => field.status === 'unresolved' || field.status === 'ambiguous').length,
+        };
+
+    return {
+      siteKey: discovery.siteKey || options.siteKey || null,
+      platform: discovery.platform || options.platform || null,
+      host: discovery.host || options.host || null,
+      templateVersion: discovery.templateVersion || 'legacy-v1',
+      pageSignature: discovery.pageSignature || options.pageSignature || null,
+      status: discovery.status || 'draft',
+      coverage,
+      navigation: discovery.navigation || { classification: discovery.navigationClassification || 'unknown' },
+      verification: discovery.verification || {},
+      metadata: discovery.metadata || {},
+      fields,
+    };
+  }
+
+  function sanitizeTemplateDiscovery(discovery = {}, options = {}) {
+    const draft = buildTemplateDraftFromDiscovery(discovery, options);
+    return {
+      ...draft,
+      siteKey: String(draft.siteKey || '').trim() || null,
+      platform: String(draft.platform || '').trim() || null,
+      host: String(draft.host || '').trim() || null,
+      templateVersion: String(draft.templateVersion || 'legacy-v1').trim() || 'legacy-v1',
+      pageSignature: String(draft.pageSignature || '').trim() || null,
+      status: ['draft', 'partial', 'active', 'deprecated'].includes(draft.status) ? draft.status : 'draft',
+      coverage: draft.coverage && typeof draft.coverage === 'object' ? {
+        visibleFields: Number(draft.coverage.visibleFields ?? draft.coverage.visible ?? 0) || 0,
+        matchedFields: Number(draft.coverage.matchedFields ?? 0) || 0,
+        unresolvedFields: Number(draft.coverage.unresolvedFields ?? 0) || 0,
+      } : {
+        visibleFields: 0,
+        matchedFields: 0,
+        unresolvedFields: 0,
+      },
+      fields: Array.isArray(draft.fields) ? draft.fields.map((field) => ({
+        fieldId: String(field.fieldId || 'unknown-field'),
+        question: typeof field.question === 'string' ? field.question : null,
+        fieldType: String(field.fieldType || 'unknown'),
+        required: Boolean(field.required),
+        matchMethod: String(field.matchMethod || 'unknown'),
+        confidence: Number(field.confidence ?? 0) || 0,
+        status: field.status === 'ambiguous' || field.status === 'unresolved' ? field.status : 'matched',
+        selectorHints: field.selectorHints && typeof field.selectorHints === 'object' ? field.selectorHints : undefined,
+      })) : [],
+    };
+  }
+
+  function findReusableTemplateFromList(discovery = {}, templates = [], options = {}) {
+    const list = Array.isArray(templates) ? templates.filter((template) => {
+      if (!template || typeof template !== 'object') return false;
+      const matchesSite = Boolean(discovery.siteKey || options.siteKey)
+        ? (template.siteKey || '') === (discovery.siteKey || options.siteKey || '')
+        : true;
+      const matchesHost = Boolean(discovery.host || options.host)
+        ? (template.host || '') === (discovery.host || options.host || '')
+        : true;
+      const matchesPlatform = Boolean(discovery.platform || options.platform)
+        ? (template.platform || '') === (discovery.platform || options.platform || '')
+        : true;
+      return matchesSite && matchesHost && matchesPlatform && template.status !== 'deprecated';
+    }) : [];
+
+    const reusable = list.sort((a, b) => {
+      const rank = (status) => ({ active: 3, partial: 2, draft: 1, deprecated: 0 }[status] ?? 0);
+      const coverageDelta = Number(b.coverage?.matchedFields ?? 0) - Number(a.coverage?.matchedFields ?? 0);
+      return rank(b.status) - rank(a.status) || coverageDelta || (b.updatedAt || '').localeCompare(a.updatedAt || '');
+    })[0] || null;
+
+    return {
+      template: reusable,
+      safeToReuse: Boolean(reusable && (reusable.status === 'active' || reusable.status === 'partial')),
+      reason: reusable ? null : 'No reusable active or partial template found for the current site.',
+    };
+  }
+
+  async function persistDiscoveryTemplate(discovery = {}, options = {}) {
+    const payload = sanitizeTemplateDiscovery(discovery, options);
+    const serverUrl = String(options.serverUrl || globalThis.__QTS_SERVER_URL || '').replace(/\/+$/, '');
+    if (!serverUrl) {
+      return {
+        success: false,
+        message: 'No server URL configured for template persistence.',
+        safeToReuse: false,
+        template: payload,
+      };
+    }
+
+    const headers = {
+      'Content-Type': 'application/json',
+      ...(options.headers || {}),
+    };
+    if (options.token) {
+      headers.Authorization = `Bearer ${options.token}`;
+    }
+
+    const response = await fetch(`${serverUrl}/api/application-templates/from-discovery`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload),
+    });
+
+    const data = await response.json().catch(() => ({ success: false, message: 'Template persistence returned an invalid response.' }));
+    if (!response.ok) {
+      return {
+        ...data,
+        success: false,
+        safeToReuse: false,
+        template: payload,
+      };
+    }
+
+    return {
+      ...data,
+      success: true,
+      safeToReuse: Boolean(data?.template && (data.template.status === 'active' || data.template.status === 'partial')),
+      template: data?.template ?? payload,
+    };
+  }
+
   const api = {
     APPLICATION_FLOW_TYPES,
     APPLY_METHOD_TYPES,
+    APPLICATION_MODES,
+    ACTION_CLASSIFICATIONS,
     FLOW_TYPE_LABELS,
     APPLY_METHOD_LABELS,
     APPLY_METHOD_DESCRIPTIONS,
@@ -190,9 +578,19 @@
     formatFieldType,
     formatCategory,
     summarizeDiscoveryCounts,
+    summarizeReviewState,
+    shouldBlockRealApplication,
     detectMultiStepHints,
     resolveApplyMethod,
     resolveFlowType,
+    normalizeApplicationMode,
+    classifyNavigationAction,
+    buildDiscoveryCheckpoint,
+    buildRecoveryErrorPayload,
+    buildTemplateDraftFromDiscovery,
+    sanitizeTemplateDiscovery,
+    findReusableTemplateFromList,
+    persistDiscoveryTemplate,
   };
 
   global.__qtsApplicationFlow = api;
@@ -207,6 +605,15 @@
       formatFieldType,
       formatCategory,
       summarizeDiscoveryCounts,
+      summarizeReviewState,
+      shouldBlockRealApplication,
+      normalizeApplicationMode,
+      classifyNavigationAction,
+      buildDiscoveryCheckpoint,
+      buildTemplateDraftFromDiscovery,
+      sanitizeTemplateDiscovery,
+      findReusableTemplateFromList,
+      persistDiscoveryTemplate,
       resolveApplyMethod,
       resolveFlowType,
     };

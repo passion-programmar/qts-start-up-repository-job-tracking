@@ -75,6 +75,7 @@ function jobProjection() {
                  ), ARRAY[]::INTEGER[]) AS selected_account_u_ids,
                  COALESCE((
                    SELECT json_agg(json_build_object(
+                     'job_id', j.j_id,
                      'account_user_id', assignment.account_user_id,
                      'name', account.name,
                      'status', j.status
@@ -200,6 +201,7 @@ router.post('/claim-next', async (req, res) => {
     }
     const parsedBody = zod_1.z.object({
         url: zod_1.z.string().url().max(2000).optional(),
+        jobId: zod_1.z.number().int().positive().optional(),
         accountUserId: zod_1.z.number().int().positive(),
         applyRunId: zod_1.z.string().uuid(),
         supportedTypes: zod_1.z.array(zod_1.z.string().regex(/^[a-z0-9.-]{1,253}$/i)).min(1).max(20),
@@ -218,6 +220,48 @@ router.post('/claim-next', async (req, res) => {
        FOR UPDATE`, [accountId, user.id]);
         if (!accountResult.rows.length)
             return { invalidAccount: true };
+        const existingRun = await tx.query(`SELECT run_id, manager_user_id,
+              (last_activity_at > NOW() - INTERVAL '24 hours') AS is_active
+       FROM account_apply_runs
+       WHERE account_user_id = $1
+       FOR UPDATE`, [accountId]);
+        const activeRun = existingRun.rows[0];
+        if (parsedBody.data.jobId
+            && activeRun?.run_id === applyRunId
+            && Number(activeRun.manager_user_id) === user.id) {
+            const resumable = await tx.query(`SELECT job.j_id, job.title, job.company, job.url, job.application_type,
+                assignment.account_user_id, account.name AS account_name
+         FROM job_list job
+         JOIN job_account_assignments assignment ON assignment.j_id = job.j_id
+         JOIN users account ON account.u_id = assignment.account_user_id
+           AND account.role = 'account' AND account.parent_user_id = job.u_id
+           AND account.blocked_date IS NULL
+         WHERE job.j_id = $3 AND job.u_id = $1
+           AND assignment.account_user_id = $4
+           AND job.status = 'processing'
+           AND job.application_type <> 'workable'
+           AND job.application_type = ANY($2::text[])
+         LIMIT 1
+         FOR UPDATE OF job`, [user.id, supportedTypes, parsedBody.data.jobId, accountId]);
+            const row = resumable.rows[0];
+            if (row) {
+                await tx.query(`UPDATE account_apply_runs SET last_activity_at = NOW()
+           WHERE account_user_id = $1 AND manager_user_id = $2 AND run_id = $3`, [accountId, user.id, applyRunId]);
+                return {
+                    claimed: true,
+                    resumed: true,
+                    applyRunId,
+                    job: {
+                        id: Number(row.j_id),
+                        title: row.title,
+                        company: row.company,
+                        url: row.url,
+                        applicationType: row.application_type,
+                    },
+                    account: { id: Number(row.account_user_id), name: row.account_name },
+                };
+            }
+        }
         const activeJob = await tx.query(`SELECT job.j_id
        FROM job_list job
        JOIN job_account_assignments assignment ON assignment.j_id = job.j_id
@@ -226,11 +270,6 @@ router.post('/claim-next', async (req, res) => {
        LIMIT 1`, [user.id, accountId]);
         if (activeJob.rows.length)
             return { busy: true };
-        const existingRun = await tx.query(`SELECT run_id, (last_activity_at > NOW() - INTERVAL '24 hours') AS is_active
-       FROM account_apply_runs
-       WHERE account_user_id = $1
-       FOR UPDATE`, [accountId]);
-        const activeRun = existingRun.rows[0];
         if (activeRun
             && activeRun.run_id !== applyRunId
             && activeRun.is_active) {
@@ -250,13 +289,15 @@ router.post('/claim-next', async (req, res) => {
          AND account.role = 'account' AND account.parent_user_id = job.u_id
          AND account.blocked_date IS NULL
        WHERE job.u_id = $1 AND job.status = 'todo'
+         AND ($5::int IS NULL OR job.j_id = $5)
          AND assignment.account_user_id = $4
+         AND job.application_type <> 'workable'
          AND job.application_type = ANY($2::text[])
          AND ($3::text IS NULL OR job.url = $3)
        ORDER BY CASE WHEN $3::text IS NOT NULL AND job.url = $3 THEN 0 ELSE 1 END,
                 job.get_date DESC, job.j_id DESC
        LIMIT 1
-       FOR UPDATE OF job SKIP LOCKED`, [user.id, supportedTypes, requestedUrl, accountId]);
+       FOR UPDATE OF job SKIP LOCKED`, [user.id, supportedTypes, requestedUrl, accountId, parsedBody.data.jobId || null]);
         const row = candidate.rows[0];
         if (!row) {
             await tx.query('DELETE FROM account_apply_runs WHERE account_user_id = $1 AND run_id = $2', [accountId, applyRunId]);
@@ -335,6 +376,7 @@ router.get('/apply-accounts', async (req, res) => {
             COUNT(job.j_id) FILTER (WHERE job.status = 'processing')::int AS processing_count,
             COUNT(job.j_id) FILTER (
               WHERE job.status = 'todo'
+                AND job.application_type <> 'workable'
                 AND job.application_type = ANY($2::text[])
             )::int AS available_count,
             (
@@ -412,21 +454,28 @@ router.get('/:id/application-context', async (req, res) => {
               assignment.account_user_id
        FROM job_list job
        JOIN job_account_assignments assignment ON assignment.j_id = job.j_id
-       WHERE job.j_id = $1 AND job.u_id = $2 AND job.status = 'processing'`, [jobId, managerId]),
+       WHERE job.j_id = $1 AND job.u_id = $2 AND job.status = 'processing'
+         AND job.application_type <> 'workable'`, [jobId, managerId]),
         (0, connection_1.queryOne)(`SELECT account.u_id AS account_user_id, account.name,
               account.email, account.phone, account.address, account.city,
               account.country, account.sex, account.birthday,
               profile.first_name, profile.last_name, profile.resume_file_name,
               (profile.resume_content IS NOT NULL) AS has_resume,
-              profile.education, profile.work_experience, profile.custom_fields
+              profile.education, profile.work_experience, profile.custom_fields,
+              COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                  'topic', answer.topic, 'question', answer.question, 'answer', answer.answer
+                ) ORDER BY answer.custom_answer_id)
+                FROM account_custom_application_answers answer
+                WHERE answer.account_user_id = account.u_id
+              ), '[]'::jsonb) AS custom_answers
        FROM job_account_assignments assignment
        JOIN users account ON account.u_id = assignment.account_user_id
          AND account.role = 'account' AND account.parent_user_id = $2
          AND account.blocked_date IS NULL
        LEFT JOIN account_application_profiles profile ON profile.account_user_id = account.u_id
        WHERE assignment.j_id = $1`, [jobId, managerId]),
-        (0, connection_1.queryOne)(`SELECT u.managed_country, p.authorized_to_work, p.authorization_status,
-              p.sponsorship_required, COALESCE(p.relocation_willing, FALSE) AS relocation_willing,
+        (0, connection_1.queryOne)(`SELECT u.managed_country, COALESCE(p.relocation_willing, FALSE) AS relocation_willing,
               p.notice_period_value, p.notice_period_unit, p.notice_period_text
        FROM users u
        LEFT JOIN manager_application_profiles p ON p.manager_user_id = u.u_id

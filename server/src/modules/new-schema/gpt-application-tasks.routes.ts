@@ -25,6 +25,8 @@ const pageFieldSchema = z.object({
   fieldKey: z.string().max(300).optional(),
   section: z.string().max(200).optional(),
   documentSlot: z.enum(['resume', 'cover_letter']).optional(),
+  accountSpecific: z.boolean().optional(),
+  jobSpecific: z.boolean().optional(),
   required: z.boolean(),
   options: z.array(z.string().max(500)).max(100).optional(),
   placeholder: z.string().max(1000).optional(),
@@ -138,7 +140,7 @@ async function loadTask(taskId: string): Promise<TaskRow | null> {
             task.resume_text_expires_at
      FROM gpt_application_tasks task
      JOIN job_list job ON job.j_id = task.job_id
-     WHERE task.task_id = $1`,
+     WHERE task.task_id = $1 AND job.application_type <> 'workable'`,
     [taskId]
   );
 }
@@ -191,8 +193,7 @@ router.post('/jobs/:jobId', requireNewSchemaAuth, async (req: NewSchemaAuthReque
             account.country, account.sex, account.birthday,
             profile.first_name, profile.last_name, profile.resume_content,
             profile.education, profile.work_experience, profile.custom_fields,
-            manager.managed_country, manager_profile.authorized_to_work,
-            manager_profile.authorization_status, manager_profile.sponsorship_required,
+            manager.managed_country,
             COALESCE(manager_profile.relocation_willing, FALSE) AS relocation_willing,
             manager_profile.notice_period_value,
             manager_profile.notice_period_unit, manager_profile.notice_period_text
@@ -202,7 +203,8 @@ router.post('/jobs/:jobId', requireNewSchemaAuth, async (req: NewSchemaAuthReque
      LEFT JOIN account_application_profiles profile ON profile.account_user_id = account.u_id
      JOIN users manager ON manager.u_id = job.u_id AND manager.role = 'manager'
      LEFT JOIN manager_application_profiles manager_profile ON manager_profile.manager_user_id = manager.u_id
-     WHERE job.j_id = $1 AND job.u_id = $2 AND job.status = 'processing'`,
+     WHERE job.j_id = $1 AND job.u_id = $2 AND job.status = 'processing'
+       AND job.application_type <> 'workable'`,
     [jobId, req.newSchemaUser!.id]
   );
   if (!context) {
@@ -224,7 +226,7 @@ router.post('/jobs/:jobId', requireNewSchemaAuth, async (req: NewSchemaAuthReque
     }
   }
 
-  const [salaryAnswers, customAnswers] = await Promise.all([
+  const [salaryAnswers, customAnswers, accountCustomAnswers] = await Promise.all([
     queryAll(
       `SELECT currency, minimum_amount, maximum_amount, pay_period, answer_text
        FROM manager_salary_answers WHERE manager_user_id = $1 ORDER BY salary_answer_id`,
@@ -234,6 +236,12 @@ router.post('/jobs/:jobId', requireNewSchemaAuth, async (req: NewSchemaAuthReque
       `SELECT topic, question, answer
        FROM manager_custom_application_answers WHERE manager_user_id = $1 ORDER BY custom_answer_id`,
       [req.newSchemaUser!.id]
+    ),
+    queryAll(
+      `SELECT topic, question, answer
+       FROM account_custom_application_answers
+       WHERE account_user_id = $1 ORDER BY custom_answer_id`,
+      [context.account_id]
     ),
   ]);
   const taskContext = {
@@ -262,12 +270,10 @@ router.post('/jobs/:jobId', requireNewSchemaAuth, async (req: NewSchemaAuthReque
       education: context.education || [],
       workExperience: context.work_experience || [],
       customFields: context.custom_fields || [],
+      customAnswers: accountCustomAnswers,
     },
     managerAnswers: {
       managedCountry: context.managed_country,
-      authorizedToWork: context.authorized_to_work,
-      authorizationStatus: context.authorization_status,
-      sponsorshipRequired: context.sponsorship_required,
       relocationWilling: context.relocation_willing,
       noticePeriodValue: context.notice_period_value,
       noticePeriodUnit: context.notice_period_unit,
@@ -294,8 +300,17 @@ router.post('/jobs/:jobId', requireNewSchemaAuth, async (req: NewSchemaAuthReque
     res.status(500).json({ success: false, message: 'Could not create the GPT application task for this job row.' });
     return;
   }
+  if (!inserted && !['waiting_for_page', 'ready'].includes(existing.status)) {
+    res.status(409).json({
+      success: false,
+      taskId: existing.task_id,
+      status: existing.status,
+      message: `The existing GPT task is ${existing.status}; it cannot be refreshed while active or closed.`,
+    });
+    return;
+  }
   if (!inserted) {
-    await execute(
+    const refreshed = await execute(
       `UPDATE gpt_application_tasks
        SET task_context = jsonb_set(
              jsonb_set(
@@ -320,7 +335,7 @@ router.post('/jobs/:jobId', requireNewSchemaAuth, async (req: NewSchemaAuthReque
              ELSE resume_text_expires_at
            END,
            last_activity_at = NOW(), updated_at = NOW()
-       WHERE task_id = $1`,
+       WHERE task_id = $1 AND status IN ('waiting_for_page', 'ready')`,
       [
         existing.task_id,
         JSON.stringify(taskContext.jobContext),
@@ -329,6 +344,13 @@ router.post('/jobs/:jobId', requireNewSchemaAuth, async (req: NewSchemaAuthReque
         resumeText,
       ]
     );
+    if (!refreshed.rowCount) {
+      res.status(409).json({
+        success: false,
+        message: 'The GPT task became active while Scanner was refreshing it; its existing context was left unchanged.',
+      });
+      return;
+    }
   }
 
   res.status(inserted ? 201 : 200).json({
@@ -345,6 +367,13 @@ router.put('/:taskId/page', requireNewSchemaAuth, async (req: NewSchemaAuthReque
   if (!task) return;
   if (task.status === 'completed' || task.status === 'failed') {
     res.status(409).json({ success: false, message: 'This GPT application task is already closed.' });
+    return;
+  }
+  if (!['waiting_for_page', 'ready'].includes(task.status)) {
+    res.status(409).json({
+      success: false,
+      message: `This GPT application task is ${task.status}; wait for the current page to finish before replacing it.`,
+    });
     return;
   }
   const parsed = pageContextSchema.safeParse(req.body);
@@ -369,15 +398,49 @@ router.put('/:taskId/page', requireNewSchemaAuth, async (req: NewSchemaAuthReque
     jobContext: { ...previousJob, jobDescription },
     page: { ...page, jobDescription: undefined },
   };
-  await execute(
+  const updated = await execute(
     `UPDATE gpt_application_tasks
      SET task_context = $2::jsonb, page_number = $3, package = '{}'::jsonb,
          status = 'waiting_for_gpt', last_activity_at = NOW(), updated_at = NOW(),
          resume_text_expires_at = CASE WHEN resume_text IS NULL THEN NULL ELSE NOW() + INTERVAL '30 days' END
-     WHERE task_id = $1`,
+     WHERE task_id = $1 AND status IN ('waiting_for_page', 'ready')`,
     [task.task_id, JSON.stringify(nextContext), page.pageNumber]
   );
+  if (!updated.rowCount) {
+    res.status(409).json({
+      success: false,
+      message: 'The GPT task changed while Scanner was preparing this page. Reload its status and try again.',
+    });
+    return;
+  }
   res.json({ success: true, taskId: task.task_id, status: 'waiting_for_gpt', pageNumber: page.pageNumber });
+});
+
+router.post('/:taskId/scanner-acknowledge', requireNewSchemaAuth, async (req: NewSchemaAuthRequest, res: Response) => {
+  if (!isManager(req, res)) return;
+  const task = await loadManagerTask(req, res, req.params.taskId);
+  if (!task) return;
+  if (!['waiting_for_gpt', 'ready'].includes(task.status)) {
+    res.status(409).json({
+      success: false,
+      message: `This GPT task is ${task.status}; Scanner cannot acknowledge its current page.`,
+    });
+    return;
+  }
+  const updated = await execute(
+    `UPDATE gpt_application_tasks
+     SET status = 'waiting_for_page', last_activity_at = NOW(), updated_at = NOW()
+     WHERE task_id = $1 AND status IN ('waiting_for_gpt', 'ready')`,
+    [task.task_id]
+  );
+  if (!updated.rowCount) {
+    res.status(409).json({
+      success: false,
+      message: 'The GPT task changed while Scanner was acknowledging this page. Reload its status and try again.',
+    });
+    return;
+  }
+  res.json({ success: true, taskId: task.task_id, status: 'waiting_for_page' });
 });
 
 router.get('/:taskId/context', requireGptActionKey, async (req, res: Response) => {
@@ -631,6 +694,7 @@ router.get('/:taskId/extension-status', requireNewSchemaAuth, async (req: NewSch
     status: task.status,
     pageNumber: task.page_number,
     jobContext: task.task_context.jobContext || {},
+    page: task.task_context.page || null,
     answers: task.answers,
     package: task.package,
   });

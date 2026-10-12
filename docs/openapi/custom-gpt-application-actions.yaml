@@ -3,8 +3,13 @@ info:
   title: QTS Job Application API (Custom GPT Actions)
   version: 2.0.0
   description: |
-    The QTS extension creates a task for a Manager's processing Account-specific
-    Workable job row and sends `PROCESS_TASK: task_<uuid>` to that Manager's assigned Custom GPT.
+    Workable application support and the Manager Apply controls have been removed.
+    Workable job rows cannot be claimed, used to load application context, or used
+    to create GPT application tasks. This API remains for compatibility with
+    separately supported application-task integrations.
+    Where an application-task integration is enabled, it sends
+    `PROCESS_TASK: task_<uuid>` to the assigned Custom GPT and may fill reliable
+    Account-profile and saved Q&A answers before sending remaining page fields.
     For each page, call getTaskContext, answer only from the supplied candidate/profile
     facts, and call submitTaskPackage. Mark any unsupported or unclear fields as
     unresolvedFields; do not invent candidate facts. When fields remain unresolved,
@@ -44,6 +49,12 @@ components:
         documentSlot:
           type: string
           enum: [resume, cover_letter]
+        accountSpecific:
+          type: boolean
+          description: Candidate-specific fact that must come from this Account profile/Q&A or user confirmation, never a Manager-wide answer or GPT inference.
+        jobSpecific:
+          type: boolean
+          description: If true, generate fresh job-specific wording instead of reusing existing field text.
         required: { type: boolean }
         options:
           type: array
@@ -167,7 +178,7 @@ components:
           additionalProperties: true
         candidate:
           type: object
-          description: Saved Account profile, work/education history, and custom fieldName/value facts.
+          description: Saved Account profile, work/education history, custom fieldName/value facts, and Account-specific customAnswers.
           additionalProperties: true
         managerAnswers:
           type: object

@@ -22,6 +22,7 @@ export type ResumeDocumentInput = {
     summary?: string;
     sections: ResumeSection[];
 };
+export type ResumePdfTemplate = 'qts_resume_1' | 'qts_resume_2' | 'qts_resume_3' | 'flowcv' | 'classic' | 'compact';
 export type CoverLetterDocumentInput = {
     candidate: {
         fullName: string;
@@ -37,8 +38,8 @@ export type CoverLetterDocumentInput = {
     closing?: string;
     signatureName?: string;
 };
-export declare function renderResumePdf(resume: ResumeDocumentInput, outputPath: string): Promise<void>;
-export declare function renderResumePdfBuffer(resume: ResumeDocumentInput): Promise<Buffer>;
+export declare function renderResumePdf(resume: ResumeDocumentInput, outputPath: string, template?: ResumePdfTemplate): Promise<void>;
+export declare function renderResumePdfBuffer(resume: ResumeDocumentInput, template?: ResumePdfTemplate): Promise<Buffer>;
 export declare function renderCoverLetterPdf(coverLetter: CoverLetterDocumentInput, outputPath: string): Promise<void>;
 export declare function renderCoverLetterPdfBuffer(coverLetter: CoverLetterDocumentInput): Promise<Buffer>;
 export declare function safePdfFileName(base: string): string;

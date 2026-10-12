@@ -6,8 +6,8 @@ model for the planned server and frontend rebuild.
 
 The active new schema creates `users`, `bids`, `interviews`, `job_list`,
 `categories`, `app_settings`, `prompts`, Manager application-answer tables,
-Account application profiles, and Account-specific job rows. Each job row is
-assigned to one Account and its status tracks the application lifecycle.
+Account application profiles and reusable Q&A, and Account-specific job rows.
+Each job row is assigned to one Account and its status tracks the application lifecycle.
 Startup removes the retired legacy tables after migrations complete. The
 current public application uses the new schema.
 
@@ -242,6 +242,17 @@ prompts through the Super-only database management screen.
 The table stores prompt content only; consuming these prompts in automation
 is outside the scope of this schema change.
 
+### Super database browser
+
+Super users can browse, search, create, edit, and delete records across the
+application tables in the database management screen. The browser uses an
+explicit application-table allowlist; it does not expose PostgreSQL system
+catalogs, the `qts_schema_migrations` ledger, or `users.password_hash`.
+Password changes are handled by the password field and are hashed by the API.
+Binary resume and generated-document bytes are not returned or edited in the
+browser; they remain managed by the Account profile and application document
+workflows. The browser displays stored binary byte counts instead.
+
 ### Manager application answers
 
 `manager_application_profiles` stores a Manager's shared country-level
@@ -254,9 +265,11 @@ Manager-defined reusable employer questions, answers, and topics.
 
 Managers can edit their own data; Super can manage any Manager's data.
 Dependent rows are deleted if their Manager is deleted. The global
-`application_submission_mode` setting is seeded as `manual`. The browser
-extension consumes it for supported Workable application forms. CAPTCHA is
-never bypassed; uncertain form fields remain for manual review.
+`application_submission_mode` setting is seeded as `manual`. The removed
+Workable application handler no longer consumes it. Workable forms are not
+filled, navigated, or submitted by the extension. CAPTCHA is never bypassed;
+uncertain form fields remain for manual review in any separately supported
+workflow.
 
 ### Account application profiles
 
@@ -266,6 +279,11 @@ structured work-experience records. Resume uploads are limited to PDF files up
 to 4 MB. Resume content is stored in PostgreSQL so it persists across Vercel
 deployments.
 
+`account_custom_application_answers` stores Account-specific reusable
+application questions, answers, and topics. These answers are managed with the
+Account profile and take precedence over Manager-wide custom answers when the
+application question matches. Rows are deleted with their Account.
+
 ### Account-specific job rows
 
 Every Manager/job URL/Account combination has one `job_list` row and one
@@ -274,9 +292,10 @@ source of truth: `todo` → `processing` → `did` on confirmed submission, or
 `failed` when an application fails. A Manager can reset `failed` → `todo` to
 retry a row after addressing the cause; resets are rejected while its Account
 has an active Apply run and discard the failed GPT task so the retry starts
-cleanly. `application_type` identifies the site
-handler; Workable is the first supported type, and unsupported types stay
-queued until a compatible handler is available. Claiming a row is transactional.
+cleanly. `application_type` identifies the job-site host/type. Workable job
+rows remain usable for tracking, but are excluded from application claims and
+cannot be used to create application context or GPT tasks. Claiming a supported
+row is transactional.
 The GPT task references the Account-specific `job_list.j_id` directly; there is
 no separate application-attempt record.
 
@@ -421,13 +440,11 @@ and can submit outcomes; Managers can manage their jobs, Account profiles,
 interviews, and scoped analytics; Admins and Super users have scoped staff and
 reporting views.
 For the extension's Manager workflow, Get JD saves Account-specific rows to
-`/api/v2/jobs`. Apply prompts the Manager to select one Account, shows each
-Account's total rows and `did` count, and claims only that Account's supported
-`todo` rows using `/api/v2/jobs/claim-next`; it does not use
-application-attempt or legacy candidate/session records.
-Workable is the first supported site-specific handler for this automated
-application flow. Other application types can be added without changing the
-Account-specific job-row/status model.
+`/api/v2/jobs`. The Manager Apply queue and Workable application handler have
+been removed. Workable rows remain available for tracking, but the API excludes
+them from claims and application-task context. Generic read-only site
+discovery remains separate from application processing and does not fill or
+navigate application forms.
 
 News and the Super-only system-settings UI are not yet migrated. The
 `/api/v2/settings` API exists, but there is no corresponding frontend screen

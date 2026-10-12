@@ -197,6 +197,48 @@ async function runMigrations() {
     )
   `);
     await execute(`
+    CREATE TABLE IF NOT EXISTS admins (
+      id SERIAL PRIMARY KEY,
+      username TEXT NOT NULL UNIQUE,
+      password_encrypted TEXT,
+      role TEXT NOT NULL CHECK (role IN ('super', 'admin', 'manager', 'account', 'caller')),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+    await execute(`
+    CREATE TABLE IF NOT EXISTS accounts (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      notes TEXT,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      manager_id INTEGER REFERENCES admins(id) ON DELETE SET NULL,
+      custom_gpt_url TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+    await execute(`
+    ALTER TABLE admins
+      ADD COLUMN IF NOT EXISTS account_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL
+  `);
+    await execute(`
+    CREATE TABLE IF NOT EXISTS candidates (
+      id SERIAL PRIMARY KEY,
+      account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      email TEXT,
+      phone TEXT,
+      linkedin_url TEXT,
+      notes TEXT,
+      color TEXT,
+      stack TEXT,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+    await execute(`
     CREATE TABLE IF NOT EXISTS job_list (
       j_id SERIAL PRIMARY KEY,
       u_id INTEGER NOT NULL REFERENCES users(u_id) ON DELETE RESTRICT,
@@ -320,6 +362,193 @@ async function runMigrations() {
       updated_date TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+    await execute(`
+    CREATE TABLE IF NOT EXISTS application_sessions (
+      id BIGSERIAL PRIMARY KEY,
+      candidate_id INTEGER NOT NULL REFERENCES candidates(id) ON DELETE CASCADE,
+      job_id INTEGER REFERENCES job_list(j_id) ON DELETE SET NULL,
+      user_id INTEGER NOT NULL REFERENCES users(u_id) ON DELETE RESTRICT,
+      account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      job_url TEXT NOT NULL,
+      normalized_url TEXT NOT NULL,
+      job_title TEXT,
+      company TEXT,
+      job_description TEXT,
+      platform TEXT,
+      current_step TEXT NOT NULL DEFAULT 'scan',
+      discovered_pages JSONB NOT NULL DEFAULT '[]'::jsonb,
+      generated_answers JSONB NOT NULL DEFAULT '{}'::jsonb,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      status TEXT NOT NULL DEFAULT 'scanning'
+        CHECK (status IN ('active', 'scanning', 'filling', 'awaiting_ai', 'apply', 'completed', 'abandoned', 'error')),
+      template_version TEXT,
+      page_fingerprint TEXT,
+      mode TEXT CHECK (mode IN ('DISCOVERY', 'REAL_APPLICATION')),
+      started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      last_activity_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      completed_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+    await execute(`
+    CREATE TABLE IF NOT EXISTS application_session_fields (
+      id BIGSERIAL PRIMARY KEY,
+      session_id BIGINT NOT NULL REFERENCES application_sessions(id) ON DELETE CASCADE,
+      stable_field_id TEXT NOT NULL,
+      label TEXT,
+      field_type TEXT NOT NULL,
+      required BOOLEAN NOT NULL DEFAULT FALSE,
+      options JSONB NOT NULL DEFAULT '[]'::jsonb,
+      current_value TEXT,
+      placeholder TEXT,
+      section_heading TEXT,
+      page_step TEXT,
+      page_url TEXT,
+      name_attr TEXT,
+      autocomplete_attr TEXT,
+      validation_message TEXT,
+      selector_hints JSONB NOT NULL DEFAULT '{}'::jsonb,
+      field_fingerprint TEXT NOT NULL,
+      category TEXT NOT NULL DEFAULT 'unknown',
+      profile_key TEXT,
+      saved_answer_key TEXT,
+      document_slot TEXT,
+      fill_value TEXT,
+      fill_status TEXT NOT NULL DEFAULT 'pending',
+      generated_answer TEXT,
+      match_method TEXT,
+      confidence NUMERIC(5,4),
+      status TEXT,
+      requires_review BOOLEAN NOT NULL DEFAULT FALSE,
+      status_reason TEXT,
+      discovered_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (session_id, stable_field_id)
+    )
+  `);
+    await execute(`
+    CREATE TABLE IF NOT EXISTS application_session_documents (
+      session_id BIGINT NOT NULL REFERENCES application_sessions(id) ON DELETE CASCADE,
+      doc_type TEXT NOT NULL CHECK (doc_type IN ('resume', 'cover_letter')),
+      file_name TEXT NOT NULL,
+      content BYTEA NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (session_id, doc_type)
+    )
+  `);
+    await execute(`
+    CREATE TABLE IF NOT EXISTS candidate_saved_answers (
+      id BIGSERIAL PRIMARY KEY,
+      candidate_id INTEGER NOT NULL REFERENCES candidates(id) ON DELETE CASCADE,
+      answer_key TEXT NOT NULL,
+      answer_value TEXT NOT NULL,
+      approved BOOLEAN NOT NULL DEFAULT FALSE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (candidate_id, answer_key)
+    )
+  `);
+    await execute(`
+    CREATE TABLE IF NOT EXISTS application_site_templates (
+      template_id BIGSERIAL PRIMARY KEY,
+      site_key TEXT NOT NULL,
+      platform TEXT,
+      host TEXT,
+      template_version TEXT NOT NULL DEFAULT 'discovery-v1',
+      page_signature TEXT,
+      status TEXT NOT NULL DEFAULT 'draft'
+        CHECK (status IN ('draft', 'partial', 'active', 'deprecated')),
+      coverage JSONB NOT NULL DEFAULT '{}'::jsonb,
+      navigation JSONB NOT NULL DEFAULT '{}'::jsonb,
+      verification JSONB NOT NULL DEFAULT '{}'::jsonb,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      fields JSONB NOT NULL DEFAULT '[]'::jsonb,
+      validation_report JSONB NOT NULL DEFAULT '{}'::jsonb,
+      promoted_by INTEGER REFERENCES users(u_id) ON DELETE SET NULL,
+      promoted_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (site_key, template_version)
+    )
+  `);
+    await execute(`ALTER TABLE application_site_templates ADD COLUMN IF NOT EXISTS validation_report JSONB NOT NULL DEFAULT '{}'::jsonb`);
+    await execute(`ALTER TABLE application_site_templates ADD COLUMN IF NOT EXISTS promoted_by INTEGER REFERENCES users(u_id) ON DELETE SET NULL`);
+    await execute(`ALTER TABLE application_site_templates ADD COLUMN IF NOT EXISTS promoted_at TIMESTAMPTZ`);
+    await execute(`
+    CREATE INDEX IF NOT EXISTS idx_application_site_templates_lookup
+    ON application_site_templates (lower(host), platform, status, updated_at DESC)
+  `);
+    await execute(`
+    CREATE TABLE IF NOT EXISTS application_field_semantics (
+      id BIGSERIAL PRIMARY KEY,
+      stable_field_id TEXT NOT NULL,
+      normalized_question TEXT,
+      question_hash TEXT,
+      field_type TEXT,
+      section_heading TEXT,
+      inferred_semantic_group TEXT NOT NULL,
+      confidence NUMERIC(5,4) NOT NULL DEFAULT 0,
+      source_session_id BIGINT REFERENCES application_sessions(id) ON DELETE SET NULL,
+      source_template_id BIGINT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (stable_field_id, inferred_semantic_group)
+    )
+  `);
+    await execute(`
+    CREATE TABLE IF NOT EXISTS application_answer_policies (
+      id BIGSERIAL PRIMARY KEY,
+      semantic_id BIGINT REFERENCES application_field_semantics(id) ON DELETE CASCADE,
+      policy_type TEXT NOT NULL CHECK (policy_type IN ('reusable_profile','generated_ai','requires_review','manual_only','ignore')),
+      answer_source TEXT,
+      approved_by_user BOOLEAN NOT NULL DEFAULT FALSE,
+      confidence NUMERIC(5,4) NOT NULL DEFAULT 0,
+      observed_answer TEXT,
+      edited_answer TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+    await execute(`
+    CREATE TABLE IF NOT EXISTS application_learning_sessions (
+      id BIGSERIAL PRIMARY KEY,
+      session_id BIGINT REFERENCES application_sessions(id) ON DELETE CASCADE,
+      platform TEXT,
+      host TEXT,
+      template_key TEXT,
+      status TEXT NOT NULL DEFAULT 'learning'
+        CHECK (status IN ('learning','confirmed','rejected','archived')),
+      observed_steps JSONB NOT NULL DEFAULT '[]'::jsonb,
+      observed_fields JSONB NOT NULL DEFAULT '[]'::jsonb,
+      outcome_status TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      completed_at TIMESTAMPTZ
+    )
+  `);
+    await execute(`
+    CREATE TABLE IF NOT EXISTS application_learning_events (
+      id BIGSERIAL PRIMARY KEY,
+      learning_session_id BIGINT REFERENCES application_learning_sessions(id) ON DELETE CASCADE,
+      event_type TEXT NOT NULL,
+      field_stable_id TEXT,
+      payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+    await execute(`
+    CREATE INDEX IF NOT EXISTS idx_application_field_semantics_question_hash
+    ON application_field_semantics (question_hash)
+  `);
+    await execute(`
+    CREATE INDEX IF NOT EXISTS idx_application_field_semantics_group
+    ON application_field_semantics (inferred_semantic_group, confidence DESC)
+  `);
+    await execute(`
+    CREATE INDEX IF NOT EXISTS idx_application_answer_policies_semantic
+    ON application_answer_policies (semantic_id, policy_type)
+  `);
     await execute('ALTER TABLE users ADD COLUMN IF NOT EXISTS managed_country TEXT');
     await execute(`
     CREATE TABLE IF NOT EXISTS manager_application_profiles (
@@ -380,6 +609,33 @@ async function runMigrations() {
     )
   `);
     await execute(`
+    CREATE TABLE IF NOT EXISTS manager_application_template_rules (
+      rule_id BIGSERIAL PRIMARY KEY,
+      manager_user_id INTEGER NOT NULL REFERENCES users(u_id) ON DELETE CASCADE,
+      template_id BIGINT NOT NULL REFERENCES application_site_templates(template_id) ON DELETE CASCADE,
+      field_id TEXT NOT NULL,
+      semantic_key TEXT NOT NULL,
+      question TEXT NOT NULL,
+      strategy TEXT NOT NULL CHECK (strategy IN ('profile', 'reusable', 'generated', 'manual')),
+      profile_field_key TEXT,
+      reusable_answer_id INTEGER REFERENCES manager_custom_application_answers(custom_answer_id) ON DELETE SET NULL,
+      context JSONB NOT NULL DEFAULT '{}'::jsonb,
+      field_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
+      history JSONB NOT NULL DEFAULT '[]'::jsonb,
+      confirmed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (manager_user_id, template_id, field_id)
+    )
+  `);
+    await execute(`
+    CREATE INDEX IF NOT EXISTS idx_manager_template_rules_lookup
+    ON manager_application_template_rules (manager_user_id, template_id, semantic_key)
+  `);
+    await execute(`
+    ALTER TABLE manager_application_template_rules
+    ADD COLUMN IF NOT EXISTS field_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb
+  `);
+    await execute(`
     CREATE TABLE IF NOT EXISTS account_application_profiles (
       account_user_id INTEGER PRIMARY KEY REFERENCES users(u_id) ON DELETE CASCADE,
       first_name TEXT NOT NULL,
@@ -392,6 +648,15 @@ async function runMigrations() {
       updated_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       CHECK (resume_content IS NULL OR octet_length(resume_content) <= 4194304),
       CHECK ((resume_content IS NULL) = (resume_file_name IS NULL))
+    )
+  `);
+    await execute(`
+    CREATE TABLE IF NOT EXISTS account_custom_application_answers (
+      custom_answer_id SERIAL PRIMARY KEY,
+      account_user_id INTEGER NOT NULL REFERENCES users(u_id) ON DELETE CASCADE,
+      topic TEXT NOT NULL,
+      question TEXT NOT NULL,
+      answer TEXT NOT NULL
     )
   `);
     await execute(`
@@ -438,11 +703,29 @@ async function runMigrations() {
     INSERT INTO account_application_profiles (account_user_id, first_name, last_name)
     SELECT u.u_id,
            split_part(trim(u.name), ' ', 1),
-           COALESCE(NULLIF(substr(trim(u.name), length(split_part(trim(u.name), ' ', 1)) + 2), ''), split_part(trim(u.name), ' ', 1))
+           COALESCE(NULLIF(substr(trim(u.name), length(split_part(trim(u.name), ' ', 1)) + 2), ''), '')
     FROM users u
     WHERE u.role = 'account'
     ON CONFLICT (account_user_id) DO NOTHING
   `);
+    await withTransaction(async (tx) => {
+        const migration = await tx.query(`INSERT INTO qts_schema_migrations (migration_key)
+       VALUES ('20261010_account_single_name_profile_fix')
+       ON CONFLICT (migration_key) DO NOTHING
+       RETURNING migration_key`);
+        if (!migration.rows.length)
+            return;
+        await tx.query(`
+      UPDATE account_application_profiles profile
+      SET last_name = ''
+      FROM users account
+      WHERE account.u_id = profile.account_user_id
+        AND account.role = 'account'
+        AND position(' ' IN trim(account.name)) = 0
+        AND profile.first_name = trim(account.name)
+        AND profile.last_name = profile.first_name
+    `);
+    });
     await execute(`
     INSERT INTO app_settings (setting_name, setting_value)
     VALUES ('application_submission_mode', 'manual')
@@ -472,6 +755,7 @@ async function runMigrations() {
     await execute('CREATE INDEX IF NOT EXISTS idx_interviews_outcome_date ON interviews(outcome, interview_date)');
     await execute('CREATE INDEX IF NOT EXISTS idx_manager_salary_answers_manager ON manager_salary_answers(manager_user_id)');
     await execute('CREATE INDEX IF NOT EXISTS idx_manager_custom_answers_manager ON manager_custom_application_answers(manager_user_id)');
+    await execute('CREATE INDEX IF NOT EXISTS idx_account_custom_answers_account ON account_custom_application_answers(account_user_id)');
     await execute('CREATE INDEX IF NOT EXISTS idx_account_application_profiles_account ON account_application_profiles(account_user_id)');
     await execute('CREATE INDEX IF NOT EXISTS idx_job_list_manager_url ON job_list(u_id, url)');
     await execute('CREATE INDEX IF NOT EXISTS idx_job_list_queue_type_status ON job_list(u_id, application_type, status, get_date)');
@@ -480,9 +764,7 @@ async function runMigrations() {
     await execute(`
     DROP TABLE IF EXISTS
       bidders, bidder_job_sites, account_job_sites, job_sites,
-      application_session_documents, application_session_fields, application_sessions,
-      candidate_saved_answers, candidate_jobs, interview_processes,
-      candidates, jobs, admins, accounts, settings
+      candidate_jobs, interview_processes, jobs, settings
     CASCADE
   `);
     logger_1.logger.info('Legacy tables removed; new-schema data retained');
@@ -721,7 +1003,7 @@ async function runLogicalBackup(destination) {
         'categories', 'users', 'job_list', 'job_account_assignments', 'bids', 'interviews', 'app_settings', 'prompts',
         'custom_gpts', 'manager_custom_gpt_assignments',
         'manager_application_profiles', 'manager_salary_answers', 'manager_custom_application_answers',
-        'account_application_profiles',
+        'account_application_profiles', 'account_custom_application_answers',
         'gpt_application_tasks', 'gpt_application_task_documents',
     ];
     const lines = [

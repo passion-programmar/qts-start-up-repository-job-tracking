@@ -97,6 +97,28 @@ CREATE TABLE app_settings (
   updated_date TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE application_site_templates (
+  template_id BIGSERIAL PRIMARY KEY,
+  site_key TEXT NOT NULL,
+  platform TEXT,
+  host TEXT,
+  template_version TEXT NOT NULL DEFAULT 'discovery-v1',
+  page_signature TEXT,
+  status TEXT NOT NULL DEFAULT 'draft'
+    CHECK (status IN ('draft', 'partial', 'active', 'deprecated')),
+  coverage JSONB NOT NULL DEFAULT '{}'::jsonb,
+  navigation JSONB NOT NULL DEFAULT '{}'::jsonb,
+  verification JSONB NOT NULL DEFAULT '{}'::jsonb,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  fields JSONB NOT NULL DEFAULT '[]'::jsonb,
+  validation_report JSONB NOT NULL DEFAULT '{}'::jsonb,
+  promoted_by INTEGER REFERENCES users(u_id) ON DELETE SET NULL,
+  promoted_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (site_key, template_version)
+);
+
 CREATE INDEX idx_users_parent ON users(parent_user_id);
 CREATE INDEX idx_users_role_parent ON users(role, parent_user_id);
 CREATE INDEX idx_users_category ON users(category_id);
@@ -112,4 +134,6 @@ CREATE INDEX idx_bids_manager_url ON bids(manager_user_id, job_url);
 CREATE INDEX idx_interviews_bid ON interviews(b_id);
 CREATE INDEX idx_interviews_caller ON interviews(caller_user_id);
 CREATE INDEX idx_interviews_outcome_date ON interviews(outcome, interview_date);
+CREATE INDEX idx_application_site_templates_lookup
+  ON application_site_templates (lower(host), platform, status, updated_at DESC);
 ```

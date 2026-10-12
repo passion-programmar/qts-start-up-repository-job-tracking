@@ -10,6 +10,8 @@ Neon PostgreSQL.
 > **Requirements & planning:** see [REQUIREMENTS.md](REQUIREMENTS.md) for full product, technical, and feature requirements.  
 > **Build & deploy:** see [BUILD.md](BUILD.md) for environment setup and operations.  
 > **Performance:** see [QTS-JOB-TRACKING-PERFORMANCE-GUIDE.md](QTS-JOB-TRACKING-PERFORMANCE-GUIDE.md) for Vercel and API optimization.
+> **Feature history:** see [logs/README.md](logs/README.md) for the feature log index and contribution format.
+> **Feature map & flow:** see [docs/PROJECT-FEATURES-AND-FLOW.md](docs/PROJECT-FEATURES-AND-FLOW.md) for categorized features, end-to-end diagrams, and current/retired workflow boundaries.
 
 ## Features
 

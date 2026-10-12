@@ -39,7 +39,7 @@ exports.config = {
     callerUsername: process.env.CALLER_USERNAME || 'caller',
     callerPassword: process.env.CALLER_PASSWORD || 'user',
     useEmbeddedPg: String(process.env.EMBEDDED_PG ?? 'true').toLowerCase() === 'true',
-    pgliteDataPath: node_path_1.default.resolve((0, paths_1.getAppRoot)(), 'data', 'pglite'),
+    pgliteDataPath: node_path_1.default.resolve(process.env.PGLITE_DATA_PATH || node_path_1.default.join((0, paths_1.getAppRoot)(), 'data', 'pglite')),
     databaseUrl: buildDatabaseUrl(),
     databaseSsl: String(process.env.DATABASE_SSL || 'false').toLowerCase() === 'true',
     databasePoolMax: parseInt(process.env.DATABASE_POOL_MAX || '10', 10),

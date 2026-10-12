@@ -336,6 +336,27 @@
     return hints;
   }
 
+  function buildDomEvidence(el) {
+    const describe = (node) => ({
+      tag: node.tagName.toLowerCase(),
+      role: cleanText(node.getAttribute('role')).slice(0, 80),
+      classNames: Array.from(node.classList || [])
+        .map((name) => String(name).slice(0, 80))
+        .filter(Boolean)
+        .slice(0, 12),
+      testId: cleanText(node.getAttribute('data-testid')).slice(0, 200),
+      automationId: cleanText(node.getAttribute('data-automation-id')).slice(0, 200),
+    });
+    const ancestors = [];
+    let node = el.parentElement;
+    while (node && ancestors.length < 8) {
+      ancestors.push(describe(node));
+      if (node === document.body || node === document.documentElement) break;
+      node = node.parentElement;
+    }
+    return { control: describe(el), ancestors };
+  }
+
   function buildFingerprint(el, label, fieldType) {
     const parts = [
       fieldType,
@@ -549,6 +570,50 @@
       && document.querySelectorAll(`input[type="radio"][name="${CSS.escape(el.name || '')}"]`).length > 1;
   }
 
+  function getLabelMatchMethod(el) {
+    if (el.id && document.querySelector(`label[for="${CSS.escape(el.id)}"]`)) {
+      return 'native_label_for';
+    }
+    if (el.closest('label')) {
+      return 'nested_label';
+    }
+    if (cleanText(el.getAttribute('aria-label')) || cleanText(el.getAttribute('aria-labelledby'))) {
+      return 'aria_label';
+    }
+    if (el.closest('fieldset')) {
+      return 'fieldset_legend';
+    }
+    if (el.closest('[role="group"], [role="form"], [role="dialog"]')) {
+      return 'semantic_container';
+    }
+    return 'heuristic_context';
+  }
+
+  function computeFieldConfidence(el, label, fieldType) {
+    const matchMethod = getLabelMatchMethod(el);
+    let confidence = 0.45;
+    if (label) confidence += 0.2;
+    if (fieldType === 'email' || fieldType === 'tel' || fieldType === 'url' || fieldType === 'date' || fieldType === 'month') confidence += 0.15;
+    if (el.required) confidence += 0.12;
+    if (el.getAttribute('autocomplete')) confidence += 0.08;
+    if (matchMethod === 'native_label_for' || matchMethod === 'nested_label') confidence += 0.18;
+    else if (matchMethod === 'aria_label') confidence += 0.12;
+    if (fieldType === 'radio' || fieldType === 'checkbox') confidence += 0.1;
+    if (el.disabled || el.readOnly) confidence -= 0.2;
+    if (fieldType === 'file') confidence -= 0.05;
+    return Math.min(1, Math.max(0, Number(confidence.toFixed(2))));
+  }
+
+  function getFieldStatus(el, label, fieldType) {
+    if (!label && (fieldType === 'file' || fieldType === 'checkbox' || fieldType === 'radio')) {
+      return 'unresolved';
+    }
+    if (!label && !el.getAttribute('autocomplete') && !el.name) {
+      return 'unresolved';
+    }
+    return computeFieldConfidence(el, label, fieldType) >= 0.75 ? 'matched' : 'ambiguous';
+  }
+
   function collectFieldFromElement(el, pageUrl, pageStep, seen, fields) {
     if (!isVisible(el)) return;
     if (shouldSkipRadio(el)) return;
@@ -558,6 +623,10 @@
     const fingerprint = buildFingerprint(el, label, fieldType);
     if (seen.has(fingerprint)) return;
     seen.add(fingerprint);
+
+    const matchMethod = getLabelMatchMethod(el);
+    const confidence = computeFieldConfidence(el, label, fieldType);
+    const status = getFieldStatus(el, label, fieldType);
 
     fields.push({
       stableFieldId: buildStableFieldId(el, fingerprint),
@@ -574,7 +643,24 @@
       autocompleteAttr: cleanText(el.getAttribute('autocomplete')),
       validationMessage: getValidationMessage(el),
       selectorHints: buildSelectorHints(el),
+      domEvidence: buildDomEvidence(el),
       fieldFingerprint: fingerprint,
+      matchMethod,
+      confidence,
+      status,
+      visibility: isVisible(el) ? 'visible' : 'hidden',
+      constraints: {
+        min: el.min ?? el.getAttribute('min') ?? null,
+        max: el.max ?? el.getAttribute('max') ?? null,
+        step: el.step ?? el.getAttribute('step') ?? null,
+        pattern: el.pattern ?? el.getAttribute('pattern') ?? null,
+        minLength: el.minLength ?? el.getAttribute('minlength') ?? null,
+        maxLength: el.maxLength ?? el.getAttribute('maxlength') ?? null,
+        accept: el.accept ?? el.getAttribute('accept') ?? null,
+        multiple: Boolean(el.multiple || el.getAttribute('multiple')),
+      },
+      group: el.closest('fieldset')?.querySelector('legend') ? cleanText(el.closest('fieldset').querySelector('legend')?.textContent) : null,
+      locale: document.documentElement.lang || navigator.language || null,
     });
   }
 
@@ -590,10 +676,19 @@
       });
     });
 
+    const pageSignature = hashString([
+      pageUrl,
+      document.title,
+      pageStep,
+      fields.length,
+      fields.map((field) => field.stableFieldId).join('|'),
+    ].join('|'));
+
     return {
       pageUrl,
       pageTitle: document.title,
       pageStep,
+      pageSignature,
       scannedAt: new Date().toISOString(),
       fields,
     };

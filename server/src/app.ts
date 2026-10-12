@@ -11,7 +11,11 @@ import newSchemaBidsRoutes from './modules/new-schema/bids.routes';
 import newSchemaAnalyticsRoutes from './modules/new-schema/analytics.routes';
 import newSchemaDatabaseRoutes from './modules/new-schema/database.routes';
 import managerApplicationProfileRoutes from './modules/new-schema/manager-application-profile.routes';
+import managerResumePdfRoutes from './modules/new-schema/resume-pdfs.routes';
 import gptApplicationTasksRoutes from './modules/new-schema/gpt-application-tasks.routes';
+import applicationSessionsRoutes from './modules/application-sessions/application-sessions.routes';
+import applicationLearningRoutes from './modules/application-sessions/application-learning.routes';
+import applicationTemplatesRoutes from './modules/application-sessions/application-templates.routes';
 import { errorHandler } from './middleware/error-handler';
 import { getAccountLogoPath, getLogoPath } from './config/paths';
 import { config } from './config/env';
@@ -85,7 +89,11 @@ app.use('/api/v2/bids', newSchemaBidsRoutes);
 app.use('/api/v2/analytics', newSchemaAnalyticsRoutes);
 app.use('/api/v2/database', newSchemaDatabaseRoutes);
 app.use('/api/v2/manager-application-profile', managerApplicationProfileRoutes);
+app.use('/api/v2/resume-pdfs', managerResumePdfRoutes);
 app.use('/api/v2/gpt-application-tasks', gptApplicationTasksRoutes);
+app.use('/api/application-sessions', applicationSessionsRoutes);
+app.use('/api/application-sessions', applicationLearningRoutes);
+app.use('/api/application-templates', applicationTemplatesRoutes);
 
 app.get('/api/health', (_req, res) => {
   res.json({

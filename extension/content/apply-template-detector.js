@@ -30,6 +30,7 @@
       formOpen: false,
       signals: {},
       stepHints: { isMultiStep: false },
+      templateVersion: null,
     };
 
     if (!platform) return empty;
@@ -89,6 +90,7 @@
     return {
       platform,
       templateId: template?.id || null,
+      templateVersion: template?.version || template?.schemaVersion || 'legacy-v1',
       templateName: template?.name || null,
       templateDescription: template?.description || null,
       applyMethod,

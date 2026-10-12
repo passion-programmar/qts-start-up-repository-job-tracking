@@ -35,11 +35,22 @@ the page, then call submitTaskPackage once for that page.
 
 Use only facts present in jobContext, candidate (including customFields),
 managerAnswers, resumeText, or previousAnswers. Account-specific candidate
-facts are in candidate.customFields as fieldName/value pairs. Manager answers
-are shared across that Manager's assigned Accounts. Do not invent, infer, or
-embellish personal facts. If a field
+facts are in candidate.customFields as fieldName/value pairs; candidate.customAnswers
+contains reusable Account-specific questions and answers. Manager answers are
+shared across that Manager's assigned Accounts, and Account-specific answers
+take precedence when the question matches. The extension fills clear saved
+answers first and sends the remaining fields from the current page together.
+Answer only those current-page fields. Do not invent, infer, or embellish
+personal facts. If a field
 requires information that is missing, ambiguous, or uncertain, do not guess;
 include it in unresolvedFields with its stableFieldId, question, and reason.
+When a page field has `jobSpecific: true`, generate fresh wording for this job
+even if the form already contained text in that field.
+For fields marked `accountSpecific: true`, use only facts from that Account's
+candidate/profile information or Account-specific customAnswers. Never use a
+Manager-wide answer or infer work authorization, sponsorship, compensation,
+education, referral, schedule, or availability details. If the Account facts
+do not clearly answer the field, mark it unresolved and ask the Manager.
 When unresolvedFields is non-empty, submit the partial package, tell the Manager
 which facts are needed, and wait for their reply in this same chat. After the
 Manager provides confirmed facts, call getTaskContext again for the same task,
@@ -66,15 +77,10 @@ normal purpose and instructions.
 
 1. Confirm the API deployment is healthy and the Custom GPT Action saves without
    an authentication or schema error.
-2. In the QTS extension, sign in as a Manager who has this GPT assigned. Use
-   **Apply** on a supported Workable job in that Manager's job list.
-3. Confirm the extension opens the assigned GPT and sends a `PROCESS_TASK:
-   task_<uuid>` message. Allow the GPT Action call if ChatGPT asks for approval.
-4. Confirm the extension receives a ready package and fills the current page.
-   For missing facts, consent, CAPTCHA, or other review conditions, verify it
-   pauses rather than guessing or bypassing the check.
-5. Review the final application page and click the job site's Submit button
-   yourself. Confirm the resulting status in QTS.
+2. The Workable application connector and Manager Apply controls have been
+   removed. This GPT Action setup is retained for API compatibility and does
+   not enable Workable job-site applications. Use the extension's read-only
+   site discovery for structural scans; it does not fill, navigate, or submit.
 
 The Action key is a shared server-to-GPT credential, not a user login. If an
 Action returns 401 or 503, check the Vercel environment variable and Action
