@@ -325,7 +325,7 @@ function getSuggestedPath(value: unknown): { directories: string[]; fileName: st
   const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   const time = `${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}-${String(now.getSeconds()).padStart(2, '0')}`;
   const directories = [
-    'Custom',
+    '$_QTS_Resume_$',
     account,
     `${date}_${time}_${role}_${company}`,
   ];
@@ -655,7 +655,7 @@ export function ManagerPdfsView() {
           {downloadError && <div className="alert alert-error" role="alert">{downloadError}</div>}
           <p className="manager-pdfs__path-note">
             {downloadDirectory ? `Path inside ${downloadDirectory.name}:` : 'Suggested folder structure:'}{' '}
-            <code>{suggestedPath || 'Selected folder/Custom/…'}</code>
+            <code>{suggestedPath || 'Selected folder/$_QTS_Resume_$/…'}</code>
           </p>
           {!downloadDirectory && <p className="text-muted">Choose any folder on your computer; PDFs will be saved there in organized subfolders. The picker starts in Music for convenience, and your selected folder is remembered in this browser when supported.</p>}
           {downloadStatus && <p role="status" className="manager-pdfs__path-note">{downloadStatus}</p>}

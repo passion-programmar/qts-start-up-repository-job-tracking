@@ -1,6 +1,6 @@
 # Direct resume PDF downloads
 
-- **Version:** 1.3.0
+- **Version:** 1.4.0
 - **Date:** 2026-10-11
 - **Change type:** Improved
 
@@ -19,6 +19,7 @@
   persistent browser storage to reduce automatic eviction risk and provide a
   reconnect action when folder permission needs renewal. Clearing site data can
   still remove the saved handle.
+- Name the top-level generated folder `$_QTS_Resume_$` instead of `Custom`.
 - Changed QTS PDF generation to render the same self-contained FlowCV HTML,
   CSS, and fonts used by the live preview.
 - Preserved the FlowCV contact rows' original flex layout when applying
