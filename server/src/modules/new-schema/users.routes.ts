@@ -43,9 +43,21 @@ const accountCustomFieldSchema = z.object({
   value: z.string().trim().min(1).max(4000),
 }).strict();
 
+const resumePdfTemplateSchema = z.enum([
+  'qts_resume_1',
+  'qts_resume_2',
+  'qts_resume_3',
+  'classic',
+  'compact',
+]);
+
+const coverLetterPdfTemplateSchema = z.enum(['qts_cover_letter_1']);
+
 const accountApplicationProfileSchema = z.object({
   firstName: z.string().trim().min(1).max(100),
   lastName: z.string().trim().min(1).max(100),
+  resumePdfTemplate: resumePdfTemplateSchema.default('qts_resume_2'),
+  coverLetterPdfTemplate: coverLetterPdfTemplateSchema.default('qts_cover_letter_1'),
   education: z.array(educationSchema).max(20).default([]),
   workExperience: z.array(workExperienceSchema).max(30).default([]),
   customFields: z.array(accountCustomFieldSchema).max(100).default([]),
@@ -79,6 +91,7 @@ const accountColumns = `
   u.birthday, u.phone, u.country, u.city, u.category_id, u.blocked_date,
   app.first_name, app.last_name, app.education, app.work_experience, app.custom_fields,
   app.resume_pdf_template AS default_resume_template,
+  app.cover_letter_pdf_template AS default_cover_letter_template,
   (app.resume_content IS NOT NULL) AS has_resume, app.resume_file_name
 `;
 
@@ -217,12 +230,13 @@ router.post('/', async (req: NewSchemaAuthRequest, res: Response) => {
       const created = result.rows[0] as { u_id: number };
       await tx.query(
         `INSERT INTO account_application_profiles (
-          account_user_id, first_name, last_name, education, work_experience, custom_fields
-        ) VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb)`,
+          account_user_id, first_name, last_name, education, work_experience, custom_fields,
+          resume_pdf_template, cover_letter_pdf_template
+        ) VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb, $7, $8)`,
         [
           created.u_id, data.firstName, data.lastName,
           JSON.stringify(data.education), JSON.stringify(data.workExperience),
-          JSON.stringify(data.customFields),
+          JSON.stringify(data.customFields), data.resumePdfTemplate, data.coverLetterPdfTemplate,
         ]
       );
       return created;
@@ -312,8 +326,11 @@ router.put('/:id', async (req: NewSchemaAuthRequest, res: Response) => {
     }
     const currentProfile = await queryOne<{
       first_name: string; last_name: string; education: unknown; work_experience: unknown; custom_fields: unknown;
+      resume_pdf_template: string; cover_letter_pdf_template: string;
     }>(
-      'SELECT first_name, last_name, education, work_experience, custom_fields FROM account_application_profiles WHERE account_user_id = $1',
+      `SELECT first_name, last_name, education, work_experience, custom_fields,
+              resume_pdf_template, cover_letter_pdf_template
+       FROM account_application_profiles WHERE account_user_id = $1`,
       [userId]
     );
     const firstName = data.firstName ?? currentProfile?.first_name;
@@ -333,20 +350,25 @@ router.put('/:id', async (req: NewSchemaAuthRequest, res: Response) => {
       }
       await tx.query(
         `INSERT INTO account_application_profiles (
-          account_user_id, first_name, last_name, education, work_experience, custom_fields
-        ) VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb)
+          account_user_id, first_name, last_name, education, work_experience, custom_fields,
+          resume_pdf_template, cover_letter_pdf_template
+        ) VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb, $7, $8)
         ON CONFLICT (account_user_id) DO UPDATE SET
           first_name = EXCLUDED.first_name,
           last_name = EXCLUDED.last_name,
           education = EXCLUDED.education,
           work_experience = EXCLUDED.work_experience,
           custom_fields = EXCLUDED.custom_fields,
+          resume_pdf_template = EXCLUDED.resume_pdf_template,
+          cover_letter_pdf_template = EXCLUDED.cover_letter_pdf_template,
           updated_date = NOW()`,
         [
           userId, firstName, lastName,
           JSON.stringify(data.education ?? currentProfile?.education ?? []),
           JSON.stringify(data.workExperience ?? currentProfile?.work_experience ?? []),
           JSON.stringify(data.customFields ?? currentProfile?.custom_fields ?? []),
+          data.resumePdfTemplate ?? currentProfile?.resume_pdf_template ?? 'qts_resume_2',
+          data.coverLetterPdfTemplate ?? currentProfile?.cover_letter_pdf_template ?? 'qts_cover_letter_1',
         ]
       );
     });

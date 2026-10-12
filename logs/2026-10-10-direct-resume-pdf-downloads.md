@@ -33,3 +33,22 @@
   both the preview and generated PDF; empty contact rows remain hidden.
 - Disabled print-time animations and preserved exact colors so section icons
   are fully opaque and match the live preview.
+
+## Version 1.6.0 — Account application PDF bundles
+
+- **Date:** 2026-10-11
+- **Change type:** Improved
+
+### Changes
+
+- Assign resume and cover-letter PDF templates in Account settings; the
+  generation flow uses those saved assignments without template overrides.
+- Require matching Account names and generate the resume and cover letter
+  together into the same timestamped Account/job folder.
+- Name files from the Account: `Alex Morgan.pdf` and
+  `Alex_Morgan_Cover_Letter.pdf`.
+- Require access to the selected local folder and check existing job folders
+  by normalized title/company before saving; refuse duplicate applications
+  rather than overwrite existing documents.
+- Remove a newly created job folder if either PDF write fails, avoiding a
+  partial application bundle.

@@ -23,6 +23,21 @@ type Profile = NewSchemaAccountProfile & {
   resume_file_name?: string | null;
 };
 
+type ResumePdfTemplate = NonNullable<NewSchemaAccountProfile['default_resume_template']>;
+type CoverLetterPdfTemplate = NonNullable<NewSchemaAccountProfile['default_cover_letter_template']>;
+
+const resumePdfTemplates: Array<{ id: ResumePdfTemplate; label: string }> = [
+  { id: 'qts_resume_1', label: 'QTS Resume 1' },
+  { id: 'qts_resume_2', label: 'QTS Resume 2' },
+  { id: 'qts_resume_3', label: 'QTS Resume 3' },
+  { id: 'classic', label: 'Classic ATS' },
+  { id: 'compact', label: 'Compact modern' },
+];
+
+const coverLetterPdfTemplates: Array<{ id: CoverLetterPdfTemplate; label: string }> = [
+  { id: 'qts_cover_letter_1', label: 'QTS Cover Letter (standard)' },
+];
+
 type AccountCustomField = {
   fieldName: string;
   value: string;
@@ -50,6 +65,8 @@ type WorkExperienceRecord = {
 const emptyForm = () => ({
   firstName: '',
   lastName: '',
+  resumePdfTemplate: 'qts_resume_2' as ResumePdfTemplate,
+  coverLetterPdfTemplate: 'qts_cover_letter_1' as CoverLetterPdfTemplate,
   email: '',
   address: '',
   sex: '',
@@ -107,6 +124,8 @@ export function NewSchemaAccountsView() {
     setForm({
       firstName: profile.first_name || profile.name.split(/\s+/)[0] || '',
       lastName: profile.last_name || profile.name.split(/\s+/).slice(1).join(' ') || profile.name,
+      resumePdfTemplate: profile.default_resume_template || 'qts_resume_2',
+      coverLetterPdfTemplate: profile.default_cover_letter_template || 'qts_cover_letter_1',
       email: profile.email,
       address: profile.address,
       sex: profile.sex,
@@ -150,6 +169,8 @@ export function NewSchemaAccountsView() {
     const payload = {
       firstName: form.firstName.trim(),
       lastName: form.lastName.trim(),
+      resumePdfTemplate: form.resumePdfTemplate,
+      coverLetterPdfTemplate: form.coverLetterPdfTemplate,
       email: form.email.trim(),
       address: form.address.trim(),
       sex: form.sex,
@@ -270,6 +291,31 @@ export function NewSchemaAccountsView() {
             <select id="account-category" required value={form.categoryId} onChange={(event) => setForm({ ...form, categoryId: event.target.value })}>
               <option value="">Select category</option>
               {categories.map((category) => <option key={category.category_id} value={category.category_id}>{category.category_title}</option>)}
+            </select>
+          </div>
+          <h3>PDF templates</h3>
+          <div className="form-group">
+            <label htmlFor="account-resume-template">Assigned resume template</label>
+            <select id="account-resume-template" value={form.resumePdfTemplate}
+              onChange={(event) => setForm({
+                ...form,
+                resumePdfTemplate: event.target.value as ResumePdfTemplate,
+              })}>
+              {resumePdfTemplates.map((template) => (
+                <option key={template.id} value={template.id}>{template.label}</option>
+              ))}
+            </select>
+          </div>
+          <div className="form-group">
+            <label htmlFor="account-cover-letter-template">Assigned cover letter template</label>
+            <select id="account-cover-letter-template" value={form.coverLetterPdfTemplate}
+              onChange={(event) => setForm({
+                ...form,
+                coverLetterPdfTemplate: event.target.value as CoverLetterPdfTemplate,
+              })}>
+              {coverLetterPdfTemplates.map((template) => (
+                <option key={template.id} value={template.id}>{template.label}</option>
+              ))}
             </select>
           </div>
           <h3>Resume</h3>

@@ -2,6 +2,10 @@
 
 ## QTS_Startup
 
+### 1.13.27 — 2026-10-11
+
+- **Manager PDFs:** Assign resume and cover-letter templates per Account, then save both PDFs together in a timestamped job folder with duplicate-application checks.
+
 ### 1.13.26 — 2026-10-11
 
 - **Manager PDFs:** Match pasted `candidate.fullName` to an Account, load and save each Account's default resume template, and generate QTS cover-letter previews and PDFs.

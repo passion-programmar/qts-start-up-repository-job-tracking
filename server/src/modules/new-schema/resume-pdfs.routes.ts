@@ -7,7 +7,6 @@ import {
   safePdfFileName,
   type ResumePdfTemplate,
 } from '../../services/application-document-pdf';
-import { execute, queryOne } from '../../database/connection';
 import { renderFlowCvHtmlPdfBuffer } from '../../services/flowcv-html-pdf';
 import { CoverLetterDocumentSchema, ResumeDocumentSchema } from '../document-builder/document.schemas';
 
@@ -29,52 +28,6 @@ const requestSchema = z.object({
 const coverLetterRequestSchema = z.object({
   coverLetter: CoverLetterDocumentSchema,
 }).strict();
-
-const resumeTemplateSchema = z.enum([
-  'qts_resume_1',
-  'qts_resume_2',
-  'qts_resume_3',
-  'classic',
-  'compact',
-]);
-
-router.put('/accounts/:accountId/preferences', requireNewSchemaAuth, async (req: NewSchemaAuthRequest, res: Response) => {
-  const actor = req.newSchemaUser!;
-  if (actor.role !== 'manager') {
-    res.status(403).json({ success: false, message: 'Only Managers can update Account PDF preferences.' });
-    return;
-  }
-
-  const accountId = Number.parseInt(req.params.accountId, 10);
-  if (!Number.isSafeInteger(accountId) || accountId <= 0) {
-    res.status(400).json({ success: false, message: 'Invalid Account ID.' });
-    return;
-  }
-
-  const parsed = z.object({ resumeTemplate: resumeTemplateSchema }).strict().safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ success: false, message: 'Choose a valid resume template.' });
-    return;
-  }
-
-  const account = await queryOne<{ u_id: number }>(
-    `SELECT u_id FROM users
-     WHERE u_id = $1 AND role = 'account' AND parent_user_id = $2`,
-    [accountId, actor.id]
-  );
-  if (!account) {
-    res.status(404).json({ success: false, message: 'Account not found.' });
-    return;
-  }
-
-  await execute(
-    `UPDATE account_application_profiles
-     SET resume_pdf_template = $1, updated_date = NOW()
-     WHERE account_user_id = $2`,
-    [parsed.data.resumeTemplate, accountId]
-  );
-  res.json({ success: true, resumeTemplate: parsed.data.resumeTemplate });
-});
 
 router.post(
   '/preview',

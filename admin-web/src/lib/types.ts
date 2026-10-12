@@ -145,6 +145,8 @@ export interface NewSchemaAccountProfile {
   name: string;
   email: string;
   category_id: number;
+  default_resume_template?: 'qts_resume_1' | 'qts_resume_2' | 'qts_resume_3' | 'classic' | 'compact';
+  default_cover_letter_template?: 'qts_cover_letter_1';
 }
 
 export interface NewSchemaCategory {

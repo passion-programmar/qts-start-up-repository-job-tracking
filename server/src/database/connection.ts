@@ -444,6 +444,11 @@ async function runMigrations(): Promise<void> {
       CHECK (resume_pdf_template IN ('qts_resume_1', 'qts_resume_2', 'qts_resume_3', 'classic', 'compact'))
   `);
   await execute(`
+    ALTER TABLE account_application_profiles
+    ADD COLUMN IF NOT EXISTS cover_letter_pdf_template TEXT NOT NULL DEFAULT 'qts_cover_letter_1'
+      CHECK (cover_letter_pdf_template IN ('qts_cover_letter_1'))
+  `);
+  await execute(`
     CREATE TABLE IF NOT EXISTS gpt_application_tasks (
       task_id TEXT PRIMARY KEY,
       job_id INTEGER NOT NULL REFERENCES job_list(j_id) ON DELETE CASCADE,
