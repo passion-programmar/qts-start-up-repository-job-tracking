@@ -236,7 +236,11 @@ export function QtsCoverLetterPreview({
     updateScale();
     const observer = new ResizeObserver(updateScale);
     observer.observe(viewport);
-    return () => observer.disconnect();
+    window.addEventListener('resize', updateScale);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', updateScale);
+    };
   }, []);
 
   const resizeFrame = useCallback(() => {

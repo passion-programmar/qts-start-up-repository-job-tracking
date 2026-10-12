@@ -330,7 +330,11 @@ export function QtsResume2Preview({
     updateScale();
     const observer = new ResizeObserver(updateScale);
     observer.observe(viewport);
-    return () => observer.disconnect();
+    window.addEventListener('resize', updateScale);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', updateScale);
+    };
   }, [scaleMode]);
 
   const frameHeight = pageCount * pageHeight + Math.max(0, pageCount - 1) * pageGap;
