@@ -1,6 +1,6 @@
 # QTS Application Workflow — Extension + Custom GPT + Server
 
-> **Current system (June 2026):** See [docs/CURRENT-SYSTEM.md](docs/CURRENT-SYSTEM.md) � extension v1.13.25+, job sites, one-step auto-apply.
+> **Historical workflow guide:** The Workable application handler and Manager Apply controls described below have been removed. Workable job capture, manual job tracking, and read-only site discovery remain available. See [docs/CURRENT-SYSTEM.md](docs/CURRENT-SYSTEM.md) for current behavior. Do not use the retired instructions in this document to run a Workable application.
 
 **File:** `QTS-APPLICATION-WORKFLOW.md`  
 **Version:** Extension **v1.7.7** · corrected architecture and operating rules  
@@ -9,6 +9,8 @@
 
 Related guides:
 
+- `docs/UNIVERSAL-JOB-APPLICATION-RULES.md` — reusable profile/Q&A prefilling,
+  per-page GPT batching, and review rules
 - `QTS-JOB-TRACKING-EXTENSION-GUIDE.md` — extension installation and job capture
 - `QTS-JOB-TRACKING-CUSTOM-GPT-GUIDE.md` — Custom GPT setup, instructions, authentication, and Actions
 - `docs/JUSTJOIN-APPLY-TEMPLATES.md` — justjoin.it application templates
@@ -16,19 +18,23 @@ Related guides:
 
 ---
 
-## 1. System purpose
+## 1. System purpose (historical)
 
-The system helps an Account user prepare and fill a job application while keeping final submission under the user’s control.
+The sections below document the previous application workflow for maintenance and migration reference. They do not describe functionality currently shipped for Workable.
 
 The three main components are:
 
 | Component | Responsibility |
 |---|---|
 | **Chrome extension** (`QTS_Startup`) | Detects the job, loads the selected candidate, scans the current application step, fills verified profile data, starts GPT processing, retrieves results, uploads generated documents, and manages page-by-page progress |
-| **QTS Node API server** | Stores candidates, jobs, application sessions, discovered fields, task status, generated answers, and document files; exposes separate endpoints for the extension and Custom GPT |
+| **QTS Node API server** | Stores candidates, jobs, application sessions, discovered fields, task status, and generated answers; temporarily stages task PDF bytes for authenticated extension delivery |
 | **Custom GPT** (`QTS-Job-Tracking`) | Retrieves one task through GPT Actions, generates job-specific answers and document JSON, and sends the completed package back to the server |
 
 The Custom GPT does **not** inspect the job website, click job-site controls, upload files, or submit applications. The extension performs all job-page interaction.
+
+### Manager Job List and Bids
+
+Historically, Manager-added jobs were stored as Account-specific rows in `job_list`, and the retired Workable Apply handler could move a row through automated processing. That handler has been removed. Managers can still capture and track job rows and record outcomes manually through the current Jobs and Bids workflows; see `docs/CURRENT-SYSTEM.md`.
 
 ```text
 ┌─────────────────┐    scan / fill / upload    ┌──────────────────┐
@@ -97,6 +103,8 @@ ChatGPT may ask the account to approve an Action. The extension should detect th
 
 The extension may scan, fill, upload, validate, and navigate through intermediate steps. It must stop at **Review**, **Submit**, **Apply**, **Finish**, or an equivalent final action.
 
+When the extension pauses for missing facts, manual review, or a page-level issue, complete or review the page and use its **Continue** control to rescan that same step. A same-page resume preserves non-empty fields, selected choices, and existing education/experience rows; it does not resend the GPT request. Final submission remains manual.
+
 ---
 
 ## 3. Current implementation versus target workflow
@@ -106,6 +114,11 @@ The extension may scan, fill, upload, validate, and navigate through intermediat
 | Detect justjoin.it Easy Apply form | Implemented |
 | Load a selected candidate | Implemented |
 | Scan the current rendered application page | Implemented |
+| Read Workable question names, choice groups, custom-select controls, and collection controls | Implemented |
+| Read-only Workable study report for visible steps (question, section, element type, required state, choices) | Implemented; temporary to the browser session |
+| Save or share reviewed platform templates | Not implemented; study reports do not become templates automatically |
+| Send current-step questions to the assigned GPT with Account custom facts and Manager answers; prefer exact saved answers while filling | Implemented |
+| Keep an unresolved GPT package open while the Manager confirms missing facts in the same chat | Implemented |
 | Fill verified candidate fields | Implemented |
 | Create an application session and GPT task | Implemented |
 | Open/reuse pinned Custom GPT tab | Implemented or in active development |
@@ -113,12 +126,21 @@ The extension may scan, fill, upload, validate, and navigate through intermediat
 | GPT retrieves task through Actions | Implemented |
 | GPT posts answers and document JSON to server | Implemented |
 | Server renders resume and cover-letter PDFs | Implemented |
-| Extension downloads and uploads generated resume | Implemented |
+| Workable extension downloads generated resume and cover-letter PDFs together to `Downloads/$_QTS_RESUME_$/<Account>/<date_time>_<job>_<company>` | Implemented |
+| Remove each staged Workable task PDF from the server after its local download completes | Implemented |
 | Page-by-page processing for general multi-step platforms | Target architecture; implement incrementally |
 | Completely invisible/headless Custom GPT invocation | Not supported |
 | Automatic final job submission | Intentionally not supported |
 
 Do not describe an experimental or planned feature as guaranteed production behavior.
+
+For the Workable task flow, the server temporarily stages rendered PDF bytes in the task-document table so the extension can retrieve them. Chrome saves each generated resume and cover letter under `Downloads/$_QTS_RESUME_$/<Account>/<YYYY-MM-DD_HH-mm-ss>_<job title>_<company>`. The resume filename is `<Account name>.pdf`; the cover-letter filename is `<Account name>_Cover_Letter.pdf`. The extension reuses one timestamped application folder across that task, waits for each download to complete, then calls the authenticated document-delete endpoint for that PDF. The in-memory bytes remain available for any requested Workable upload. This does not change the separate legacy application-session document flow.
+
+### 3.1 Read-only Workable form study
+
+From the extension action screen, **Study application form** scans the current Workable application step and displays its visible fields, section, control type, required state, available choices, and human-review marker. **Scan / update this step** refreshes the current page entry when its URL and form signature match; a changed page is recorded as another step. **Record as a new step** explicitly creates another entry when two steps have identical signatures.
+
+The Manager advances between steps manually. Study mode does not fill or select answers, navigate the application, submit the form, or send page data to the server or Custom GPT. Its field-structure report is stored only in extension session storage so it can be reviewed across popup openings in the current browser session; clearing the report or ending the session removes it. This is an inspection report, not a reusable or approved template.
 
 ---
 
@@ -309,6 +331,10 @@ Reusable answers may be filled when the candidate explicitly approved them:
 - Work authorization
 - Sponsorship requirement
 
+For salary, authorization, relocation/commute, notice-period, availability, and education-level questions, send only an exact saved profile or approved custom answer. Education-level answers must exactly match a saved Account qualification and an available application choice; if there is no unique match, pause for manual completion. Do not ask GPT to infer personal facts; pause when the saved answer is missing or ambiguous.
+
+For a conditional employee-referral name question (for example, “If you were referred, add their name”), do not invent a name or ask GPT. If no saved answer exists, leave it blank and let the job site's own validation determine whether it is required for this application.
+
 ### 7.3 GPT-generated fields
 
 Send job-specific narrative questions to the Custom GPT:
@@ -388,7 +414,9 @@ PROCESS_TASK: task_7f84c21e-2f34-4fd2-96e1-1f4216f3ad92
 ```
 
 5. Attempt to send the message.
-6. If the automatic handoff fails, notify the account and provide a one-click/manual fallback.
+6. Confirm the message in chat when possible. If ChatGPT's page does not confirm an attempted send, treat the handoff as uncertain: keep the reserved job active, watch for Action approvals, and poll the server task until its answer package is ready. Do not mark the job failed or claim another job solely because the chat DOM did not confirm the message.
+7. If the message was definitely not sent, notify the account to send it manually. Do not represent this as a successful handoff.
+8. Treat the server's `ready` task status as authoritative, even if the GPT tab still appears to be thinking. Repeated identical `submitTaskPackage` calls must return the existing ready result; a different package must not overwrite it.
 
 Do not place changing task IDs in Conversation Starters. Conversation Starters are static examples and are optional.
 
@@ -396,10 +424,10 @@ Do not place changing task IDs in Conversation Starters. Conversation Starters a
 
 If ChatGPT displays **Allow**, the extension should:
 
-- Mark the task as `waiting_for_action_approval`
+- Keep the job reserved and task active
 - Notify the account
-- Keep polling the server
-- Continue when the account approves the Action
+- Watch for and, where available, approve the Action
+- Continue only after the server reports the answer package as `ready`
 
 Do not claim that approval can always be completed automatically.
 
@@ -775,7 +803,8 @@ Do not store critical workflow state only inside the popup because the popup clo
 | Symptom | Likely cause | Correct response |
 |---|---|---|
 | Form discovery failed | Apply form not rendered or scripts not injected | Open the application modal, reload extension/job tab, retry |
-| GPT tab exists but task was not sent | ChatGPT composer selectors changed, tab not loaded, or login expired | Open pinned tab, verify login, send `PROCESS_TASK` manually, update handoff logic |
+| GPT tab exists but task send is unconfirmed | ChatGPT composer or conversation DOM changed, or its update was delayed | Keep the current job reserved while polling server task status; inspect the pinned GPT tab, send the prompt if it remains in the composer, and approve any requested Action |
+| GPT task is definitely not sent | ChatGPT composer selectors changed, tab not loaded, or login expired | Open pinned tab, verify login, send `PROCESS_TASK` manually |
 | Previous job context appears | Same GPT conversation was reused | Start a fresh Custom GPT conversation and use the current task ID |
 | Action waits indefinitely | ChatGPT is showing an approval dialog | Account opens pinned tab and clicks **Allow** |
 | `401` on GPT Actions | Wrong or rotated `GPT_ACTION_SECRET`, wrong header format, or endpoint mismatch | Update Action authentication and server environment secret; do not re-login using a browser token |
@@ -783,6 +812,8 @@ Do not store critical workflow state only inside the popup because the popup clo
 | `resume JSON is required` | Required resume slot exists but GPT omitted the resume object | Check context/fileFields and GPT instructions |
 | Package saved but PDF missing | Rendering or filesystem failure | Check server logs, schema validation, output directory, and permissions |
 | PDF ready but upload failed | Job modal closed, file control changed, or site blocked programmatic assignment | Reopen form, rescan field, retry manual package application |
+| Workable reports an option label or technical ID as a required question | The form exposes the question through its ARIA group/label, or uses a separate required proxy for a custom select | Reload the extension on the application tab and rescan; unresolved personal facts still require an approved profile/custom answer or human review |
+| Apply waits for an unresolved GPT answer | A required fact is missing or ambiguous | Discuss the fact in the assigned GPT chat; it resubmits the package and QTS continues when all unresolved questions are answered |
 | Popup closed and progress disappeared | Workflow state was stored only in popup | Move orchestration to service worker/server and show state again when popup opens |
 | GPT tab became inactive and stopped | Chrome froze/discarded tab or ChatGPT session expired | Reload pinned tab and resume task |
 | Marketing box remains unchecked | Correct consent behavior | Account chooses manually |

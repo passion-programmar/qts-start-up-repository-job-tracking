@@ -106,6 +106,12 @@ function applyFieldClassificationFill(fields, candidate, savedAnswers, options =
   return fields.map((field) => {
     const next = { ...field };
 
+    if (next.requiresReview || next.status === 'ambiguous' || next.status === 'unresolved') {
+      next.fillStatus = 'needs_review';
+      next.fillValue = null;
+      return next;
+    }
+
     if (next.fieldType === 'checkbox' || next.fieldType === 'switch') {
       if (respectPageState && next.currentValue != null && next.currentValue !== '') {
         next.fillValue = String(next.currentValue);

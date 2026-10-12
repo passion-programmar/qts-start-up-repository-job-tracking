@@ -1,5 +1,7 @@
 'use client';
 
+import { LoadingState } from '@/components/LoadingState';
+
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Modal } from '@/components/Modal';
 import { PasswordField } from '@/components/PasswordField';
@@ -318,7 +320,7 @@ export function ManagersView() {
       </div>
 
       {loading ? (
-        <div className="card"><div className="text-muted">Loading…</div></div>
+        <div className="card"><LoadingState label="Loading…" /></div>
       ) : (
         <div className="org-tree-list">
           <RoleGroupCard
@@ -387,7 +389,7 @@ export function ManagersView() {
         }
       >
         {formLoading ? (
-          <div className="text-muted">Loading saved credentials…</div>
+          <LoadingState label="Loading saved credentials…" size="inline" />
         ) : (
           <>
             <div className="form-group">
@@ -442,7 +444,7 @@ export function ManagersView() {
         }
       >
         {formLoading ? (
-          <div className="text-muted">Loading saved credentials…</div>
+          <LoadingState label="Loading saved credentials…" size="inline" />
         ) : (
           <>
             <div className="form-group">

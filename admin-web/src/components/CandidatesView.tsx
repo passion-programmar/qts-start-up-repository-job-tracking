@@ -1,5 +1,7 @@
 'use client';
 
+import { LoadingState } from '@/components/LoadingState';
+
 import { useCallback, useEffect, useState } from 'react';
 import { CandidateName } from '@/components/CandidateName';
 import { CandidateColorPicker } from '@/components/CandidateColorPicker';
@@ -204,7 +206,7 @@ export function CandidatesView() {
 
       <div className="card">
         {loading ? (
-          <div className="text-muted">Loading…</div>
+          <LoadingState label="Loading…" />
         ) : (
           <div className="table-scroll">
           <table>

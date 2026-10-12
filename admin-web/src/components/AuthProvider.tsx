@@ -1,5 +1,7 @@
 'use client';
 
+import { LoadingState } from '@/components/LoadingState';
+
 import {
   createContext,
   useCallback,
@@ -148,7 +150,7 @@ export function AuthProvider({
     return (
       <div className="auth-screen">
         <div className="auth-card">
-          <p className="text-muted" style={{ textAlign: 'center', margin: 0 }}>Loading…</p>
+          <LoadingState label="Loading…" size="inline" />
         </div>
       </div>
     );

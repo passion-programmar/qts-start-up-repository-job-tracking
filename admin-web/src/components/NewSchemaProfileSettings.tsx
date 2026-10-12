@@ -1,13 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useAuth } from '@/components/AuthProvider';
 import { PasswordField } from '@/components/PasswordField';
 import { api, setToken } from '@/lib/api';
 
 export function NewSchemaProfileSettings() {
   const { user, updateUser } = useAuth();
-  const [activeTab, setActiveTab] = useState<'profile' | 'authentication'>('profile');
+  const [activeTab, setActiveTab] = useState<'profile' | 'authentication' | 'applications'>('profile');
   const [username, setUsername] = useState(user?.username || '');
   const [name, setName] = useState(user?.name || '');
   const [currentPassword, setCurrentPassword] = useState('');
@@ -18,6 +18,29 @@ export function NewSchemaProfileSettings() {
   const [authConfirmPassword, setAuthConfirmPassword] = useState('');
   const [authMessage, setAuthMessage] = useState<string | null>(null);
   const [authError, setAuthError] = useState(false);
+  const [submissionMode, setSubmissionMode] = useState<'manual' | 'auto'>('manual');
+
+  useEffect(() => {
+    if (user?.role !== 'super') return;
+    void api<{ success: boolean; settings?: Record<string, string> }>('GET', '/api/v2/settings')
+      .then((response) => {
+        if (response.success && (response.settings?.application_submission_mode === 'manual' ||
+          response.settings?.application_submission_mode === 'auto')) {
+          setSubmissionMode(response.settings.application_submission_mode);
+        }
+      });
+  }, [user?.role]);
+
+  async function saveApplicationMode(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const response = await api<{ success: boolean; message?: string }>(
+      'PUT',
+      '/api/v2/settings',
+      { settings: { application_submission_mode: submissionMode } }
+    );
+    setMessage(response.success ? 'Application submission mode saved.' : response.message || 'Could not save application mode.');
+    setError(!response.success);
+  }
 
   async function save(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -96,8 +119,36 @@ export function NewSchemaProfileSettings() {
         >
           Authentication
         </button>
+        {user?.role === 'super' && (
+          <button
+            className={`btn ${activeTab === 'applications' ? 'btn-primary' : 'btn-ghost'}`}
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'applications'}
+            onClick={() => setActiveTab('applications')}
+          >
+            Application Automation
+          </button>
+        )}
       </div>
-      {activeTab === 'profile' ? (
+      {activeTab === 'applications' && user?.role === 'super' ? (
+        <form className="card settings-card" role="tabpanel" onSubmit={(event) => { void saveApplicationMode(event); }}>
+          <div className="card-title">Global Application Submission Mode</div>
+          <p className="text-muted">
+            Manual is the default and requires review before submission. Auto mode may submit only when all required answers are known and valid.
+          </p>
+          {message && <div className={`alert ${error ? 'alert-error' : 'alert-success'}`}>{message}</div>}
+          <div className="form-group">
+            <label htmlFor="application-submission-mode">Submission mode</label>
+            <select id="application-submission-mode" value={submissionMode}
+              onChange={(event) => setSubmissionMode(event.target.value as 'manual' | 'auto')}>
+              <option value="manual">Manual review (default)</option>
+              <option value="auto">Automatic submission when all answers are known</option>
+            </select>
+          </div>
+          <button className="btn btn-primary" type="submit">Save Submission Mode</button>
+        </form>
+      ) : activeTab === 'profile' ? (
         <form className="card settings-card" role="tabpanel" onSubmit={(event) => { void save(event); }}>
           <div className="card-title">My Profile</div>
           <p className="text-muted">Update your display name or username.</p>

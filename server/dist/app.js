@@ -5,30 +5,28 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = __importDefault(require("express"));
 const cors_1 = __importDefault(require("cors"));
-const auth_routes_1 = __importDefault(require("./modules/auth/auth.routes"));
-const candidates_routes_1 = __importDefault(require("./modules/candidates/candidates.routes"));
-const jobs_routes_1 = __importDefault(require("./modules/jobs/jobs.routes"));
-const accounts_routes_1 = __importDefault(require("./modules/accounts/accounts.routes"));
-const users_routes_1 = __importDefault(require("./modules/users/users.routes"));
-const interviews_routes_1 = __importDefault(require("./modules/interviews/interviews.routes"));
-const settings_routes_1 = __importDefault(require("./modules/settings/settings.routes"));
-const application_sessions_routes_1 = __importDefault(require("./modules/application-sessions/application-sessions.routes"));
-const application_tasks_routes_1 = __importDefault(require("./modules/application-sessions/application-tasks.routes"));
-const admin_records_routes_1 = __importDefault(require("./modules/admin-records/admin-records.routes"));
-const job_sites_routes_1 = __importDefault(require("./modules/job-sites/job-sites.routes"));
-const auth_routes_2 = __importDefault(require("./modules/new-schema/auth.routes"));
-const users_routes_2 = __importDefault(require("./modules/new-schema/users.routes"));
-const interviews_routes_2 = __importDefault(require("./modules/new-schema/interviews.routes"));
+const auth_routes_1 = __importDefault(require("./modules/new-schema/auth.routes"));
+const users_routes_1 = __importDefault(require("./modules/new-schema/users.routes"));
+const custom_gpts_routes_1 = __importDefault(require("./modules/new-schema/custom-gpts.routes"));
+const interviews_routes_1 = __importDefault(require("./modules/new-schema/interviews.routes"));
 const categories_routes_1 = __importDefault(require("./modules/new-schema/categories.routes"));
-const settings_routes_2 = __importDefault(require("./modules/new-schema/settings.routes"));
-const jobs_routes_2 = __importDefault(require("./modules/new-schema/jobs.routes"));
+const settings_routes_1 = __importDefault(require("./modules/new-schema/settings.routes"));
+const jobs_routes_1 = __importDefault(require("./modules/new-schema/jobs.routes"));
 const bids_routes_1 = __importDefault(require("./modules/new-schema/bids.routes"));
 const analytics_routes_1 = __importDefault(require("./modules/new-schema/analytics.routes"));
 const database_routes_1 = __importDefault(require("./modules/new-schema/database.routes"));
+const manager_application_profile_routes_1 = __importDefault(require("./modules/new-schema/manager-application-profile.routes"));
+const resume_pdfs_routes_1 = __importDefault(require("./modules/new-schema/resume-pdfs.routes"));
+const gpt_application_tasks_routes_1 = __importDefault(require("./modules/new-schema/gpt-application-tasks.routes"));
+const application_sessions_routes_1 = __importDefault(require("./modules/application-sessions/application-sessions.routes"));
+const application_learning_routes_1 = __importDefault(require("./modules/application-sessions/application-learning.routes"));
+const application_templates_routes_1 = __importDefault(require("./modules/application-sessions/application-templates.routes"));
 const error_handler_1 = require("./middleware/error-handler");
 const paths_1 = require("./config/paths");
 const env_1 = require("./config/env");
 const branding_1 = require("./config/branding");
+const logger_1 = require("./utilities/logger");
+const serverless_bootstrap_1 = require("./services/serverless-bootstrap");
 const app = (0, express_1.default)();
 const allowedOrigins = [
     'http://localhost:1027',
@@ -63,37 +61,44 @@ app.use((0, cors_1.default)({
 }));
 app.use(express_1.default.json({ limit: '2mb' }));
 app.use(express_1.default.urlencoded({ extended: true }));
-app.use('/api/auth', auth_routes_1.default);
-app.use('/api/candidates', candidates_routes_1.default);
-app.use('/api/jobs', jobs_routes_1.default);
-app.use('/api/accounts', accounts_routes_1.default);
-app.use('/api/users', users_routes_1.default);
-app.use('/api/interviews', interviews_routes_1.default);
-app.use('/api/settings', settings_routes_1.default);
-app.use('/api/application-sessions', application_sessions_routes_1.default);
-app.use('/api/application-tasks', application_tasks_routes_1.default);
-app.use('/api/admin-records', admin_records_routes_1.default);
-app.use('/api/job-sites', job_sites_routes_1.default);
-app.use('/api/v2/auth', auth_routes_2.default);
-app.use('/api/v2/users', users_routes_2.default);
-app.use('/api/v2/interviews', interviews_routes_2.default);
+if (process.env.VERCEL) {
+    app.use(async (_req, res, next) => {
+        try {
+            await (0, serverless_bootstrap_1.ensureServerlessDatabaseReady)();
+            next();
+        }
+        catch (error) {
+            logger_1.logger.error('Vercel API initialization failed', error);
+            res.status(503).json({
+                success: false,
+                message: 'The API is not ready. Check the Vercel API environment variables and logs.',
+            });
+        }
+    });
+}
+app.use('/api/v2/auth', auth_routes_1.default);
+app.use('/api/v2/users', users_routes_1.default);
+app.use('/api/v2/custom-gpts', custom_gpts_routes_1.default);
+app.use('/api/v2/interviews', interviews_routes_1.default);
 app.use('/api/v2/categories', categories_routes_1.default);
-app.use('/api/v2/settings', settings_routes_2.default);
-app.use('/api/v2/jobs', jobs_routes_2.default);
+app.use('/api/v2/settings', settings_routes_1.default);
+app.use('/api/v2/jobs', jobs_routes_1.default);
 app.use('/api/v2/bids', bids_routes_1.default);
 app.use('/api/v2/analytics', analytics_routes_1.default);
 app.use('/api/v2/database', database_routes_1.default);
+app.use('/api/v2/manager-application-profile', manager_application_profile_routes_1.default);
+app.use('/api/v2/resume-pdfs', resume_pdfs_routes_1.default);
+app.use('/api/v2/gpt-application-tasks', gpt_application_tasks_routes_1.default);
+app.use('/api/application-sessions', application_sessions_routes_1.default);
+app.use('/api/application-sessions', application_learning_routes_1.default);
+app.use('/api/application-templates', application_templates_routes_1.default);
 app.get('/api/health', (_req, res) => {
     res.json({
         success: true,
         status: 'online',
         timestamp: new Date().toISOString(),
         apiVersion: '1.6.0',
-        features: {
-            documentUploadCategory: true,
-            applicationDocuments: true,
-            applicationTasks: true,
-        },
+        features: { schema: 'new' },
     });
 });
 app.get('/logo.png', (_req, res) => {

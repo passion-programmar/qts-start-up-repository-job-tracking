@@ -17,8 +17,41 @@ const staffCreateSchema = zod_1.z.object({
     password: zod_1.z.string().min(4).max(200),
     role: zod_1.z.enum(['admin', 'manager', 'caller']),
 });
-const accountProfileSchema = zod_1.z.object({
-    name: zod_1.z.string().trim().min(1).max(200),
+const educationSchema = zod_1.z.object({
+    school: zod_1.z.string().trim().min(1).max(300),
+    qualification: zod_1.z.string().trim().min(1).max(200),
+    fieldOfStudy: zod_1.z.string().trim().max(200).nullable(),
+    startDate: zod_1.z.string().date().nullable(),
+    endDate: zod_1.z.string().date().nullable(),
+    description: zod_1.z.string().trim().max(2000).nullable(),
+});
+const workExperienceSchema = zod_1.z.object({
+    employer: zod_1.z.string().trim().min(1).max(300),
+    jobTitle: zod_1.z.string().trim().min(1).max(300),
+    location: zod_1.z.string().trim().max(300).nullable(),
+    startDate: zod_1.z.string().date().nullable(),
+    endDate: zod_1.z.string().date().nullable(),
+    currentRole: zod_1.z.boolean(),
+    description: zod_1.z.string().trim().max(3000).nullable(),
+});
+const accountCustomFieldSchema = zod_1.z.object({
+    fieldName: zod_1.z.string().trim().min(1).max(100),
+    value: zod_1.z.string().trim().min(1).max(4000),
+}).strict();
+const accountCustomAnswerSchema = zod_1.z.object({
+    topic: zod_1.z.string().trim().min(1).max(100),
+    question: zod_1.z.string().trim().min(1).max(1000),
+    answer: zod_1.z.string().trim().min(1).max(4000),
+}).strict();
+const accountApplicationProfileSchema = zod_1.z.object({
+    firstName: zod_1.z.string().trim().min(1).max(100),
+    lastName: zod_1.z.string().trim().max(100).default(''),
+    education: zod_1.z.array(educationSchema).max(20).default([]),
+    workExperience: zod_1.z.array(workExperienceSchema).max(30).default([]),
+    customFields: zod_1.z.array(accountCustomFieldSchema).max(100).default([]),
+    customAnswers: zod_1.z.array(accountCustomAnswerSchema).max(100).default([]),
+});
+const accountProfileSchema = accountApplicationProfileSchema.extend({
     email: zod_1.z.string().email(),
     address: zod_1.z.string().trim().min(1).max(500),
     sex: zod_1.z.string().trim().min(1).max(50),
@@ -33,17 +66,31 @@ const staffUpdateSchema = zod_1.z.object({
     name: zod_1.z.string().trim().min(1).max(200).optional(),
     temporaryPassword: zod_1.z.string().min(4).max(200).optional(),
 });
-const accountUpdateSchema = accountProfileSchema.partial().extend({
-    name: zod_1.z.string().trim().min(1).max(200).optional(),
-});
+const accountUpdateSchema = accountProfileSchema.partial();
 const staffColumns = `
   u_id, username, name, role, parent_user_id, (blocked_date IS NULL) AS is_active,
   blocked_date, must_change_password
 `;
 const accountColumns = `
-  u_id, username, name, role, parent_user_id, email, address, sex,
-  birthday, phone, country, city, category_id, blocked_date
+  u.u_id, u.username, u.name, u.role, u.parent_user_id, u.email, u.address, u.sex,
+  u.birthday, u.phone, u.country, u.city, u.category_id, u.blocked_date,
+  app.first_name, app.last_name, app.education, app.work_experience, app.custom_fields,
+  COALESCE((
+    SELECT jsonb_agg(jsonb_build_object(
+      'topic', answer.topic, 'question', answer.question, 'answer', answer.answer
+    ) ORDER BY answer.custom_answer_id)
+    FROM account_custom_application_answers answer
+    WHERE answer.account_user_id = u.u_id
+  ), '[]'::jsonb) AS custom_answers,
+  (app.resume_content IS NOT NULL) AS has_resume, app.resume_file_name
 `;
+function accountSelect(where) {
+    return `SELECT ${accountColumns}
+          FROM users u
+          LEFT JOIN account_application_profiles app ON app.account_user_id = u.u_id
+          ${where}`;
+}
+const validResumeUpload = (0, express_1.raw)({ type: 'application/pdf', limit: '4mb' });
 function canCreateRole(actorRole, targetRole) {
     if (actorRole === 'super')
         return targetRole === 'admin';
@@ -109,16 +156,13 @@ router.get('/accounts', async (req, res) => {
         return;
     }
     const query = actor.role === 'super'
-        ? `SELECT ${accountColumns} FROM users WHERE role = 'account' ORDER BY name ASC`
+        ? accountSelect(`WHERE u.role = 'account' ORDER BY u.name ASC`)
         : actor.role === 'admin'
-            ? `SELECT ${accountColumns} FROM users
-         WHERE role = 'account' AND parent_user_id IN (
+            ? accountSelect(`WHERE u.role = 'account' AND u.parent_user_id IN (
            SELECT u_id FROM users WHERE role = 'manager' AND parent_user_id = $1
          )
-         ORDER BY name ASC`
-            : `SELECT ${accountColumns} FROM users
-         WHERE role = 'account' AND parent_user_id = $1
-         ORDER BY name ASC`;
+         ORDER BY u.name ASC`)
+            : accountSelect(`WHERE u.role = 'account' AND u.parent_user_id = $1 ORDER BY u.name ASC`);
     const accounts = await (0, connection_1.queryAll)(query, actor.role === 'super' ? [] : [actor.id]);
     res.json({ success: true, accounts });
 });
@@ -142,15 +186,31 @@ router.post('/', async (req, res) => {
             return;
         }
         const username = `account-${(0, node_crypto_1.randomUUID)()}`;
-        const row = await (0, connection_1.queryOne)(`INSERT INTO users (
-        username, name, role, password_hash, parent_user_id,
-        email, address, sex, birthday, phone, country, city, category_id
-      ) VALUES ($1, $2, 'account', NULL, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-      RETURNING u_id`, [
-            username, data.name, actor.id, data.email, data.address, data.sex,
-            data.birthday, data.phone, data.country, data.city, data.categoryId,
-        ]);
-        const account = await (0, connection_1.queryOne)(`SELECT ${accountColumns} FROM users WHERE u_id = $1`, [row.u_id]);
+        const row = await (0, connection_1.withTransaction)(async (tx) => {
+            const result = await tx.query(`INSERT INTO users (
+          username, name, role, password_hash, parent_user_id,
+          email, address, sex, birthday, phone, country, city, category_id
+        ) VALUES ($1, $2, 'account', NULL, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        RETURNING u_id`, [
+                username, [data.firstName, data.lastName].filter(Boolean).join(' '), actor.id, data.email, data.address, data.sex,
+                data.birthday, data.phone, data.country, data.city, data.categoryId,
+            ]);
+            const created = result.rows[0];
+            await tx.query(`INSERT INTO account_application_profiles (
+          account_user_id, first_name, last_name, education, work_experience, custom_fields
+        ) VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb)`, [
+                created.u_id, data.firstName, data.lastName,
+                JSON.stringify(data.education), JSON.stringify(data.workExperience),
+                JSON.stringify(data.customFields),
+            ]);
+            for (const answer of data.customAnswers) {
+                await tx.query(`INSERT INTO account_custom_application_answers (
+            account_user_id, topic, question, answer
+          ) VALUES ($1, $2, $3, $4)`, [created.u_id, answer.topic, answer.question, answer.answer]);
+            }
+            return created;
+        });
+        const account = await (0, connection_1.queryOne)(accountSelect('WHERE u.u_id = $1'), [row.u_id]);
         logger_1.logger.info('New-schema Account profile created', { id: row.u_id, managerId: actor.id });
         res.status(201).json({ success: true, account });
         return;
@@ -195,7 +255,6 @@ router.put('/:id', async (req, res) => {
         const assignments = [];
         const values = [];
         const columns = {
-            name: 'name',
             email: 'email',
             address: 'address',
             sex: 'sex',
@@ -219,9 +278,47 @@ router.put('/:id', async (req, res) => {
                 return;
             }
         }
-        values.push(userId);
-        await (0, connection_1.execute)(`UPDATE users SET ${assignments.join(', ')} WHERE u_id = $${values.length}`, values);
-        const account = await (0, connection_1.queryOne)(`SELECT ${accountColumns} FROM users WHERE u_id = $1`, [userId]);
+        const currentProfile = await (0, connection_1.queryOne)('SELECT first_name, last_name, education, work_experience, custom_fields FROM account_application_profiles WHERE account_user_id = $1', [userId]);
+        const firstName = data.firstName ?? currentProfile?.first_name;
+        const lastName = data.lastName ?? currentProfile?.last_name;
+        if (!firstName) {
+            res.status(400).json({ success: false, message: 'Enter the Account’s first name.' });
+            return;
+        }
+        await (0, connection_1.withTransaction)(async (tx) => {
+            if (data.firstName !== undefined || data.lastName !== undefined) {
+                assignments.push(`name = $${values.length + 1}`);
+                values.push([firstName, lastName].filter(Boolean).join(' '));
+            }
+            if (assignments.length) {
+                values.push(userId);
+                await tx.query(`UPDATE users SET ${assignments.join(', ')} WHERE u_id = $${values.length}`, values);
+            }
+            await tx.query(`INSERT INTO account_application_profiles (
+          account_user_id, first_name, last_name, education, work_experience, custom_fields
+        ) VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb)
+        ON CONFLICT (account_user_id) DO UPDATE SET
+          first_name = EXCLUDED.first_name,
+          last_name = EXCLUDED.last_name,
+          education = EXCLUDED.education,
+          work_experience = EXCLUDED.work_experience,
+          custom_fields = EXCLUDED.custom_fields,
+          updated_date = NOW()`, [
+                userId, firstName, lastName,
+                JSON.stringify(data.education ?? currentProfile?.education ?? []),
+                JSON.stringify(data.workExperience ?? currentProfile?.work_experience ?? []),
+                JSON.stringify(data.customFields ?? currentProfile?.custom_fields ?? []),
+            ]);
+            if (data.customAnswers !== undefined) {
+                await tx.query('DELETE FROM account_custom_application_answers WHERE account_user_id = $1', [userId]);
+                for (const answer of data.customAnswers) {
+                    await tx.query(`INSERT INTO account_custom_application_answers (
+              account_user_id, topic, question, answer
+            ) VALUES ($1, $2, $3, $4)`, [userId, answer.topic, answer.question, answer.answer]);
+                }
+            }
+        });
+        const account = await (0, connection_1.queryOne)(accountSelect('WHERE u.u_id = $1'), [userId]);
         res.json({ success: true, account });
         return;
     }
@@ -257,6 +354,71 @@ router.put('/:id', async (req, res) => {
     await (0, connection_1.execute)(`UPDATE users SET ${assignments.join(', ')} WHERE u_id = $${values.length}`, values);
     const user = await (0, connection_1.queryOne)(`SELECT ${staffColumns} FROM users WHERE u_id = $1`, [userId]);
     res.json({ success: true, user });
+});
+async function canManageAccountApplicationProfile(req, accountId) {
+    const actor = req.newSchemaUser;
+    if (actor.role !== 'manager' && actor.role !== 'super')
+        return false;
+    const account = await (0, connection_1.queryOne)("SELECT parent_user_id FROM users WHERE u_id = $1 AND role = 'account'", [accountId]);
+    if (!account)
+        return false;
+    return actor.role === 'super' || account.parent_user_id === actor.id;
+}
+router.put('/:id/resume', validResumeUpload, async (req, res) => {
+    const accountId = Number.parseInt(req.params.id, 10);
+    if (!Number.isSafeInteger(accountId) || accountId <= 0 || !(await canManageAccountApplicationProfile(req, accountId))) {
+        res.status(404).json({ success: false, message: 'Account profile not found.' });
+        return;
+    }
+    if (!Buffer.isBuffer(req.body) || req.body.length === 0 || !req.body.subarray(0, 5).equals(Buffer.from('%PDF-'))) {
+        res.status(400).json({ success: false, message: 'Upload a valid PDF resume (maximum 4 MB).' });
+        return;
+    }
+    const encodedFileName = String(req.headers['x-resume-filename'] || 'resume.pdf');
+    let rawFileName;
+    try {
+        rawFileName = decodeURIComponent(encodedFileName);
+    }
+    catch {
+        res.status(400).json({ success: false, message: 'Provide a valid resume filename.' });
+        return;
+    }
+    const fileName = rawFileName.replace(/[\/\\\r\n"]/g, '_').trim().slice(0, 200) || 'resume.pdf';
+    await (0, connection_1.execute)(`UPDATE account_application_profiles
+     SET resume_file_name = $1, resume_content = $2, updated_date = NOW()
+     WHERE account_user_id = $3`, [fileName, req.body, accountId]);
+    res.json({ success: true, fileName });
+});
+router.get('/:id/resume', async (req, res) => {
+    const accountId = Number.parseInt(req.params.id, 10);
+    if (!Number.isSafeInteger(accountId) || accountId <= 0 || !(await canManageAccountApplicationProfile(req, accountId))) {
+        res.status(404).json({ success: false, message: 'Account profile not found.' });
+        return;
+    }
+    const resume = await (0, connection_1.queryOne)(`SELECT app.resume_file_name, app.resume_content
+     FROM account_application_profiles app
+     WHERE app.account_user_id = $1 AND app.resume_content IS NOT NULL`, [accountId]);
+    if (!resume) {
+        res.status(404).json({ success: false, message: 'No resume is saved for this Account.' });
+        return;
+    }
+    const safeFileName = resume.resume_file_name.replace(/[\/\\\r\n"]/g, '_');
+    const asciiFileName = safeFileName.replace(/[^\x20-\x7E]/g, '_');
+    const encodedFileName = encodeURIComponent(safeFileName).replace(/['()*]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${asciiFileName}"; filename*=UTF-8''${encodedFileName}`);
+    res.send(resume.resume_content);
+});
+router.delete('/:id/resume', async (req, res) => {
+    const accountId = Number.parseInt(req.params.id, 10);
+    if (!Number.isSafeInteger(accountId) || accountId <= 0 || !(await canManageAccountApplicationProfile(req, accountId))) {
+        res.status(404).json({ success: false, message: 'Account profile not found.' });
+        return;
+    }
+    await (0, connection_1.execute)(`UPDATE account_application_profiles
+     SET resume_file_name = NULL, resume_content = NULL, updated_date = NOW()
+     WHERE account_user_id = $1`, [accountId]);
+    res.json({ success: true });
 });
 router.patch('/:id/block', async (req, res) => {
     const userId = Number.parseInt(req.params.id, 10);
@@ -294,17 +456,26 @@ router.delete('/:id', async (req, res) => {
         return;
     }
     if (target.role === 'account') {
+        const assignedJobs = await (0, connection_1.queryOne)('SELECT COUNT(*)::int AS count FROM job_account_assignments WHERE account_user_id = $1', [userId]);
+        if (Number(assignedJobs?.count ?? 0) > 0) {
+            res.status(409).json({ success: false, message: 'Remove this Account from its todo job rows before deleting it. Non-todo job rows are retained as history.' });
+            return;
+        }
         const bids = await (0, connection_1.queryOne)('SELECT COUNT(*)::int AS count FROM bids WHERE u_id = $1', [userId]);
         if (Number(bids?.count ?? 0) > 0) {
             res.status(409).json({ success: false, message: 'This Account has bid history and cannot be deleted.' });
             return;
         }
-        await (0, connection_1.execute)('UPDATE job_list SET selected_account_u_ids = array_remove(selected_account_u_ids, $1)', [userId]);
     }
     else if (target.role === 'manager') {
         const jobs = await (0, connection_1.queryOne)('SELECT COUNT(*)::int AS count FROM job_list WHERE u_id = $1', [userId]);
         if (Number(jobs?.count ?? 0) > 0) {
             res.status(409).json({ success: false, message: 'This Manager owns jobs and cannot be deleted.' });
+            return;
+        }
+        const bids = await (0, connection_1.queryOne)('SELECT COUNT(*)::int AS count FROM bids WHERE manager_user_id = $1', [userId]);
+        if (Number(bids?.count ?? 0) > 0) {
+            res.status(409).json({ success: false, message: 'This Manager has bid history and cannot be deleted.' });
             return;
         }
     }

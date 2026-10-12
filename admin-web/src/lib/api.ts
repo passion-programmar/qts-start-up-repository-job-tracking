@@ -65,3 +65,74 @@ export async function api<T = unknown>(
 
   return data;
 }
+
+export async function uploadPdf(
+  path: string,
+  file: File
+): Promise<{ success: boolean; message?: string }> {
+  const token = getToken();
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/pdf',
+        'X-Resume-Filename': encodeURIComponent(file.name),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: file,
+    });
+  } catch {
+    return { success: false, message: 'Cannot connect to the API server.' };
+  }
+  let data: { success?: boolean; message?: string };
+  try {
+    data = await response.json();
+  } catch {
+    return { success: false, message: `Resume upload failed (${response.status}).` };
+  }
+  return response.ok && data.success
+    ? { success: true }
+    : { success: false, message: data.message || `Resume upload failed (${response.status}).` };
+}
+
+export async function requestPdf(
+  path: string,
+  body: unknown,
+  signal?: AbortSignal
+): Promise<{ success: boolean; pdf?: Blob; message?: string }> {
+  const token = getToken();
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: 'Bearer '.concat(token) } : {}),
+      },
+      body: JSON.stringify(body),
+      signal,
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      return { success: false, message: 'PDF preview request was cancelled.' };
+    }
+    return { success: false, message: 'Cannot connect to the API server.' };
+  }
+
+  if (!response.ok) {
+    let message = `PDF generation failed (${response.status}).`;
+    try {
+      const data = await response.json() as { message?: unknown };
+      if (typeof data.message === 'string') message = data.message;
+    } catch {
+      // Keep the status-based error when the API response is not JSON.
+    }
+    return { success: false, message };
+  }
+
+  if (!response.headers.get('content-type')?.includes('application/pdf')) {
+    return { success: false, message: 'The API returned an unexpected PDF response.' };
+  }
+  return { success: true, pdf: await response.blob() };
+}

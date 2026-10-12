@@ -1,5 +1,7 @@
 'use client';
 
+import { LoadingState } from '@/components/LoadingState';
+
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { CalendarPanel } from '@/components/CalendarPanel';
@@ -56,7 +58,7 @@ export function DashboardMode3View() {
     [interviews]
   );
 
-  if (loading) return <div className="text-muted">Loading operations dashboard…</div>;
+  if (loading) return <LoadingState label="Loading operations dashboard…" />;
   if (!stats) return <div className="text-muted">Could not load operations dashboard.</div>;
 
   const bid = stats.bidSummary || { today: 0, week: 0, month: 0 };

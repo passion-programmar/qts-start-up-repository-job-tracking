@@ -1,5 +1,7 @@
 'use client';
 
+import { LoadingState } from '@/components/LoadingState';
+
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { useAuth } from '@/components/AuthProvider';
@@ -62,7 +64,7 @@ export function NewSchemaCategoriesView() {
         </form>
       )}
       <div className="card">
-        {loading ? <div className="text-muted">Loading…</div> : (
+        {loading ? <LoadingState label="Loading…" /> : (
           <div className="table-scroll"><table>
             <thead><tr><th>Category</th>{user?.role === 'super' && <th />}</tr></thead>
             <tbody>{categories.map((category) => (

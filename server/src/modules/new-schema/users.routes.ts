@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { Router, Response } from 'express';
+import { raw, Router, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
-import { execute, queryAll, queryOne } from '../../database/connection';
+import { execute, queryAll, queryOne, withTransaction } from '../../database/connection';
 import {
   NewSchemaAuthRequest,
   requireNewSchemaAuth,
@@ -19,8 +19,46 @@ const staffCreateSchema = z.object({
   role: z.enum(['admin', 'manager', 'caller']),
 });
 
-const accountProfileSchema = z.object({
-  name: z.string().trim().min(1).max(200),
+const educationSchema = z.object({
+  school: z.string().trim().min(1).max(300),
+  qualification: z.string().trim().min(1).max(200),
+  fieldOfStudy: z.string().trim().max(200).nullable(),
+  startDate: z.string().date().nullable(),
+  endDate: z.string().date().nullable(),
+  description: z.string().trim().max(2000).nullable(),
+});
+
+const workExperienceSchema = z.object({
+  employer: z.string().trim().min(1).max(300),
+  jobTitle: z.string().trim().min(1).max(300),
+  location: z.string().trim().max(300).nullable(),
+  startDate: z.string().date().nullable(),
+  endDate: z.string().date().nullable(),
+  currentRole: z.boolean(),
+  description: z.string().trim().max(3000).nullable(),
+});
+
+const accountCustomFieldSchema = z.object({
+  fieldName: z.string().trim().min(1).max(100),
+  value: z.string().trim().min(1).max(4000),
+}).strict();
+
+const accountCustomAnswerSchema = z.object({
+  topic: z.string().trim().min(1).max(100),
+  question: z.string().trim().min(1).max(1000),
+  answer: z.string().trim().min(1).max(4000),
+}).strict();
+
+const accountApplicationProfileSchema = z.object({
+  firstName: z.string().trim().min(1).max(100),
+  lastName: z.string().trim().max(100).default(''),
+  education: z.array(educationSchema).max(20).default([]),
+  workExperience: z.array(workExperienceSchema).max(30).default([]),
+  customFields: z.array(accountCustomFieldSchema).max(100).default([]),
+  customAnswers: z.array(accountCustomAnswerSchema).max(100).default([]),
+});
+
+const accountProfileSchema = accountApplicationProfileSchema.extend({
   email: z.string().email(),
   address: z.string().trim().min(1).max(500),
   sex: z.string().trim().min(1).max(50),
@@ -37,18 +75,34 @@ const staffUpdateSchema = z.object({
   temporaryPassword: z.string().min(4).max(200).optional(),
 });
 
-const accountUpdateSchema = accountProfileSchema.partial().extend({
-  name: z.string().trim().min(1).max(200).optional(),
-});
+const accountUpdateSchema = accountProfileSchema.partial();
 
 const staffColumns = `
   u_id, username, name, role, parent_user_id, (blocked_date IS NULL) AS is_active,
   blocked_date, must_change_password
 `;
 const accountColumns = `
-  u_id, username, name, role, parent_user_id, email, address, sex,
-  birthday, phone, country, city, category_id, blocked_date
+  u.u_id, u.username, u.name, u.role, u.parent_user_id, u.email, u.address, u.sex,
+  u.birthday, u.phone, u.country, u.city, u.category_id, u.blocked_date,
+  app.first_name, app.last_name, app.education, app.work_experience, app.custom_fields,
+  COALESCE((
+    SELECT jsonb_agg(jsonb_build_object(
+      'topic', answer.topic, 'question', answer.question, 'answer', answer.answer
+    ) ORDER BY answer.custom_answer_id)
+    FROM account_custom_application_answers answer
+    WHERE answer.account_user_id = u.u_id
+  ), '[]'::jsonb) AS custom_answers,
+  (app.resume_content IS NOT NULL) AS has_resume, app.resume_file_name
 `;
+
+function accountSelect(where: string): string {
+  return `SELECT ${accountColumns}
+          FROM users u
+          LEFT JOIN account_application_profiles app ON app.account_user_id = u.u_id
+          ${where}`;
+}
+
+const validResumeUpload = raw({ type: 'application/pdf', limit: '4mb' });
 
 function canCreateRole(actorRole: UserRole, targetRole: UserRole): boolean {
   if (actorRole === 'super') return targetRole === 'admin';
@@ -126,16 +180,13 @@ router.get('/accounts', async (req: NewSchemaAuthRequest, res: Response) => {
     return;
   }
   const query = actor.role === 'super'
-    ? `SELECT ${accountColumns} FROM users WHERE role = 'account' ORDER BY name ASC`
+    ? accountSelect(`WHERE u.role = 'account' ORDER BY u.name ASC`)
     : actor.role === 'admin'
-      ? `SELECT ${accountColumns} FROM users
-         WHERE role = 'account' AND parent_user_id IN (
+      ? accountSelect(`WHERE u.role = 'account' AND u.parent_user_id IN (
            SELECT u_id FROM users WHERE role = 'manager' AND parent_user_id = $1
          )
-         ORDER BY name ASC`
-      : `SELECT ${accountColumns} FROM users
-         WHERE role = 'account' AND parent_user_id = $1
-         ORDER BY name ASC`;
+         ORDER BY u.name ASC`)
+      : accountSelect(`WHERE u.role = 'account' AND u.parent_user_id = $1 ORDER BY u.name ASC`);
   const accounts = await queryAll(query, actor.role === 'super' ? [] : [actor.id]);
   res.json({ success: true, accounts });
 });
@@ -164,22 +215,41 @@ router.post('/', async (req: NewSchemaAuthRequest, res: Response) => {
       return;
     }
     const username = `account-${randomUUID()}`;
-    const row = await queryOne<{ u_id: number }>(
-      `INSERT INTO users (
-        username, name, role, password_hash, parent_user_id,
-        email, address, sex, birthday, phone, country, city, category_id
-      ) VALUES ($1, $2, 'account', NULL, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-      RETURNING u_id`,
-      [
-        username, data.name, actor.id, data.email, data.address, data.sex,
-        data.birthday, data.phone, data.country, data.city, data.categoryId,
-      ]
-    );
-    const account = await queryOne(
-      `SELECT ${accountColumns} FROM users WHERE u_id = $1`,
-      [row!.u_id]
-    );
-    logger.info('New-schema Account profile created', { id: row!.u_id, managerId: actor.id });
+    const row = await withTransaction(async (tx) => {
+      const result = await tx.query(
+        `INSERT INTO users (
+          username, name, role, password_hash, parent_user_id,
+          email, address, sex, birthday, phone, country, city, category_id
+        ) VALUES ($1, $2, 'account', NULL, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        RETURNING u_id`,
+        [
+          username, [data.firstName, data.lastName].filter(Boolean).join(' '), actor.id, data.email, data.address, data.sex,
+          data.birthday, data.phone, data.country, data.city, data.categoryId,
+        ]
+      );
+      const created = result.rows[0] as { u_id: number };
+      await tx.query(
+        `INSERT INTO account_application_profiles (
+          account_user_id, first_name, last_name, education, work_experience, custom_fields
+        ) VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb)`,
+        [
+          created.u_id, data.firstName, data.lastName,
+          JSON.stringify(data.education), JSON.stringify(data.workExperience),
+          JSON.stringify(data.customFields),
+        ]
+      );
+      for (const answer of data.customAnswers) {
+        await tx.query(
+          `INSERT INTO account_custom_application_answers (
+            account_user_id, topic, question, answer
+          ) VALUES ($1, $2, $3, $4)`,
+          [created.u_id, answer.topic, answer.question, answer.answer]
+        );
+      }
+      return created;
+    });
+    const account = await queryOne(accountSelect('WHERE u.u_id = $1'), [row.u_id]);
+    logger.info('New-schema Account profile created', { id: row.u_id, managerId: actor.id });
     res.status(201).json({ success: true, account });
     return;
   }
@@ -234,8 +304,7 @@ router.put('/:id', async (req: NewSchemaAuthRequest, res: Response) => {
     const data = parsed.data;
     const assignments: string[] = [];
     const values: unknown[] = [];
-    const columns: Record<keyof typeof data, string> = {
-      name: 'name',
+    const columns: Record<string, string> = {
       email: 'email',
       address: 'address',
       sex: 'sex',
@@ -262,9 +331,61 @@ router.put('/:id', async (req: NewSchemaAuthRequest, res: Response) => {
         return;
       }
     }
-    values.push(userId);
-    await execute(`UPDATE users SET ${assignments.join(', ')} WHERE u_id = $${values.length}`, values);
-    const account = await queryOne(`SELECT ${accountColumns} FROM users WHERE u_id = $1`, [userId]);
+    const currentProfile = await queryOne<{
+      first_name: string; last_name: string; education: unknown; work_experience: unknown; custom_fields: unknown;
+    }>(
+      'SELECT first_name, last_name, education, work_experience, custom_fields FROM account_application_profiles WHERE account_user_id = $1',
+      [userId]
+    );
+    const firstName = data.firstName ?? currentProfile?.first_name;
+    const lastName = data.lastName ?? currentProfile?.last_name;
+    if (!firstName) {
+      res.status(400).json({ success: false, message: 'Enter the Account’s first name.' });
+      return;
+    }
+    await withTransaction(async (tx) => {
+      if (data.firstName !== undefined || data.lastName !== undefined) {
+        assignments.push(`name = $${values.length + 1}`);
+        values.push([firstName, lastName].filter(Boolean).join(' '));
+      }
+      if (assignments.length) {
+        values.push(userId);
+        await tx.query(`UPDATE users SET ${assignments.join(', ')} WHERE u_id = $${values.length}`, values);
+      }
+      await tx.query(
+        `INSERT INTO account_application_profiles (
+          account_user_id, first_name, last_name, education, work_experience, custom_fields
+        ) VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb)
+        ON CONFLICT (account_user_id) DO UPDATE SET
+          first_name = EXCLUDED.first_name,
+          last_name = EXCLUDED.last_name,
+          education = EXCLUDED.education,
+          work_experience = EXCLUDED.work_experience,
+          custom_fields = EXCLUDED.custom_fields,
+          updated_date = NOW()`,
+        [
+          userId, firstName, lastName,
+          JSON.stringify(data.education ?? currentProfile?.education ?? []),
+          JSON.stringify(data.workExperience ?? currentProfile?.work_experience ?? []),
+          JSON.stringify(data.customFields ?? currentProfile?.custom_fields ?? []),
+        ]
+      );
+      if (data.customAnswers !== undefined) {
+        await tx.query(
+          'DELETE FROM account_custom_application_answers WHERE account_user_id = $1',
+          [userId]
+        );
+        for (const answer of data.customAnswers) {
+          await tx.query(
+            `INSERT INTO account_custom_application_answers (
+              account_user_id, topic, question, answer
+            ) VALUES ($1, $2, $3, $4)`,
+            [userId, answer.topic, answer.question, answer.answer]
+          );
+        }
+      }
+    });
+    const account = await queryOne(accountSelect('WHERE u.u_id = $1'), [userId]);
     res.json({ success: true, account });
     return;
   }
@@ -304,6 +425,92 @@ router.put('/:id', async (req: NewSchemaAuthRequest, res: Response) => {
   await execute(`UPDATE users SET ${assignments.join(', ')} WHERE u_id = $${values.length}`, values);
   const user = await queryOne(`SELECT ${staffColumns} FROM users WHERE u_id = $1`, [userId]);
   res.json({ success: true, user });
+});
+
+async function canManageAccountApplicationProfile(
+  req: NewSchemaAuthRequest,
+  accountId: number
+): Promise<boolean> {
+  const actor = req.newSchemaUser!;
+  if (actor.role !== 'manager' && actor.role !== 'super') return false;
+  const account = await queryOne<{ parent_user_id: number }>(
+    "SELECT parent_user_id FROM users WHERE u_id = $1 AND role = 'account'",
+    [accountId]
+  );
+  if (!account) return false;
+  return actor.role === 'super' || account.parent_user_id === actor.id;
+}
+
+router.put('/:id/resume', validResumeUpload, async (req: NewSchemaAuthRequest, res: Response) => {
+  const accountId = Number.parseInt(req.params.id, 10);
+  if (!Number.isSafeInteger(accountId) || accountId <= 0 || !(await canManageAccountApplicationProfile(req, accountId))) {
+    res.status(404).json({ success: false, message: 'Account profile not found.' });
+    return;
+  }
+  if (!Buffer.isBuffer(req.body) || req.body.length === 0 || !req.body.subarray(0, 5).equals(Buffer.from('%PDF-'))) {
+    res.status(400).json({ success: false, message: 'Upload a valid PDF resume (maximum 4 MB).' });
+    return;
+  }
+  const encodedFileName = String(req.headers['x-resume-filename'] || 'resume.pdf');
+  let rawFileName: string;
+  try {
+    rawFileName = decodeURIComponent(encodedFileName);
+  } catch {
+    res.status(400).json({ success: false, message: 'Provide a valid resume filename.' });
+    return;
+  }
+  const fileName = rawFileName.replace(/[\/\\\r\n"]/g, '_').trim().slice(0, 200) || 'resume.pdf';
+  await execute(
+    `UPDATE account_application_profiles
+     SET resume_file_name = $1, resume_content = $2, updated_date = NOW()
+     WHERE account_user_id = $3`,
+    [fileName, req.body, accountId]
+  );
+  res.json({ success: true, fileName });
+});
+
+router.get('/:id/resume', async (req: NewSchemaAuthRequest, res: Response) => {
+  const accountId = Number.parseInt(req.params.id, 10);
+  if (!Number.isSafeInteger(accountId) || accountId <= 0 || !(await canManageAccountApplicationProfile(req, accountId))) {
+    res.status(404).json({ success: false, message: 'Account profile not found.' });
+    return;
+  }
+  const resume = await queryOne<{ resume_file_name: string; resume_content: Buffer }>(
+    `SELECT app.resume_file_name, app.resume_content
+     FROM account_application_profiles app
+     WHERE app.account_user_id = $1 AND app.resume_content IS NOT NULL`,
+    [accountId]
+  );
+  if (!resume) {
+    res.status(404).json({ success: false, message: 'No resume is saved for this Account.' });
+    return;
+  }
+  const safeFileName = resume.resume_file_name.replace(/[\/\\\r\n"]/g, '_');
+  const asciiFileName = safeFileName.replace(/[^\x20-\x7E]/g, '_');
+  const encodedFileName = encodeURIComponent(safeFileName).replace(/['()*]/g, (character) =>
+    `%${character.charCodeAt(0).toString(16).toUpperCase()}`
+  );
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader(
+    'Content-Disposition',
+    `attachment; filename="${asciiFileName}"; filename*=UTF-8''${encodedFileName}`
+  );
+  res.send(resume.resume_content);
+});
+
+router.delete('/:id/resume', async (req: NewSchemaAuthRequest, res: Response) => {
+  const accountId = Number.parseInt(req.params.id, 10);
+  if (!Number.isSafeInteger(accountId) || accountId <= 0 || !(await canManageAccountApplicationProfile(req, accountId))) {
+    res.status(404).json({ success: false, message: 'Account profile not found.' });
+    return;
+  }
+  await execute(
+    `UPDATE account_application_profiles
+     SET resume_file_name = NULL, resume_content = NULL, updated_date = NOW()
+     WHERE account_user_id = $1`,
+    [accountId]
+  );
+  res.json({ success: true });
 });
 
 router.patch('/:id/block', async (req: NewSchemaAuthRequest, res: Response) => {
@@ -350,6 +557,14 @@ router.delete('/:id', async (req: NewSchemaAuthRequest, res: Response) => {
     return;
   }
   if (target.role === 'account') {
+    const assignedJobs = await queryOne<{ count: number }>(
+      'SELECT COUNT(*)::int AS count FROM job_account_assignments WHERE account_user_id = $1',
+      [userId]
+    );
+    if (Number(assignedJobs?.count ?? 0) > 0) {
+      res.status(409).json({ success: false, message: 'Remove this Account from its todo job rows before deleting it. Non-todo job rows are retained as history.' });
+      return;
+    }
     const bids = await queryOne<{ count: number }>(
       'SELECT COUNT(*)::int AS count FROM bids WHERE u_id = $1',
       [userId]
@@ -358,10 +573,6 @@ router.delete('/:id', async (req: NewSchemaAuthRequest, res: Response) => {
       res.status(409).json({ success: false, message: 'This Account has bid history and cannot be deleted.' });
       return;
     }
-    await execute(
-      'UPDATE job_list SET selected_account_u_ids = array_remove(selected_account_u_ids, $1)',
-      [userId]
-    );
   } else if (target.role === 'manager') {
     const jobs = await queryOne<{ count: number }>(
       'SELECT COUNT(*)::int AS count FROM job_list WHERE u_id = $1',

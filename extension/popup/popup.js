@@ -7,12 +7,15 @@ let managerTeams = [];
 let managerJobAccounts = [];
 let jobCategories = [];
 let selectedJobAccountIds = new Set();
+let existingJobAccountIds = new Set();
 let hasManuallyChangedJobAccounts = false;
 let jobAssignmentOptionsPromise = null;
 let candidateStatuses = {};
 let candidateAppliedAt = {};
 let candidateLocked = {};
 let existingJobId = null;
+let scannerSetupPending = false;
+let scannerSelectedAccountId = null;
 let currentTabUrl = '';
 let currentSource = '';
 let targetTabId = null;
@@ -20,6 +23,7 @@ let sourceWindowId = null;
 let jobSavedInBackend = false;
 let currentUser = null;
 let candidateStacks = [];
+let managerCustomGptAssigned = false;
 const expandedCandidateIds = new Set();
 let activeApplicationId = null;
 let activeTaskId = null;
@@ -43,7 +47,7 @@ const DEFAULT_CANDIDATE_KEY = 'qtsDefaultCandidateByAccount';
 const LEGACY_DEFAULT_CANDIDATE_KEY = 'qtsDefaultCandidateByBidder';
 const AUTO_APPLY_ENABLED_KEY = 'qtsAutoApplyEnabled';
 const SELECTED_ACTION_KEY = 'qtsSelectedAction';
-const ACTION_BUTTON_IDS = ['btn-get-jd', 'btn-apply', 'btn-custom-apply'];
+const ACTION_BUTTON_IDS = ['btn-get-jd', 'btn-custom-apply'];
 
 function updateSelectedAction(actionId) {
   for (const buttonId of ACTION_BUTTON_IDS) {
@@ -176,6 +180,911 @@ function getQueryTabId() {
   if (!raw) return null;
   const tabId = parseInt(raw, 10);
   return Number.isFinite(tabId) ? tabId : null;
+}
+
+async function scanAndSaveSiteDiscoveryStep() {
+  const button = document.getElementById('btn-discover-site-step');
+  const status = document.getElementById('site-discovery-status');
+  if (button) button.disabled = true;
+  const isManagerScanner = currentUser?.role === 'manager';
+  if (status) status.textContent = isManagerScanner
+    ? 'Scanning the current application step…'
+    : 'Scanning the current page read-only…';
+
+  try {
+    if (!targetTabId) {
+      const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+      targetTabId = activeTab?.id || null;
+    }
+    if (!targetTabId) throw new Error('No source tab is selected. Open the application step and retry.');
+
+    if (isManagerScanner) {
+      await prepareManagerScannerJob(targetTabId, status);
+      return;
+    }
+
+    const response = await chrome.runtime.sendMessage({
+      type: 'DISCOVER_APPLICATION_FORM',
+      tabId: targetTabId,
+      openApplyForm: false,
+      expandDynamic: false,
+      mode: 'DISCOVERY',
+      readOnly: true,
+    });
+    if (!response?.success) {
+      throw new Error(response?.error || 'The current page could not be scanned.');
+    }
+
+    const stepCount = response.templateSave?.checkpoint?.steps?.length || 1;
+    if (!response.templateSave?.success) {
+      const error = response.templateSave?.message || 'Template checkpoint could not be persisted.';
+      if (status) status.textContent = `Scanned ${response.discovery?.fields?.length || 0} field(s), but saving failed: ${error}`;
+      return;
+    }
+
+    const fieldCount = response.discovery?.fields?.length || 0;
+    const reused = response.templateReuse?.found
+      ? ` Existing ${response.templateReuse.status} template was rechecked with the generic scanner.`
+      : '';
+    const lookupWarning = response.templateLookupError
+      ? ` Template lookup warning: ${response.templateLookupError}`
+      : '';
+    if (status) {
+      status.textContent = `Saved structural checkpoint: ${stepCount} observed step(s), ${fieldCount} field(s) on this page. No values or DOM were saved; no page action was activated.${reused}${lookupWarning}`;
+    }
+  } catch (error) {
+    if (status) status.textContent = error?.message || 'Could not scan and save this discovery step.';
+    if (isManagerScanner) {
+      scannerSetupPending = false;
+      scannerSelectedAccountId = null;
+      document.getElementById('btn-save-and-scan')?.classList.add('hidden');
+      const saveStatus = document.getElementById('scanner-save-status');
+      if (saveStatus) {
+        saveStatus.classList.remove('hidden');
+        saveStatus.textContent = error?.message || 'Could not prepare Scanner.';
+      }
+    }
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+function scannerSemanticKey(question) {
+  return String(question || '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .slice(0, 100);
+}
+
+function scannerAccountProfileChoices(account) {
+  const choices = [
+    ['profile.first_name', 'First name', account.first_name],
+    ['profile.last_name', 'Last name', account.last_name],
+    ['profile.email', 'Email', account.email],
+    ['profile.phone', 'Phone', account.phone],
+    ['profile.address', 'Address', account.address],
+    ['profile.city', 'City', account.city],
+    ['profile.country', 'Country', account.country],
+    ['profile.sex', 'Sex', account.sex],
+    ['profile.birthday', 'Date of birth', account.birthday],
+  ];
+  const customAnswers = Array.isArray(account.custom_answers) ? account.custom_answers : [];
+  customAnswers.forEach((item, index) => {
+    if (!item || typeof item !== 'object' || !item.answer) return;
+    choices.push([
+      `account_custom:${String(item.topic || index).slice(0, 80)}`,
+      `Account Q&A: ${String(item.question || item.topic || 'Saved answer').slice(0, 90)}`,
+      item.answer,
+    ]);
+  });
+  return choices;
+}
+
+function scannerResolveProfileValue(account, profileFieldKey) {
+  if (!profileFieldKey) return '';
+  if (profileFieldKey.startsWith('profile.')) {
+    const field = profileFieldKey.slice('profile.'.length);
+    const value = account[field];
+    return value == null || typeof value === 'object' ? '' : String(value);
+  }
+  if (profileFieldKey.startsWith('account_custom:')) {
+    const topic = profileFieldKey.slice('account_custom:'.length);
+    const match = (Array.isArray(account.custom_answers) ? account.custom_answers : [])
+      .find((entry) => String(entry?.topic || '') === topic);
+    return typeof match?.answer === 'string' ? match.answer : '';
+  }
+  return '';
+}
+
+function scannerFieldSnapshot(field) {
+  const capture = field.scannerCapture || {};
+  return {
+    fieldType: String(field.fieldType || 'unknown'),
+    required: Boolean(field.required),
+    options: Array.isArray(field.options) ? field.options.map((item) => String(item).slice(0, 300)).slice(0, 100) : [],
+    section: String(field.sectionHeading || '').slice(0, 200),
+    selectorHints: window.__qtsScannerCapture?.captureEvidence(field)?.selectorHints || {},
+    domEvidence: window.__qtsScannerCapture?.captureEvidence(field)?.domEvidence || null,
+    captureCount: Number(capture.captureCount || 1),
+    captureVerified: capture.captureVerified === true,
+    managerReviewed: capture.managerReviewed === true,
+    observations: Array.isArray(capture.observations) ? capture.observations : [],
+    fieldSnapshots: Array.isArray(capture.fieldSnapshots) ? capture.fieldSnapshots : [],
+  };
+}
+
+function scannerRuleChanged(rule, field) {
+  const oldQuestion = String(rule.question || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  const newQuestion = String(field.label || field.question || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  const oldSnapshot = rule.field_snapshot || {};
+  const newSnapshot = scannerFieldSnapshot(field);
+  const evidenceChanges = window.__qtsScannerCapture.meaningfulFieldChanges({
+    label: rule.question,
+    fieldType: oldSnapshot.fieldType,
+    required: oldSnapshot.required,
+    options: oldSnapshot.options,
+    sectionHeading: oldSnapshot.section,
+    selectorHints: oldSnapshot.selectorHints,
+    domEvidence: oldSnapshot.domEvidence,
+  }, field).changes;
+  const locatorChanged = evidenceChanges.some((change) => (
+    oldSnapshot.domEvidence || !['DOM structure', 'class-based locator evidence'].includes(change)
+  ));
+  return oldQuestion !== newQuestion
+    || String(oldSnapshot.fieldType || '') !== newSnapshot.fieldType
+    || Boolean(oldSnapshot.required) !== newSnapshot.required
+    || JSON.stringify(oldSnapshot.options || []) !== JSON.stringify(newSnapshot.options)
+    || String(oldSnapshot.section || '') !== newSnapshot.section
+    || locatorChanged;
+}
+
+function scannerDescribeCaptureField(field) {
+  if (!field) return '(field not observed)';
+  const hints = field.selectorHints || {};
+  const classes = (field.domEvidence?.control?.classNames || []).join(' ') || '(none)';
+  return [
+    `Question: ${field.label || '(no label)'}`,
+    `Type: ${field.fieldType || 'unknown'}; required: ${Boolean(field.required)}`,
+    `Locator: ${hints.name ? `name=${hints.name}` : ''}${hints.id ? ` id=${hints.id}` : ''}${hints.testId ? ` testId=${hints.testId}` : ''}`.trim(),
+    `Control classes (weak evidence): ${classes}`,
+  ].join('\n');
+}
+
+async function verifyManagerScannerCapture(tabId, fields, rules, statusElement) {
+  const scannerCapture = window.__qtsScannerCapture;
+  if (!scannerCapture) throw new Error('Scanner capture reconciliation helper is unavailable.');
+  if (!scannerCapture.requiresSecondCapture(fields, rules)) {
+    return { fields, outcomes: [], evidenceFields: [], verifiedSecondCapture: false };
+  }
+
+  if (statusElement) statusElement.textContent = 'Verifying this step with a second settled DOM capture…';
+  const verification = await chrome.runtime.sendMessage({
+    type: 'CAPTURE_APPLICATION_STEP',
+    tabId,
+  });
+  if (!verification?.success || !verification.scan) {
+    throw new Error(verification?.error || 'Scanner’s second capture failed; no uncertain fields were used.');
+  }
+
+  const reconciliation = scannerCapture.reconcileCaptures(fields, verification.scan.fields || []);
+  const acceptedFields = [...reconciliation.fields];
+  const evidenceFields = [...reconciliation.fields];
+  const outcomes = [];
+  for (const discrepancy of reconciliation.discrepancies) {
+    if (discrepancy.kind === 'missing_on_second') {
+      evidenceFields.push({
+        ...discrepancy.first,
+        scannerCapture: {
+          captureCount: 2,
+          captureVerified: false,
+          managerReviewed: false,
+          observations: [scannerCapture.captureEvidence(discrepancy.first), null],
+          fieldSnapshots: [scannerCapture.captureFieldSnapshot(discrepancy.first), null],
+          issues: ['missing_on_second'],
+        },
+      });
+      window.alert(
+        `Scanner did not find this field in its second capture, so it will remain untouched:\n\n${scannerDescribeCaptureField(discrepancy.first)}`
+      );
+      outcomes.push(`${discrepancy.first?.label || 'A field'}: inconsistent between captures; left untouched.`);
+      continue;
+    }
+    if (discrepancy.kind === 'new_on_second') {
+      const field = discrepancy.second;
+      const reviewedField = scannerCapture.acceptReviewedObservation(field);
+      evidenceFields.push({
+        ...reviewedField,
+        scannerCapture: {
+          ...reviewedField.scannerCapture,
+          managerReviewed: false,
+          issues: ['new_on_second'],
+        },
+      });
+      const accept = window.confirm(
+        `This field appeared only in Scanner’s second capture. Review its evidence and confirm whether it is a real field on the current step:\n\n${scannerDescribeCaptureField(field)}\n\nUse this field for Scanner review?`
+      );
+      if (accept) {
+        const accepted = scannerCapture.acceptReviewedObservation(field);
+        acceptedFields.push(accepted);
+        evidenceFields[evidenceFields.length - 1] = accepted;
+      }
+      else outcomes.push(`${field?.label || 'A field'}: appeared in only one capture; left untouched.`);
+      continue;
+    }
+
+    const firstDescription = scannerDescribeCaptureField(discrepancy.first);
+    const secondDescription = scannerDescribeCaptureField(discrepancy.second);
+    const reviewedField = scannerCapture.acceptReviewedObservation(discrepancy.second, discrepancy.first);
+    evidenceFields.push({
+      ...reviewedField,
+      scannerCapture: {
+        ...reviewedField.scannerCapture,
+        managerReviewed: false,
+        issues: discrepancy.changes || ['changed_between_captures'],
+      },
+    });
+    const accept = window.confirm(
+      `Scanner captures disagree (${(discrepancy.changes || []).join(', ')}).\n\nFirst capture:\n${firstDescription}\n\nSecond capture:\n${secondDescription}\n\nUse the second capture for this step? If you choose No, this field remains untouched.`
+    );
+    if (accept) {
+      const accepted = scannerCapture.acceptReviewedObservation(discrepancy.second, discrepancy.first);
+      acceptedFields.push(accepted);
+      evidenceFields[evidenceFields.length - 1] = accepted;
+    }
+    else outcomes.push(`${discrepancy.second?.label || discrepancy.first?.label || 'A field'}: capture disagreement; left untouched.`);
+  }
+  return { fields: acceptedFields, outcomes, evidenceFields, verifiedSecondCapture: true };
+}
+
+function selectScannerAccountForJob() {
+  const accounts = managerJobAccounts.filter((account) => account && Number.isSafeInteger(Number(account.id)) && account.id > 0);
+  if (!accounts.length) throw new Error('No active Accounts are assigned to this Manager.');
+  const options = accounts.map((account, index) => (
+    `${index + 1}. ${account.name || `Account ${account.id}`}${account.username ? ` (${account.username})` : ''}`
+  ));
+  const answer = window.prompt(`Choose the Account for this application:\n${options.join('\n')}\n\nThe job will be saved for this Account and started for Scanner.`, '1');
+  if (answer == null) throw new Error('Scanner cancelled; no Account was selected.');
+  const selectedIndex = Number(answer) - 1;
+  if (!Number.isInteger(selectedIndex) || selectedIndex < 0 || selectedIndex >= accounts.length) {
+    throw new Error('Choose a valid Account number.');
+  }
+  return accounts[selectedIndex];
+}
+
+async function prepareManagerScannerJob(tabId, statusElement) {
+  if (currentUser?.role !== 'manager') throw new Error('Only Managers can start Scanner.');
+  await selectAction('btn-get-jd');
+  showJobSection();
+  const scanStatus = document.getElementById('scanner-save-status');
+  scanStatus?.classList.remove('hidden');
+  if (scanStatus) scanStatus.textContent = 'Loading job details using the Get JD flow…';
+  if (statusElement) statusElement.textContent = 'Loading job details using the Get JD flow…';
+  await loadCurrentTab({ preferCache: false, allowExtract: true });
+
+  const account = selectScannerAccountForJob();
+  scannerSelectedAccountId = Number(account.id);
+  selectedJobAccountIds = new Set([
+    ...existingJobAccountIds,
+    scannerSelectedAccountId,
+  ]);
+  hasManuallyChangedJobAccounts = true;
+  renderJobAccountGroups();
+  scannerSetupPending = true;
+
+  const scanButton = document.getElementById('btn-save-and-scan');
+  if (scanButton) {
+    scanButton.classList.remove('hidden');
+    scanButton.disabled = false;
+    scanButton.textContent = 'Save Job & Scan';
+  }
+  if (scanStatus) {
+    scanStatus.textContent = 'Review the extracted job details and selected Account, then choose Save Job & Scan to save the job and start this Account’s application row.';
+  }
+  if (statusElement) {
+    statusElement.textContent = 'Review the job details and Account assignment below, then click Save Job & Scan.';
+  }
+}
+
+async function saveJobAndStartScanner() {
+  const button = document.getElementById('btn-save-and-scan');
+  const status = document.getElementById('scanner-save-status');
+  if (!scannerSetupPending || !scannerSelectedAccountId) {
+    throw new Error('Scanner setup has expired. Click Scan current step again.');
+  }
+  if (button) button.disabled = true;
+  try {
+    const saveResult = await doSave();
+    if (!saveResult?.success || !saveResult.job) return;
+
+    const assignedRow = (saveResult.job.selected_accounts || []).find((item) => (
+      Number(item.account_user_id) === scannerSelectedAccountId
+    ));
+    if (!assignedRow?.job_id) {
+      throw new Error('The saved job response did not include the selected Account’s job row.');
+    }
+    if (saveResult.job.application_type === 'workable') {
+      throw new Error('Workable applications are read-only and cannot be started by Scanner.');
+    }
+
+    const account = managerJobAccounts.find((item) => item.id === scannerSelectedAccountId);
+    if (!account) throw new Error('The selected Account is no longer active for this Manager.');
+    let jobId = Number(assignedRow.job_id);
+    let applyRunId;
+    if (assignedRow.status === 'todo') {
+      if (!global.crypto?.randomUUID) throw new Error('Secure Apply run IDs are unavailable in this browser.');
+      applyRunId = global.crypto.randomUUID();
+    } else if (assignedRow.status === 'processing') {
+      const runStorageKey = `qtsScannerApplyRun:${scannerSelectedAccountId}:${jobId}`;
+      const storedRun = await chrome.storage.local.get(runStorageKey);
+      applyRunId = storedRun[runStorageKey];
+      if (typeof applyRunId !== 'string'
+        || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(applyRunId)) {
+        throw new Error('This Account row is already processing without a saved Scanner run. Resolve the active run before starting Scanner.');
+      }
+    } else {
+      throw new Error(`The selected Account’s job row is ${assignedRow.status}. Set it back to todo before starting Scanner.`);
+    }
+    const runStorageKey = `qtsScannerApplyRun:${scannerSelectedAccountId}:${jobId}`;
+    await chrome.storage.local.set({ [runStorageKey]: applyRunId });
+    const claim = await window.api.claimScannerJob({
+      jobId,
+      accountUserId: scannerSelectedAccountId,
+      applyRunId,
+      supportedTypes: [saveResult.job.application_type],
+    });
+    if (!claim.success || !claim.claimed || !claim.job?.id) {
+      throw new Error(claim.message || 'Could not start or resume the selected Account’s job row for Scanner.');
+    }
+    jobId = Number(claim.job.id);
+
+    const job = { ...saveResult.job, id: jobId, status: 'processing' };
+    scannerSetupPending = false;
+    if (button) button.classList.add('hidden');
+    if (status) status.textContent = 'Job saved and Account row started. Scanning the current application step…';
+    await runManagerScanner(targetTabId, status, account, job);
+  } finally {
+    if (button && scannerSetupPending) button.disabled = false;
+  }
+}
+
+function scannerTaskField(field, documentSlot) {
+  return {
+    stableFieldId: String(field.stableFieldId || field.fieldId || '').slice(0, 300),
+    label: String(field.label || field.question || 'Application field').slice(0, 1000),
+    fieldType: String(field.fieldType || 'text').slice(0, 100),
+    fieldKey: String(field.nameAttr || field.fieldKey || '').slice(0, 300) || undefined,
+    section: String(field.sectionHeading || '').slice(0, 200) || undefined,
+    ...(documentSlot ? { documentSlot } : {}),
+    required: Boolean(field.required),
+    options: Array.isArray(field.options) ? field.options.map((item) => String(item).slice(0, 500)).slice(0, 100) : [],
+    placeholder: String(field.placeholder || '').slice(0, 1000) || undefined,
+    currentValue: String(field.currentValue || '').slice(0, 5000) || undefined,
+    manualReview: true,
+  };
+}
+
+function scannerTaskPageMatches(existingPage, pageUrl, fields) {
+  if (!existingPage || existingPage.pageUrl !== pageUrl || !Array.isArray(existingPage.fields)) return false;
+  const projectFields = (items) => items
+    .map((field) => ({
+      stableFieldId: String(field.stableFieldId || ''),
+      label: String(field.label || ''),
+      fieldType: String(field.fieldType || ''),
+      documentSlot: field.documentSlot || null,
+      required: Boolean(field.required),
+      options: Array.isArray(field.options) ? field.options.map(String) : [],
+    }))
+    .sort((left, right) => left.stableFieldId.localeCompare(right.stableFieldId));
+  return JSON.stringify(projectFields(existingPage.fields)) === JSON.stringify(projectFields(fields));
+}
+
+function scannerFieldDocumentSlot(field) {
+  return inferFileDocumentType(field) === 'cover-letter' ? 'cover_letter' : 'resume';
+}
+
+async function reviewScannerDocument(documentFile, documentType, account, fieldQuestion) {
+  const dialog = document.getElementById('scanner-document-review');
+  const title = document.getElementById('scanner-document-review-title');
+  const description = document.getElementById('scanner-document-review-description');
+  const preview = document.getElementById('scanner-document-preview');
+  if (!dialog || !title || !description || !preview || typeof dialog.showModal !== 'function') {
+    throw new Error('Generated document review dialog is unavailable. Reload the extension and try again.');
+  }
+
+  const binary = atob(documentFile.base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  const previewUrl = URL.createObjectURL(new Blob([bytes], { type: documentFile.mimeType || 'application/pdf' }));
+  title.textContent = `Review generated ${documentType === 'cover_letter' ? 'cover letter' : 'resume'}`;
+  description.textContent = `${documentFile.fileName} for ${account.name || `Account ${account.u_id}`} — requested by: ${fieldQuestion}`;
+  preview.src = previewUrl;
+  dialog.returnValue = 'reject';
+
+  try {
+    const approved = await new Promise((resolve) => {
+      const onClose = () => {
+        dialog.removeEventListener('close', onClose);
+        resolve(dialog.returnValue === 'approve');
+      };
+      dialog.addEventListener('close', onClose);
+      try {
+        dialog.showModal();
+      } catch (error) {
+        dialog.removeEventListener('close', onClose);
+        throw error;
+      }
+    });
+    return approved;
+  } finally {
+    preview.removeAttribute('src');
+    setTimeout(() => URL.revokeObjectURL(previewUrl), 30000);
+  }
+}
+
+async function getScannerGptTaskResult(taskId, statusElement) {
+  const startedAt = Date.now();
+  const timeoutMs = 180000;
+  while (Date.now() - startedAt < timeoutMs) {
+    const response = await window.api.getManagerGptTaskStatus(taskId);
+    if (!response.success) throw new Error(response.message || 'Could not read the Scanner GPT task status.');
+    if (response.status === 'failed' || response.status === 'completed') {
+      throw new Error(`Scanner GPT task is ${response.status}; choose a different processing job row or restart it.`);
+    }
+    const packageData = response.package || {};
+    const submitted = Array.isArray(packageData.answers)
+      || Array.isArray(packageData.unresolvedFields)
+      || Boolean(packageData.documents?.resume)
+      || Boolean(packageData.documents?.coverLetter);
+    if (response.status === 'ready' || submitted) return response;
+    if (statusElement) statusElement.textContent = 'Waiting for Custom GPT to prepare answers and requested documents…';
+    await new Promise((resolve) => setTimeout(resolve, 2500));
+  }
+  throw new Error('Timed out waiting for Custom GPT. Check the assigned Custom GPT tab and try again.');
+}
+
+async function runManagerScannerGptTask({ job, account, tabId, generatedFields, documentFields, statusElement }) {
+  const pageFields = [
+    ...generatedFields.map((field) => scannerTaskField(field)),
+    ...documentFields.map((field) => scannerTaskField(field, scannerFieldDocumentSlot(field))),
+  ];
+  if (!pageFields.length) return { fillFields: [], outcomes: [] };
+  if (!window.__qtsCustomGpt?.buildPrompt) throw new Error('Custom GPT helper is not loaded.');
+  requireManagerCustomGpt();
+
+  const createResponse = await window.api.createManagerGptTaskForJob(job.id, {
+    sourcePlatform: job.application_type,
+    jobDescription: document.getElementById('f-desc')?.value?.trim() || undefined,
+  });
+  const activeTaskReturned = createResponse._httpStatus === 409 && Boolean(createResponse.taskId);
+  if ((!createResponse.success && !activeTaskReturned) || !createResponse.taskId) {
+    throw new Error(createResponse.message || 'Could not create a GPT task for the selected processing job row.');
+  }
+  const taskId = createResponse.taskId;
+  const currentTask = await window.api.getManagerGptTaskStatus(taskId);
+  if (!currentTask.success) throw new Error(currentTask.message || 'Could not verify the selected job’s GPT task.');
+
+  const tab = await chrome.tabs.get(tabId);
+  const pageUrl = String(tab?.url || '');
+  let normalizedPageUrl;
+  try {
+    normalizedPageUrl = new URL(pageUrl).href;
+  } catch {
+    throw new Error('Could not read the current application page URL for the GPT task.');
+  }
+  const samePage = scannerTaskPageMatches(currentTask.page, normalizedPageUrl, pageFields);
+  let result;
+  if (currentTask.status === 'waiting_for_gpt') {
+    if (!samePage) {
+      throw new Error('This job already has an active GPT request for a different page. Finish or review it before starting Scanner on another page.');
+    }
+    result = await getScannerGptTaskResult(taskId, statusElement);
+  } else if (currentTask.status === 'ready' && samePage) {
+    result = currentTask;
+  } else if (['waiting_for_page', 'ready'].includes(currentTask.status)) {
+    let jobDescription = String(
+      currentTask.jobContext?.jobDescription || document.getElementById('f-desc')?.value || ''
+    ).trim();
+    if (!jobDescription) {
+      jobDescription = (window.prompt(
+        `Enter or paste the job description for ${job.title || 'this job'} at ${job.company || 'the selected company'}. Custom GPT needs it to generate job-specific answers and documents.`
+      ) || '').trim();
+    }
+    if (!jobDescription) throw new Error('A job description is required for Generated Answers, resume, or cover-letter generation.');
+
+    const pageResponse = await window.api.setManagerGptTaskPage(taskId, {
+      pageUrl: normalizedPageUrl,
+      pageTitle: String(tab?.title || job.title || 'Application form').slice(0, 500),
+      pageNumber: Math.max(1, Number(currentTask.pageNumber || 0) + 1),
+      fields: pageFields,
+      jobDescription,
+    });
+    if (!pageResponse.success) throw new Error(pageResponse.message || 'Could not add the scanned fields to the GPT task.');
+
+    await chrome.storage.local.set({ qtsJobSourceTabId: tabId });
+    if (statusElement) statusElement.textContent = 'Sending this job’s confirmed Scanner fields to the assigned Custom GPT…';
+    const handoff = await sendGptTaskToBackground({
+      taskId,
+      jobTabId: tabId,
+      pollAndApply: false,
+    });
+    if (!handoff?.ok || handoff?.handoff?.sent === false) {
+      throw new Error(handoff?.handoff?.error || handoff?.error || 'Custom GPT handoff failed.');
+    }
+    result = await getScannerGptTaskResult(taskId, statusElement);
+  } else {
+    throw new Error(`The selected job’s GPT task is ${currentTask.status}; Scanner will not overwrite an active or closed task.`);
+  }
+
+  const answers = new Map(
+    (Array.isArray(result.package?.answers) ? result.package.answers : [])
+      .map((answer) => [String(answer.stableFieldId), String(answer.answer || '')])
+  );
+  const outcomes = [];
+  const fillFields = [];
+
+  for (const field of generatedFields) {
+    const fieldId = String(field.stableFieldId || field.fieldId || '');
+    const question = String(field.label || field.question || 'Application field').trim();
+    const generated = answers.get(fieldId);
+    if (!generated) {
+      outcomes.push(`${question}: GPT did not return an answer; left unresolved.`);
+      continue;
+    }
+    if (field.status !== 'matched') {
+      outcomes.push(`${question}: GPT answer is ready, but the field locator is uncertain; left unresolved.`);
+      continue;
+    }
+    if (String(field.currentValue || '').trim()
+      && !window.confirm(`This field already contains a value:\n${question}\n\nReplace it with this GPT answer?\n\n${generated}`)) {
+      outcomes.push(`${question}: kept existing page value.`);
+      continue;
+    }
+    const reviewed = window.prompt(`Review or edit the GPT answer for:\n${question}`, generated);
+    if (reviewed == null || !reviewed.trim()) {
+      outcomes.push(`${question}: GPT answer was not approved.`);
+      continue;
+    }
+    fillFields.push({ ...field, fillValue: reviewed.trim(), fillStatus: 'ready_to_fill' });
+    outcomes.push(`${question}: Manager-reviewed GPT answer queued.`);
+  }
+
+  const returnedDocuments = result.package?.documents || {};
+  for (const field of documentFields) {
+    const question = String(field.label || field.question || 'Document upload').trim();
+    const documentType = scannerFieldDocumentSlot(field);
+    const documentKey = documentType === 'cover_letter' ? 'coverLetter' : 'resume';
+    if (!returnedDocuments[documentKey]) {
+      outcomes.push(`${question}: GPT did not return the requested ${documentType === 'cover_letter' ? 'cover letter' : 'resume'}; left unresolved.`);
+      continue;
+    }
+    if (field.status !== 'matched') {
+      outcomes.push(`${question}: generated document is ready, but the upload field locator is uncertain; left unresolved.`);
+      continue;
+    }
+    if (String(field.currentValue || '').trim()
+      && !window.confirm(`This upload field already contains a file:\n${question}\n\nReplace it with the GPT-generated ${documentType === 'cover_letter' ? 'cover letter' : 'resume'}?`)) {
+      outcomes.push(`${question}: kept existing uploaded file.`);
+      continue;
+    }
+    const document = await window.api.fetchManagerGptTaskDocument(taskId, documentType);
+    if (!document.success) throw new Error(document.message || `Could not fetch the generated ${documentType} PDF.`);
+    const approved = await reviewScannerDocument(document, documentType, account, question);
+    if (!approved) {
+      outcomes.push(`${question}: generated document was not approved.`);
+      continue;
+    }
+    fillFields.push({
+      ...field,
+      category: 'document_upload',
+      fillStatus: 'filled',
+      fillValue: document.fileName,
+      upload: {
+        fileName: document.fileName,
+        mimeType: document.mimeType,
+        base64: document.base64,
+      },
+    });
+    outcomes.push(`${question}: Manager-approved generated document queued for upload.`);
+  }
+  return { fillFields, outcomes, taskId };
+}
+
+async function runManagerScanner(tabId, statusElement, account, job) {
+  const response = await chrome.runtime.sendMessage({
+    type: 'DISCOVER_APPLICATION_FORM',
+    tabId,
+    openApplyForm: false,
+    expandDynamic: false,
+    mode: 'DISCOVERY',
+    readOnly: true,
+  });
+  if (!response?.success) throw new Error(response?.error || 'The current application step could not be scanned.');
+
+  const templateId = Number(response.templateSave?.template?.id);
+  if (!response.templateSave?.success || !Number.isSafeInteger(templateId) || templateId <= 0) {
+    throw new Error(response.templateSave?.message || 'The site template could not be saved; no answer rules were changed.');
+  }
+
+  const rulesResponse = await window.api.getManagerScannerRules(templateId);
+  if (!rulesResponse.success) throw new Error(rulesResponse.message || 'Could not load this Manager’s Scanner rules.');
+  const rules = Array.isArray(rulesResponse.rules) ? rulesResponse.rules : [];
+  const rawDiscoveredFields = Array.isArray(response.scan?.fields) ? response.scan.fields : [];
+  const scannerStepKey = window.__qtsScannerCapture.deriveStepKey(rawDiscoveredFields);
+  const genericCheckpointFields = response.templateSave?.checkpoint?.steps
+    ?.find((step) => step.stepId === response.templateSave?.checkpoint?.currentStepId)?.fields || [];
+  const discoveredFields = rawDiscoveredFields.map((field) => ({
+    ...field,
+    scannerStepKey,
+    previousScannerCapture: genericCheckpointFields.find((savedField) => (
+      String(savedField.fieldId || '') === String(field.stableFieldId || '')
+    ))?.scannerCapture,
+  }));
+  const captureVerification = await verifyManagerScannerCapture(tabId, discoveredFields, rules, statusElement);
+  const fields = captureVerification.fields;
+  if (captureVerification.verifiedSecondCapture) {
+    const evidenceSave = await chrome.runtime.sendMessage({
+      type: 'SAVE_SCANNER_STEP_EVIDENCE',
+      tabId,
+      metadata: {
+        siteKey: response.discovery?.siteKey,
+        platform: response.discovery?.platform,
+        host: response.discovery?.host,
+        pageSignature: response.discovery?.pageSignature,
+        pageStep: response.scan?.pageStep,
+        pageUrl: response.scan?.pageUrl,
+      },
+      fields: captureVerification.evidenceFields.map((field) => ({
+        stableFieldId: field.stableFieldId,
+        label: field.label,
+        fieldType: field.fieldType,
+        required: Boolean(field.required),
+        options: Array.isArray(field.options) ? field.options.slice(0, 100) : [],
+        sectionHeading: field.sectionHeading,
+        matchMethod: field.matchMethod,
+        confidence: field.confidence,
+        status: field.status,
+        selectorHints: field.selectorHints,
+        domEvidence: field.domEvidence,
+        scannerCapture: field.scannerCapture,
+      })),
+    });
+    if (!evidenceSave?.success) {
+      throw new Error(evidenceSave?.message || 'Verified Scanner capture evidence could not be saved.');
+    }
+  }
+  if (!fields.length) {
+    throw new Error('No fields were consistently detected or confirmed on this step. Wait for the page to settle and scan again.');
+  }
+
+  const profileChoices = scannerAccountProfileChoices(account);
+  const profileLabel = account.name || `Account ${account.u_id}`;
+  const groupMap = new Map();
+  rules.forEach((rule) => {
+    const key = String(rule.semantic_key || '');
+    if (key && !groupMap.has(key)) groupMap.set(key, rule);
+  });
+
+  const fillFields = [];
+  const generatedFields = [];
+  const documentFields = [];
+  const outcomes = [...captureVerification.outcomes];
+  for (const field of fields) {
+    const fieldId = String(field.stableFieldId || field.fieldId || '');
+    const question = String(field.label || field.question || 'Application field').trim();
+    if (!fieldId) {
+      outcomes.push(`${question}: skipped (no stable field identifier).`);
+      continue;
+    }
+    if (field.fieldType === 'file') {
+      documentFields.push(field);
+      continue;
+    }
+
+    let rule = window.__qtsScannerCapture.findMatchingRule(field, rules);
+    let semanticKey = rule?.semantic_key || scannerSemanticKey(question);
+    let isNewRule = !rule;
+    let changed = Boolean(rule && scannerRuleChanged(rule, field));
+
+    if (isNewRule && groupMap.size) {
+      const groups = [...groupMap.entries()];
+      const groupList = groups.map(([key, item], index) => `${index + 1}. ${item.question} [${key}]`);
+      const groupAnswer = window.prompt(
+        `New field:\n${question}\n\nIf this means the same thing as an existing confirmed field, enter its number. Enter 0 to treat it as a new meaning.\n${groupList.join('\n')}`,
+        '0'
+      );
+      if (groupAnswer == null) {
+        outcomes.push(`${question}: left unresolved (decision cancelled).`);
+        continue;
+      }
+      const groupIndex = Number(groupAnswer) - 1;
+      if (groupAnswer !== '0' && (!Number.isInteger(groupIndex) || groupIndex < 0 || groupIndex >= groups.length)) {
+        outcomes.push(`${question}: left unresolved (invalid meaning selection).`);
+        continue;
+      }
+      if (groupAnswer !== '0') {
+        semanticKey = groups[groupIndex][0];
+        rule = groups[groupIndex][1];
+      }
+    }
+
+    if (changed) {
+      const sameMeaning = window.confirm(
+        `This saved field changed.\n\nSaved: ${rule.question}\nCurrent: ${question}\n\nField type/options/required state may also have changed.\n\nDo these still have the same meaning?`
+      );
+      if (!sameMeaning) {
+        rule = null;
+        isNewRule = true;
+        changed = false;
+        semanticKey = scannerSemanticKey(question);
+      }
+    }
+
+    let strategy = rule?.strategy || '';
+    if (isNewRule) {
+      const selected = window.prompt(
+        `Choose how to handle:\n${question}\n\n1 = Profile Answer (selected Account)\n2 = Reusable Answer (save Manager Q&A)\n3 = Generated Answer (GPT)\n4 = Manual / leave unresolved`,
+        '1'
+      );
+      if (selected == null || !['1', '2', '3', '4'].includes(selected.trim())) {
+        outcomes.push(`${question}: left unresolved (no answer strategy selected).`);
+        continue;
+      }
+      strategy = ({ '1': 'profile', '2': 'reusable', '3': 'generated', '4': 'manual' })[selected.trim()];
+    }
+
+    let profileFieldKey = rule?.profile_field_key || null;
+    let reusableAnswerId = rule?.reusable_answer_id == null ? null : Number(rule.reusable_answer_id);
+    let reusableAnswer = typeof rule?.reusable_answer === 'string' ? rule.reusable_answer : '';
+    let fillValue = '';
+
+    if (strategy === 'profile') {
+      if (isNewRule || !profileFieldKey) {
+        if (!profileChoices.length) {
+          outcomes.push(`${question}: no Account profile values are available; left unresolved.`);
+          continue;
+        }
+        const options = profileChoices.map(([key, label, value], index) =>
+          `${index + 1}. ${label}: ${String(value || '(not set)').slice(0, 100)}`
+        );
+        const selected = window.prompt(
+          `Map this question to a profile value for ${profileLabel}:\n${question}\n\n${options.join('\n')}\n\nEnter a number.`,
+          '1'
+        );
+        if (selected == null) {
+          outcomes.push(`${question}: left unresolved (profile mapping cancelled).`);
+          continue;
+        }
+        const choiceIndex = Number(selected) - 1;
+        if (!Number.isInteger(choiceIndex) || choiceIndex < 0 || choiceIndex >= profileChoices.length) {
+          outcomes.push(`${question}: left unresolved (invalid profile mapping).`);
+          continue;
+        }
+        profileFieldKey = profileChoices[choiceIndex][0];
+      }
+      fillValue = scannerResolveProfileValue(account, profileFieldKey);
+      if (!fillValue) {
+        fillValue = window.prompt(
+          `The selected Account profile has no value for this field:\n${question}\n\nEnter a value to use once for this application. It will not be saved to the profile or reusable answers.`
+        ) || '';
+      }
+    } else if (strategy === 'reusable') {
+      if (isNewRule || !reusableAnswer) {
+        reusableAnswer = window.prompt(
+          `Enter or confirm the reusable answer for:\n${question}\n\nThis will be saved to the Manager’s reusable Q&A for this semantic field.`
+        ) || '';
+      }
+      if (!reusableAnswer) {
+        outcomes.push(`${question}: left unresolved (reusable answer was not provided).`);
+        continue;
+      }
+    } else if (strategy === 'generated') {
+      generatedFields.push(field);
+    } else {
+      outcomes.push(`${question}: left for manual completion.`);
+    }
+
+    if (isNewRule || changed) {
+      const saveResult = await window.api.saveManagerScannerRule({
+        templateId,
+        fieldId: window.__qtsScannerCapture.getRuleFieldId(field, isNewRule ? null : rule),
+        semanticKey,
+        question,
+        strategy,
+        profileFieldKey: strategy === 'profile' ? profileFieldKey : null,
+        reusableAnswerId: strategy === 'reusable' ? reusableAnswerId : null,
+        reusableAnswer: strategy === 'reusable' && !reusableAnswerId ? reusableAnswer : null,
+        context: {
+          section: String(field.sectionHeading || '').slice(0, 300),
+          pageStep: String(field.pageStep || '').slice(0, 300),
+          stepKey: String(field.scannerStepKey || '').slice(0, 80),
+        },
+        fieldSnapshot: scannerFieldSnapshot(field),
+      });
+      if (!saveResult.success) {
+        throw new Error(saveResult.message || `Could not save Scanner decision for "${question}".`);
+      }
+      rule = saveResult.rule;
+      if (strategy === 'reusable' && !reusableAnswerId) {
+        reusableAnswerId = Number(rule?.reusable_answer_id);
+      }
+    } else if (rule && field.scannerCapture) {
+      const evidenceResult = await window.api.updateManagerScannerRuleEvidence({
+        templateId,
+        fieldId: String(rule.field_id),
+        fieldSnapshot: scannerFieldSnapshot(field),
+      });
+      if (!evidenceResult.success) {
+        throw new Error(evidenceResult.message || `Could not save verified locator evidence for "${question}".`);
+      }
+    }
+
+    if (!['profile', 'reusable'].includes(strategy) || !fillValue && strategy === 'profile') {
+      if (strategy === 'profile') outcomes.push(`${question}: profile value unavailable; used no persistent fallback.`);
+      continue;
+    }
+    if (strategy === 'reusable' && !fillValue) fillValue = reusableAnswer;
+    if (!fillValue) continue;
+    if (String(field.currentValue || '').trim()) {
+      const overwrite = window.confirm(
+        `This field already contains a value:\n${question}\n\nReplace it with the confirmed ${strategy === 'profile' ? 'Account profile' : 'reusable'} answer?`
+      );
+      if (!overwrite) {
+        outcomes.push(`${question}: kept existing page value.`);
+        continue;
+      }
+    }
+    if (field.status !== 'matched') {
+      outcomes.push(`${question}: mapping confirmed but field locator is uncertain; left unresolved.`);
+      continue;
+    }
+    fillFields.push({
+      ...field,
+      fillValue,
+      fillStatus: 'ready_to_fill',
+    });
+    outcomes.push(`${question}: queued from ${strategy === 'profile' ? 'Account profile' : 'reusable answer'}.`);
+  }
+
+  const gptResult = await runManagerScannerGptTask({
+    job,
+    account,
+    tabId,
+    generatedFields,
+    documentFields,
+    statusElement,
+  });
+  fillFields.push(...gptResult.fillFields);
+  outcomes.push(...gptResult.outcomes);
+
+  let fillSummary = 'No fields were filled.';
+  if (fillFields.length) {
+    const fillResponse = await chrome.runtime.sendMessage({
+      type: 'FILL_APPLICATION_FORM',
+      tabId,
+      fields: fillFields,
+      mode: 'REAL_APPLICATION',
+      allowUserApprovedFill: true,
+    });
+    if (fillResponse?.error || fillResponse?.success === false) {
+      throw new Error(fillResponse?.error || 'Confirmed Scanner answers could not be applied.');
+    }
+    const results = fillResponse?.fill?.results || [];
+    const filled = results.filter((item) => item.ok).length;
+    const failed = results.length - filled;
+    fillSummary = `Filled ${filled} field(s); ${failed} could not be filled.`;
+  }
+  if (gptResult.taskId) {
+    const acknowledgeResponse = await window.api.acknowledgeManagerGptTaskPage(gptResult.taskId);
+    if (!acknowledgeResponse.success) {
+      throw new Error(acknowledgeResponse.message || 'The reviewed GPT page could not be acknowledged for this job.');
+    }
+  }
+  if (statusElement) {
+    statusElement.textContent = `Job: ${job.title || 'Untitled job'} — ${profileLabel}. ${fillSummary} ${outcomes.join(' ')}`;
+  }
 }
 
 function settleGptDispatchWaiter(msg) {
@@ -457,27 +1366,36 @@ document.addEventListener('DOMContentLoaded', async () => {
       hideLoading();
     });
   });
-  document.getElementById('btn-apply').addEventListener('click', async () => {
-    try {
-      await selectAction('btn-apply');
-    } catch (e) {
-      showAlert('main-alert', e?.message || 'Could not save selected action.', 'error');
-      return;
-    }
-    const candidateId = defaultCandidateId || readSelectedDefaultCandidateId();
-    if (!candidateId) {
-      showAlert('main-alert', 'Choose a default candidate before applying.', 'error');
-      return;
-    }
-    startApplication(candidateId).catch((e) => {
-      showAlert('main-alert', e?.message || 'Could not start application.', 'error');
+  document.getElementById('btn-discover-site-step')?.addEventListener('click', () => {
+    scanAndSaveSiteDiscoveryStep();
+  });
+  document.getElementById('btn-save-and-scan')?.addEventListener('click', () => {
+    saveJobAndStartScanner().catch((error) => {
+      const status = document.getElementById('site-discovery-status');
+      if (status) status.textContent = error?.message || 'Could not save and start Scanner.';
+      const saveStatus = document.getElementById('scanner-save-status');
+      if (saveStatus) {
+        saveStatus.classList.remove('hidden');
+        saveStatus.textContent = error?.message || 'Could not save and start Scanner.';
+      }
+      const button = document.getElementById('btn-save-and-scan');
+      if (button && scannerSetupPending) button.disabled = false;
     });
   });
   document.getElementById('btn-custom-apply').addEventListener('click', async () => {
     try {
+      if (currentUser?.role === 'manager') {
+        throw new Error('Managers apply through the assigned job list using the Apply button.');
+      }
       await selectAction('btn-custom-apply');
     } catch (e) {
       showAlert('main-alert', e?.message || 'Could not save selected action.', 'error');
+      return;
+    }
+    try {
+      requireManagerCustomGpt();
+    } catch (e) {
+      showAlert('main-alert', e?.message || 'Contact your Admin for a Custom GPT assignment.', 'warn');
       return;
     }
     dispatchGptTask(activeApplicationId, { pollAndApply: true }).catch((e) => {
@@ -510,12 +1428,24 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
   document.getElementById('btn-open-custom-gpt')?.addEventListener('click', () => {
+    try {
+      requireManagerCustomGpt();
+    } catch (e) {
+      showAlert('main-alert', e?.message || 'Contact your Admin for a Custom GPT assignment.', 'warn');
+      return;
+    }
     dispatchGptTask(activeApplicationId, { pollAndApply: true }).catch((e) => {
       console.error('dispatchGptTask error:', e);
       showAlert('main-alert', e?.message || 'Could not send task to Custom GPT.', 'error');
     });
   });
   document.getElementById('btn-apply-gpt-package')?.addEventListener('click', () => {
+    try {
+      requireManagerCustomGpt();
+    } catch (e) {
+      showAlert('main-alert', e?.message || 'Contact your Admin for a Custom GPT assignment.', 'warn');
+      return;
+    }
     chrome.runtime.sendMessage({
       type: 'APPLY_GPT_PACKAGE_TO_TAB',
       applicationId: activeApplicationId,
@@ -702,6 +1632,11 @@ async function bootstrapPopupFast() {
       name: user.name,
       role: user.role,
     };
+    const assignedGpt = await window.api.getAssignedCustomGpt();
+    if (!assignedGpt.success) {
+      throw new Error(assignedGpt.message || 'Could not check the Custom GPT assigned by your Admin.');
+    }
+    await applyWorkspaceCustomGpt(assignedGpt.customGpt, sessionUser);
     await storeSessionUser(sessionUser);
     await resumeSelectedMode(sessionUser);
   } finally {
@@ -812,7 +1747,7 @@ async function handleGetJdUrlStatus(tabId, url) {
   if (status.job.status === 'failed') {
     await showPageNotice(
       tabId,
-      'The previous attempt did not succeed. You can try applying again.',
+      'This application did not succeed. You can try applying again.',
       'warn'
     );
   }
@@ -917,6 +1852,9 @@ async function readAutoApplyEnabled() {
 }
 
 async function setAutoApplyEnabled(enabled) {
+  if (enabled && !managerCustomGptAssigned) {
+    throw new Error('No Custom GPT is assigned to your Manager account. Contact your Admin.');
+  }
   await new Promise((resolve) => {
     chrome.storage.local.set({ [AUTO_APPLY_ENABLED_KEY]: Boolean(enabled) }, resolve);
   });
@@ -1028,19 +1966,24 @@ async function selectManagerTeam() {
       showAlert('login-alert', workspace.message || 'Could not load that Account team.', 'error');
       return;
     }
+    const assignedGpt = await window.api.getAssignedCustomGpt();
+    if (!assignedGpt.success) {
+      throw new Error(assignedGpt.message || 'Could not check the Custom GPT assigned by your Admin.');
+    }
     managerTeams = workspace.teams || managerTeams;
     const sessionSnapshot = workspace.user;
     await global.__qtsAccountAuth.storePopupAuth(workspace.token, sessionSnapshot, workspace.expiresAt);
     window.api.setCachedToken(workspace.token);
     await storeSessionUser(sessionSnapshot);
     applyCandidatesData(workspace.candidates || [], workspace.stacks || []);
-    if (workspace.customGpt) await applyWorkspaceCustomGpt(workspace.customGpt, sessionSnapshot);
+    await applyWorkspaceCustomGpt(assignedGpt.customGpt, sessionSnapshot);
     await writeCandidateCache(workspace.candidates || [], workspace.stacks || [], sessionSnapshot);
     document.getElementById('login-team-step')?.classList.add('hidden');
-    document.getElementById('login-candidate-fields')?.classList.remove('hidden');
+    document.getElementById('login-candidate-step')?.classList.add('hidden');
+    document.getElementById('login-candidate-fields')?.classList.add('hidden');
     setSession(sessionSnapshot);
-    defaultCandidateId = await readDefaultCandidateId(sessionSnapshot.accountId);
-    await showDefaultCandidateStep(sessionSnapshot);
+    defaultCandidateId = null;
+    await showActionScreen(sessionSnapshot);
   } finally {
     hideLoading();
   }
@@ -1119,6 +2062,10 @@ async function continueToActionScreen() {
   if (!user || !isAccountSession(user)) {
     throw new Error('Sign in first.');
   }
+  if (user.role === 'manager') {
+    await showActionScreen(user);
+    return;
+  }
   const select = document.getElementById('login-default-candidate');
   const candidateId = parseInt(select?.value, 10);
   if (!Number.isFinite(candidateId) || !isValidDefaultCandidateId(candidateId)) {
@@ -1130,9 +2077,13 @@ async function continueToActionScreen() {
 }
 
 async function toggleAutoApplyFromPopup() {
+  requireManagerCustomGpt();
   const user = currentUser || await readSessionUser();
   if (!user || !isAccountSession(user)) {
     throw new Error('Sign in first.');
+  }
+  if (user.role === 'manager') {
+    throw new Error('Managers apply through the assigned job list using the Apply button.');
   }
   if (!(await readAutoApplyEnabled())) {
     const select = document.getElementById('main-default-candidate');
@@ -1158,6 +2109,10 @@ function updateAutoApplyBarUi() {
   const statusEl = document.getElementById('auto-apply-status');
   const toggleBtn = document.getElementById('btn-toggle-auto-apply');
   if (!bar || !statusEl || !toggleBtn) return;
+  if (currentUser?.role === 'manager') {
+    bar.classList.add('hidden');
+    return;
+  }
 
   readAutoApplyEnabled().then((enabled) => {
     bar.classList.remove('hidden');
@@ -1203,6 +2158,13 @@ function updateDefaultCandidateUi() {
   const quickBtn = document.getElementById('btn-start-default-candidate');
   const mainSelect = document.getElementById('main-default-candidate');
   const def = getDefaultCandidate();
+  const managerMode = currentUser?.role === 'manager';
+  mainSelect?.classList.toggle('hidden', managerMode || !candidates.length);
+  quickBtn?.classList.toggle('hidden', managerMode);
+  document.getElementById('cand-list')?.classList.toggle('hidden', managerMode);
+  document.getElementById('cand-empty')?.classList.toggle('hidden', managerMode);
+  document.querySelector('.cand-header')?.classList.toggle('hidden', managerMode);
+  if (managerMode) return;
 
   if (mainSelect) {
     if (candidates.length) {
@@ -1225,6 +2187,10 @@ function updateDefaultCandidateUi() {
 }
 
 async function startApplicationWithDefault() {
+  if (currentUser?.role === 'manager') {
+    throw new Error('Managers apply through the assigned job list using the Apply button.');
+  }
+  requireManagerCustomGpt();
   const def = getDefaultCandidate();
   if (!def) {
     throw new Error('Choose a default candidate on the login screen or from the Candidates dropdown.');
@@ -1237,6 +2203,10 @@ async function startApplicationWithDefault() {
 
 async function ensureWorkspaceReady(user) {
   if (!user || !isAccountSession(user)) return false;
+  if (user.role === 'manager') {
+    defaultCandidateId = null;
+    return true;
+  }
   if (await needsDefaultCandidateSelection(user)) {
     await showDefaultCandidateStep(user);
     return false;
@@ -1326,6 +2296,11 @@ async function doLogin() {
       };
       await global.__qtsAccountAuth.storePopupAuth(r.token, sessionSnapshot, r.expiresAt);
       window.api.setCachedToken(r.token);
+      const assignedGpt = await window.api.getAssignedCustomGpt();
+      if (!assignedGpt.success) {
+        throw new Error(assignedGpt.message || 'Could not check the Custom GPT assigned by your Admin.');
+      }
+      await applyWorkspaceCustomGpt(assignedGpt.customGpt, sessionSnapshot);
       document.getElementById('login-pass').value = '';
       clearAlert('login-alert');
       await showActionScreen(sessionSnapshot);
@@ -1372,6 +2347,7 @@ async function switchSourceTab(tabId) {
   window.history.replaceState(null, '', url.toString());
   document.getElementById('main-alert').innerHTML = '';
   existingJobId = null;
+  existingJobAccountIds.clear();
   jobSavedInBackend = false;
   selectedJobAccountIds.clear();
   hasManuallyChangedJobAccounts = false;
@@ -1406,13 +2382,34 @@ function applyCandidatesData(nextCandidates, nextStacks) {
 }
 
 async function applyWorkspaceCustomGpt(customGpt, user) {
-  if (!customGpt?.url || !global.__qtsCustomGpt?.persistCustomGptConfig) return;
-  await global.__qtsCustomGpt.persistCustomGptConfig({
-    url: customGpt.url,
-    id: customGpt.id,
-    source: customGpt.source || 'account',
-    accountId: user?.accountId ?? null,
+  managerCustomGptAssigned = Boolean(customGpt?.url);
+  if (managerCustomGptAssigned) {
+    await global.__qtsCustomGpt?.persistCustomGptConfig?.({
+      url: customGpt.url,
+      id: customGpt.id,
+      source: customGpt.source || 'super_assignment',
+      accountId: user?.accountId ?? null,
+    });
+  } else {
+    await new Promise((resolve) => {
+      chrome.storage.local.remove(['qtsCustomGptConfig', 'qtsCustomGptTabId'], resolve);
+    });
+    global.__qtsCustomGpt?.applyCustomGptConfig?.(null);
+    await new Promise((resolve) => {
+      chrome.storage.local.remove([AUTO_APPLY_ENABLED_KEY], resolve);
+    });
+    await chrome.runtime.sendMessage({ type: 'RESET_AUTO_PIPELINE_STATE' }).catch(() => {});
+  }
+  await chrome.runtime.sendMessage({
+    type: 'SET_CUSTOM_GPT_CONFIG',
+    customGpt: managerCustomGptAssigned ? customGpt : null,
   });
+}
+
+function requireManagerCustomGpt() {
+  if (!managerCustomGptAssigned) {
+    throw new Error('No Custom GPT is assigned to your Manager account. Contact your Admin.');
+  }
 }
 
 async function fetchWorkspaceFromApi() {
@@ -1464,6 +2461,16 @@ async function fetchWorkspaceData(forceRefresh = false) {
   const workspace = await fetchWorkspaceFromApi();
   if (!workspace.success) return workspace;
 
+  if (workspace.user?.role === 'manager') {
+    const assignedGpt = await window.api.getAssignedCustomGpt();
+    if (!assignedGpt.success) {
+      return {
+        success: false,
+        message: assignedGpt.message || 'Could not check the Custom GPT assigned by your Admin.',
+      };
+    }
+    workspace.customGpt = assignedGpt.customGpt || null;
+  }
   managerTeams = workspace.teams || managerTeams;
   lastWorkspaceFetchAt = Date.now();
   applyCandidatesData(workspace.candidates, workspace.stacks);
@@ -1568,6 +2575,7 @@ async function clearSessionUser() {
 }
 
 async function clearAuthState() {
+  managerCustomGptAssigned = false;
   await clearToken();
   await global.__qtsAccountAuth?.clearAuth?.();
   await clearCandidateCache();
@@ -1824,10 +2832,9 @@ async function findSavedJobByUrls(urls, { cacheOnly = false, skipCache = false, 
 
 async function fetchJobByUrl(url) {
   try {
-    const response = await window.api.getJobs();
+    const response = await window.api.checkJobByUrl(url);
     if (!response.success) throw new Error(response.message || 'Could not check the Job List.');
-    const targetKey = normalizeJobUrl(url);
-    return (response.jobs || []).find((job) => normalizeJobUrl(job.url) === targetKey) || null;
+    return response.job || null;
   } catch (e) {
     console.warn('fetchJobByUrl error:', e);
     throw e;
@@ -1892,11 +2899,12 @@ function populateForm(data) {
 function loadExistingJob(job, { silent = false } = {}) {
   existingJobId = job.id;
   jobSavedInBackend = true;
-  selectedJobAccountIds = new Set(
+  existingJobAccountIds = new Set(
     (job.selected_account_u_ids || job.selectedAccountUserIds || [])
       .map(Number)
       .filter((id) => Number.isSafeInteger(id) && id > 0)
   );
+  selectedJobAccountIds = new Set(existingJobAccountIds);
   document.getElementById('f-title').value = job.title || '';
   document.getElementById('f-company').value = job.company || '';
   document.getElementById('f-url').value = job.url || '';
@@ -2253,6 +3261,7 @@ async function copyTextToClipboard(text) {
 }
 
 async function dispatchGptTask(applicationId, { pollAndApply = false, taskId: explicitTaskId } = {}) {
+  requireManagerCustomGpt();
   const gpt = window.__qtsCustomGpt;
   if (!gpt?.buildPrompt) {
     throw new Error('Custom GPT helper not loaded.');
@@ -2369,6 +3378,7 @@ async function buildFileUploadFields(applicationId, fields) {
 }
 
 async function applyGptAnswersToForm(applicationId, { skipPreview = false } = {}) {
+  requireManagerCustomGpt();
   const id = Number(applicationId);
   if (!id) throw new Error('No application session to apply.');
 
@@ -3106,6 +4116,9 @@ async function refreshApplicationStatus() {
       lastGptTaskStatus = taskStatus;
     }
     renderApplicationStatus(result, taskStatus?.success ? taskStatus : null);
+    if (global.__qtsLearningReviewPanel?.refresh) {
+      await global.__qtsLearningReviewPanel.refresh(activeApplicationId);
+    }
     if (lastDevCapture) {
       renderDevCaptureDebug(buildDevCaptureFromWorkflow({
         applicationId: activeApplicationId,
@@ -3149,6 +4162,7 @@ function prewarmCustomGptTab() {
 }
 
 async function startApplication(candidateId) {
+  requireManagerCustomGpt();
   const candidate = candidates.find((c) => Number(c.id) === Number(candidateId));
   if (!candidate) {
     showAlert('main-alert', 'Candidate not found.', 'error');
@@ -3186,6 +4200,8 @@ async function startApplication(candidateId) {
       tabId: targetTabId,
       openApplyForm: true,
       expandDynamic: false,
+      mode: 'REAL_APPLICATION',
+      readOnly: true,
     });
 
     if (discoverResponse?.error) {
@@ -3202,6 +4218,22 @@ async function startApplication(candidateId) {
     const discovery = discoverResponse.discovery || {};
     const scanMeta = discoverResponse.scan || discovery.scanMeta || {};
     const scannedFields = discoverResponse.scan?.fields || discovery.fields || [];
+    const templateNotices = [];
+    if (discoverResponse.templateSave) {
+      if (discoverResponse.templateSave.success) {
+        const savedSteps = discoverResponse.templateSave.checkpoint?.steps?.length || 1;
+        templateNotices.push(`Discovery checkpoint saved (${savedSteps} observed step(s)).`);
+      } else {
+        templateNotices.push(`Template draft was not saved: ${discoverResponse.templateSave.message || 'unknown persistence error'}`);
+      }
+    }
+    if (discoverResponse.templateLookupError) {
+      templateNotices.push(`Template lookup failed; generic scan was used: ${discoverResponse.templateLookupError}`);
+    }
+    if (discoverResponse.templateReuse?.found) {
+      templateNotices.push(`A ${discoverResponse.templateReuse.status} template was checked against this page; the generic scan remains authoritative.`);
+    }
+    const templateNotice = templateNotices.length ? ` ${templateNotices.join(' ')}` : '';
 
     if (discovery.flowType === 'external_redirect' && discovery.externalUrl) {
       showAlert(
@@ -3217,22 +4249,24 @@ async function startApplication(candidateId) {
       if (applyFlow?.clicked && applyFlow?.formAppeared === false) {
         showAlert(
           'main-alert',
-          'Clicked Apply but no application form appeared. Open the job page, click Apply to show the form, then try Start Application again.',
+          `Clicked Apply but no application form appeared. Open the job page, click Apply to show the form, then try Start Application again.${templateNotice}`,
           'warn'
         );
       } else if (applyFlow?.reason === 'no_apply_button') {
         showAlert(
           'main-alert',
-          'No Apply button found on this page. Open the application form manually and try again.',
+          `No Apply button found on this page. Open the application form manually and try again.${templateNotice}`,
           'warn'
         );
       } else {
-        showAlert('main-alert', 'No application fields detected on this page. Open the apply form and try again.', 'warn');
+        showAlert('main-alert', `No application fields detected on this page. Open the apply form and try again.${templateNotice}`, 'warn');
       }
       return;
     }
 
     showLoading('Creating application session…');
+    const templateVersion = discovery.templateVersion || 'legacy-v1';
+    const pageFingerprint = discovery.pageSignature || scanMeta.pageSignature || null;
     const sessionRes = await window.api.createApplicationSession({
       candidateId,
       jobId: existingJobId || null,
@@ -3241,10 +4275,16 @@ async function startApplication(candidateId) {
       company: company || null,
       jobDescription,
       platform: detectPlatformFromUrl(jobUrl),
+      templateVersion,
+      pageFingerprint,
+      mode: 'REAL_APPLICATION',
       currentStep: 'scan',
       metadata: {
         sourceTabId: targetTabId,
         extensionVersion: chrome.runtime.getManifest().version,
+        templateVersion,
+        pageFingerprint,
+        mode: 'REAL_APPLICATION',
       },
     });
 
@@ -3335,6 +4375,8 @@ async function startApplication(candidateId) {
       type: 'FILL_APPLICATION_FORM',
       tabId: targetTabId,
       fields: fillableFields,
+      mode: 'REAL_APPLICATION',
+      allowUserApprovedFill: true,
     });
 
     const fillResults = fillResponse?.fill?.results || [];
@@ -3373,6 +4415,9 @@ async function startApplication(candidateId) {
         ...page,
         flowType: discovery.flowType,
       })),
+      templateVersion: discovery.templateVersion || 'legacy-v1',
+      pageFingerprint: discovery.pageSignature || scanMeta.pageSignature || null,
+      mode: 'REAL_APPLICATION',
       status: 'awaiting_ai',
     });
 
@@ -3429,21 +4474,21 @@ async function startApplication(candidateId) {
       } catch (e) {
         showAlert(
           'main-alert',
-          `Session #${activeApplicationId} saved, but Custom GPT handoff failed: ${e?.message || e}. Use "Send PROCESS_TASK".`,
+          `Session #${activeApplicationId} saved, but Custom GPT handoff failed: ${e?.message || e}. Use "Send PROCESS_TASK".${templateNotice}`,
           'warn'
         );
       }
     } else if (pendingCount > 0) {
       showAlert(
         'main-alert',
-        `Session #${activeApplicationId}: ${filledCount} filled, ${pendingCount} field(s) still pending.`,
+        `Session #${activeApplicationId}: ${filledCount} filled, ${pendingCount} field(s) still pending.${templateNotice}`,
         'warn'
       );
     } else {
       showAlert(
         'main-alert',
-        `Session #${activeApplicationId}: filled ${filledCount}. No AI questions on this page.`,
-        'success'
+        `Session #${activeApplicationId}: filled ${filledCount}. No AI questions on this page.${templateNotice}`,
+        discoverResponse.templateSave?.success === false || discoverResponse.templateLookupError ? 'warn' : 'success'
       );
     }
   } finally {
@@ -3461,14 +4506,14 @@ async function doSave() {
   if (!title) { showFieldError('err-title'); valid = false; }
   if (!company) { showFieldError('err-company'); valid = false; }
   if (!url) { showFieldError('err-url'); valid = false; }
-  if (!valid) return;
+  if (!valid) return { success: false };
 
   let assignments;
   try {
     assignments = getSelectedJobAssignments();
   } catch (error) {
     showAlert('main-alert', error.message || 'Select at least one Account for this job.', 'warn');
-    return;
+    return { success: false };
   }
 
   const payload = {
@@ -3479,36 +4524,69 @@ async function doSave() {
   };
 
   const saveBtn = document.getElementById('btn-save');
-  const wasUpdate = !!existingJobId;
+  let wasUpdate = !!existingJobId;
   const refreshBtn = document.getElementById('btn-refresh');
 
   showLoading(wasUpdate ? 'Updating job…' : 'Saving job…');
   try {
     saveBtn.disabled = true;
     if (refreshBtn) refreshBtn.disabled = true;
+    if (!wasUpdate) {
+      const checked = await window.api.checkJobByUrl(url);
+      if (!checked.success) throw new Error(checked.message || 'Could not check whether this job is already saved.');
+      if (checked.job) {
+        const selectedBeforeLookup = new Set(assignments.selectedAccountUserIds);
+        loadExistingJob(checked.job, { silent: true });
+        selectedJobAccountIds = selectedBeforeLookup;
+        const newAccountCount = [...selectedBeforeLookup]
+          .filter((accountId) => !existingJobAccountIds.has(accountId)).length;
+        wasUpdate = true;
+        if (newAccountCount > 0 && !window.confirm(
+          `This job is already in your list. Add it for ${newAccountCount} additional Account${newAccountCount === 1 ? '' : 's'}?`
+        )) {
+          return { success: false };
+        }
+      }
+    } else {
+      const newAccountCount = assignments.selectedAccountUserIds
+        .filter((accountId) => !existingJobAccountIds.has(accountId)).length;
+      if (newAccountCount > 0 && !window.confirm(
+        `This job is already in your list. Add it for ${newAccountCount} additional Account${newAccountCount === 1 ? '' : 's'}?`
+      )) {
+        return { success: false };
+      }
+    }
     const r = wasUpdate
       ? await window.api.updateJob(existingJobId, payload)
       : await window.api.createJob(payload);
 
     if (r.success) {
-      showAlert('main-alert', wasUpdate ? 'Job updated!' : 'Job saved!', 'success');
+      showAlert(
+        'main-alert',
+        r.message || (wasUpdate ? 'Job and Account rows updated!' : 'Job saved for selected Accounts!'),
+        r.message ? 'warn' : 'success'
+      );
       if (r.job) {
         existingJobId = r.job.id;
         jobSavedInBackend = true;
-        selectedJobAccountIds = new Set(
+        existingJobAccountIds = new Set(
           (r.job.selected_account_u_ids || assignments.selectedAccountUserIds).map(Number)
         );
+        selectedJobAccountIds = new Set(existingJobAccountIds);
         renderJobAccountGroups();
         currentSource = r.job.source || currentSource;
         updateJobSummary();
       }
       saveBtn.textContent = 'Update Job';
+      return { success: true, job: r.job };
     } else {
       showAlert('main-alert', formatApiError(r), 'error');
+      return { success: false };
     }
   } catch (e) {
     console.error('doSave error:', e);
     showAlert('main-alert', e?.message || 'Could not save the job to your Job List.', 'error');
+    return { success: false };
   } finally {
     saveBtn.disabled = false;
     if (refreshBtn) refreshBtn.disabled = false;
@@ -3524,6 +4602,7 @@ async function doRefresh() {
   if (saveBtn) saveBtn.disabled = true;
   try {
     existingJobId = null;
+    existingJobAccountIds.clear();
     jobSavedInBackend = false;
     candidateStatuses = {};
     candidateAppliedAt = {};
@@ -3559,6 +4638,23 @@ function showLogin() {
 async function showActionScreen(user) {
   await restoreSelectedAction();
   setSession(user);
+  scannerSetupPending = false;
+  scannerSelectedAccountId = null;
+  document.getElementById('btn-save-and-scan')?.classList.add('hidden');
+  const scannerSaveStatus = document.getElementById('scanner-save-status');
+  scannerSaveStatus?.classList.add('hidden');
+  if (scannerSaveStatus) scannerSaveStatus.textContent = '';
+  const managerMode = user?.role === 'manager';
+  document.getElementById('btn-custom-apply')?.classList.toggle('hidden', managerMode);
+  document.getElementById('application-disabled-note')?.classList.toggle('hidden', !managerMode);
+  const subtitle = document.querySelector('.action-subtitle');
+  if (subtitle) {
+    subtitle.textContent = managerMode
+      ? 'Get JD saves a job to your Manager job list. Scanner can save a job and start one Account row for a confirmed, manual-review application assist.'
+      : 'Select an action for the current job page.';
+  }
+  updateDefaultCandidateUi();
+  updateAutoApplyBarUi();
   document.getElementById('session-bar')?.classList.add('hidden');
   document.getElementById('login-section').classList.add('hidden');
   document.getElementById('action-section').classList.remove('hidden');

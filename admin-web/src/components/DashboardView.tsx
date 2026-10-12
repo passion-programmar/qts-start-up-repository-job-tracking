@@ -1,5 +1,7 @@
 'use client';
 
+import { LoadingState } from '@/components/LoadingState';
+
 import { useEffect, useState } from 'react';
 import { BidBars } from '@/components/BidBars';
 import { api } from '@/lib/api';
@@ -41,7 +43,7 @@ export function DashboardView() {
     return () => { cancelled = true; };
   }, []);
 
-  if (loading) return <div className="text-muted">Loading…</div>;
+  if (loading) return <LoadingState label="Loading…" />;
   if (!stats) return <div className="text-muted">Could not load dashboard.</div>;
 
   const bid = stats.bidSummary || { today: 0, week: 0, month: 0 };

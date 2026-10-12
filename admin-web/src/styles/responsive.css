@@ -1,5 +1,68 @@
 /* Mobile-first responsive layout */
 
+.loading-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 150px;
+  padding: 24px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.loading-state--inline {
+  min-height: 72px;
+  padding: 16px;
+}
+
+.loading-state--page {
+  position: absolute;
+  inset: 0;
+  z-index: 200;
+  min-height: 0;
+  background: rgba(245, 247, 250, 0.88);
+  backdrop-filter: blur(3px);
+  cursor: wait;
+}
+
+.loading-state__spinner {
+  position: relative;
+  display: inline-block;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  border: 3px solid rgba(22, 119, 255, 0.16);
+  border-top-color: var(--primary);
+  border-right-color: var(--accent);
+  border-radius: 50%;
+  animation: loading-state-spin 0.85s linear infinite;
+}
+
+.loading-state__spinner::after {
+  position: absolute;
+  inset: 5px;
+  border: 2px solid transparent;
+  border-bottom-color: var(--primary-light);
+  border-radius: 50%;
+  content: '';
+  animation: loading-state-spin 1.2s linear infinite reverse;
+}
+
+@keyframes loading-state-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loading-state__spinner,
+  .loading-state__spinner::after {
+    animation-duration: 2.5s;
+  }
+}
+
 /* ── Modals ───────────────────────────────────────────── */
 .modal-overlay {
   padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right))
@@ -314,7 +377,9 @@ td.text-right {
 
 .sidebar-nav {
   min-height: 0;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: thin;
 }
 
 .sidebar-nav .nav-item {
@@ -567,22 +632,31 @@ td.text-right {
     padding: 16px 24px;
   }
 
-  .menu-btn,
   .sidebar-close,
   .sidebar-backdrop {
     display: none;
   }
 
+  .menu-btn {
+    display: inline-flex;
+  }
+
   .sidebar {
-    position: static;
-    inset: auto;
+    position: sticky;
+    top: 0;
+    align-self: flex-start;
     z-index: auto;
     width: 220px;
     height: 100dvh;
     overflow: hidden;
     transform: none;
-    transition: none;
+    transition: width 0.22s ease;
     box-shadow: none;
+  }
+
+  .sidebar-collapsed .sidebar {
+    width: 0;
+    border-right-width: 0;
   }
 
   .sidebar-brand {
@@ -599,5 +673,73 @@ td.text-right {
   .calendar-cell {
     min-height: 72px;
     padding: 6px;
+  }
+}
+
+/* Responsive QA targets: 360, 480, 768, 1024, and 1440 CSS pixels. */
+@media (max-width: 359px) {
+  .content {
+    padding-right: 10px;
+    padding-left: 10px;
+  }
+
+  .topbar h1 {
+    font-size: 16px;
+  }
+
+  .stats-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+  }
+}
+
+@media (min-width: 480px) and (max-width: 767px) {
+  .content {
+    padding-right: 18px;
+    padding-left: 18px;
+  }
+
+  .stats-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1023px) {
+  .sidebar {
+    width: 200px;
+  }
+
+  .content {
+    padding: 20px;
+  }
+
+  .topbar {
+    padding-right: 20px;
+    padding-left: 20px;
+  }
+}
+
+@media (min-width: 1024px) and (max-width: 1439px) {
+  .sidebar {
+    width: 220px;
+  }
+
+  .content {
+    padding: 24px;
+  }
+}
+
+@media (min-width: 1440px) {
+  .sidebar {
+    width: 240px;
+  }
+
+  .content {
+    padding: 28px clamp(28px, 2.2vw, 40px);
+  }
+
+  .topbar {
+    padding-right: clamp(28px, 2.2vw, 40px);
+    padding-left: clamp(28px, 2.2vw, 40px);
   }
 }

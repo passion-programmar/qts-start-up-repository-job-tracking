@@ -125,13 +125,19 @@ export interface NewSchemaJob {
   id: number;
   manager_id: number;
   url: string;
+  application_type: string;
   company: string;
   title: string;
   category_ids: number[];
+  /** Derived API compatibility field; assignments are stored as relation rows. */
   selected_account_u_ids: number[];
+  selected_accounts: Array<{
+    account_user_id: number;
+    name: string;
+    status: 'processing' | 'todo' | 'did' | 'failed';
+  }>;
   status: 'processing' | 'todo' | 'did' | 'failed';
   get_date: string;
-  bid_count: number;
 }
 
 export interface NewSchemaAccountProfile {
@@ -146,6 +152,18 @@ export interface NewSchemaCategory {
   category_title: string;
 }
 
+export interface NewSchemaJobAccountStatus {
+  job_id: number;
+  job_title: string;
+  company: string;
+  url: string;
+  application_type: string;
+  status: 'processing' | 'todo' | 'did' | 'failed';
+  get_date: string;
+  account_user_id: number;
+  account_name: string;
+}
+
 export interface NewSchemaBid {
   b_id: number;
   account_user_id: number;
@@ -154,7 +172,6 @@ export interface NewSchemaBid {
   job_title: string;
   company: string;
   url: string;
-  status: 'processing' | 'todo' | 'did' | 'failed';
   resume_path: string | null;
   applied_date: string;
 }
@@ -181,7 +198,7 @@ export interface NewSchemaAnalytics {
   period: 'day' | 'week' | 'month' | 'year';
   bidsByPeriod: Array<{ bucket: string; count: number }>;
   interviewsByPeriod: Array<{ bucket: string; count: number }>;
-  bidsByStatus: Array<{ status: string; count: number }>;
+  jobsByStatus: Array<{ status: string; count: number }>;
   interviewsByOutcome: Array<{ outcome: string; count: number }>;
   byManager: Array<{
     manager_id: number;

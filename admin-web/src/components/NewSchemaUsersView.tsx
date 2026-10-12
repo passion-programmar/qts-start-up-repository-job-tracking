@@ -1,9 +1,12 @@
 'use client';
 
+import { LoadingState } from '@/components/LoadingState';
+
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '@/components/AuthProvider';
 import { Modal } from '@/components/Modal';
 import { api } from '@/lib/api';
+import { SuperCustomGptsView } from '@/components/SuperCustomGptsView';
 
 interface ManagedUser {
   u_id: number;
@@ -117,6 +120,7 @@ export function NewSchemaUsersView() {
 
   return (
     <>
+      {user?.role === 'super' && <SuperCustomGptsView />}
       {error && <div className="alert alert-error">{error}</div>}
       {message && <div className="alert alert-success">{message}</div>}
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
@@ -132,7 +136,7 @@ export function NewSchemaUsersView() {
         </button>
       </div>
       <div className="card">
-        {loading ? <div className="text-muted">Loading…</div> : (
+        {loading ? <LoadingState label="Loading…" /> : (
           <div className="table-scroll"><table>
             <thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Status</th><th>Password</th><th /></tr></thead>
             <tbody>{users.map((target) => {

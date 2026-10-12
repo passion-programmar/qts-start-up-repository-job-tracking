@@ -1,5 +1,7 @@
 'use client';
 
+import { LoadingState } from '@/components/LoadingState';
+
 import { useCallback, useEffect, useState } from 'react';
 import { Modal } from '@/components/Modal';
 import { useAuth } from '@/components/AuthProvider';
@@ -140,7 +142,7 @@ export function InterviewsView() {
 
       <div className="card">
         {loading ? (
-          <div className="text-muted">Loading…</div>
+          <LoadingState label="Loading…" />
         ) : (
           <div className="table-scroll table-scroll--wide">
           <table>

@@ -1,5 +1,7 @@
 'use client';
 
+import { LoadingState } from '@/components/LoadingState';
+
 import { useEffect, useMemo, useState } from 'react';
 import { LineChart } from '@/components/LineChart';
 import { api } from '@/lib/api';
@@ -66,7 +68,7 @@ export function DashboardMode2View() {
 
   const interviewTrend = useMemo(() => groupInterviewsByDay(interviews), [interviews]);
 
-  if (loading) return <div className="text-muted">Loading analytics…</div>;
+  if (loading) return <LoadingState label="Loading analytics…" />;
   if (!stats) return <div className="text-muted">Could not load analytics dashboard.</div>;
 
   const bid = stats.bidSummary || { today: 0, week: 0, month: 0 };

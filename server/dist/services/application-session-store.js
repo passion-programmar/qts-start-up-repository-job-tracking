@@ -1,6 +1,8 @@
 "use strict";
 // In-memory apply session store (server-side). Extension mirror: extension/shared/apply-session-store.js
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.MEMORY_APPLICATION_SESSION_TTL_MS = void 0;
+exports.registerMemorySessionCleanupListener = registerMemorySessionCleanupListener;
 exports.readPublicTaskIdFromSession = readPublicTaskIdFromSession;
 exports.createMemoryApplicationSession = createMemoryApplicationSession;
 exports.getMemoryApplicationSession = getMemoryApplicationSession;
@@ -12,13 +14,17 @@ exports.updateMemorySessionField = updateMemorySessionField;
 exports.countMemoryPendingAiFields = countMemoryPendingAiFields;
 const application_task_id_1 = require("../modules/application-sessions/application-task-id");
 const normalize_url_1 = require("../utilities/normalize-url");
-const SESSION_TTL_MS = 4 * 60 * 60 * 1000;
+exports.MEMORY_APPLICATION_SESSION_TTL_MS = 4 * 60 * 60 * 1000;
 const CLEANUP_INTERVAL_MS = 15 * 60 * 1000;
 let nextSessionId = 1000000;
 let nextFieldId = 1;
 const sessionsById = new Map();
 const sessionIdByTaskId = new Map();
 const fieldsBySessionId = new Map();
+const sessionCleanupListeners = new Set();
+function registerMemorySessionCleanupListener(listener) {
+    sessionCleanupListeners.add(listener);
+}
 function nowIso() {
     return new Date().toISOString();
 }
@@ -27,7 +33,7 @@ function touchSession(session) {
     session.updated_at = nowIso();
 }
 function pruneExpiredSessions() {
-    const cutoff = Date.now() - SESSION_TTL_MS;
+    const cutoff = Date.now() - exports.MEMORY_APPLICATION_SESSION_TTL_MS;
     for (const [id, session] of sessionsById) {
         const last = Date.parse(session.last_activity_at || session.created_at);
         if (!Number.isFinite(last) || last < cutoff) {
@@ -36,6 +42,9 @@ function pruneExpiredSessions() {
             const taskId = readPublicTaskIdFromSession(session);
             if (taskId)
                 sessionIdByTaskId.delete(taskId);
+            for (const listener of sessionCleanupListeners) {
+                listener(id);
+            }
         }
     }
 }
@@ -51,10 +60,16 @@ function createMemoryApplicationSession(input) {
     const passedTaskId = typeof passedRaw === 'string' && passedRaw.startsWith('task_') ? passedRaw : null;
     const publicTaskId = passedTaskId ?? (0, application_task_id_1.createPublicTaskId)();
     const timestamp = nowIso();
+    const normalizedMode = input.mode === 'DISCOVERY' || input.mode === 'REAL_APPLICATION' ? input.mode : null;
+    const templateVersion = input.templateVersion ?? (typeof input.metadata?.templateVersion === 'string' ? input.metadata.templateVersion : null);
+    const pageFingerprint = input.pageFingerprint ?? (typeof input.metadata?.pageFingerprint === 'string' ? input.metadata.pageFingerprint : null);
     const metadata = {
         ...(input.metadata ?? {}),
         publicTaskId,
         taskId: publicTaskId,
+        ...(templateVersion ? { templateVersion } : {}),
+        ...(pageFingerprint ? { pageFingerprint } : {}),
+        ...(normalizedMode ? { mode: normalizedMode } : {}),
     };
     const session = {
         id,
@@ -73,6 +88,9 @@ function createMemoryApplicationSession(input) {
         generated_answers: {},
         status: 'scanning',
         metadata,
+        template_version: templateVersion,
+        page_fingerprint: pageFingerprint,
+        mode: normalizedMode,
         started_at: timestamp,
         last_activity_at: timestamp,
         completed_at: null,
@@ -90,9 +108,11 @@ function createMemoryApplicationSession(input) {
     return session;
 }
 function getMemoryApplicationSession(sessionId) {
+    pruneExpiredSessions();
     return sessionsById.get(sessionId) ?? null;
 }
 function resolveMemorySessionIdFromTaskId(taskIdParam) {
+    pruneExpiredSessions();
     const trimmed = String(taskIdParam || '').trim();
     if (!trimmed)
         return null;
@@ -180,8 +200,37 @@ function updateMemorySession(sessionId, patch) {
         session.discovered_pages = patch.discovered_pages;
     if (patch.generated_answers !== undefined)
         session.generated_answers = patch.generated_answers;
-    if (patch.metadata !== undefined)
-        session.metadata = patch.metadata;
+    if (patch.metadata !== undefined) {
+        const nextMetadata = { ...(session.metadata ?? {}), ...patch.metadata };
+        session.metadata = nextMetadata;
+        if (typeof nextMetadata.templateVersion === 'string') {
+            session.template_version = nextMetadata.templateVersion;
+        }
+        if (typeof nextMetadata.pageFingerprint === 'string') {
+            session.page_fingerprint = nextMetadata.pageFingerprint;
+        }
+        if (nextMetadata.mode === 'DISCOVERY' || nextMetadata.mode === 'REAL_APPLICATION') {
+            session.mode = nextMetadata.mode;
+        }
+    }
+    if (patch.template_version !== undefined) {
+        session.template_version = patch.template_version;
+        if (patch.template_version) {
+            session.metadata = { ...session.metadata, templateVersion: patch.template_version };
+        }
+    }
+    if (patch.page_fingerprint !== undefined) {
+        session.page_fingerprint = patch.page_fingerprint;
+        if (patch.page_fingerprint) {
+            session.metadata = { ...session.metadata, pageFingerprint: patch.page_fingerprint };
+        }
+    }
+    if (patch.mode !== undefined) {
+        session.mode = patch.mode === 'DISCOVERY' || patch.mode === 'REAL_APPLICATION' ? patch.mode : null;
+        if (session.mode) {
+            session.metadata = { ...session.metadata, mode: session.mode };
+        }
+    }
     if (patch.completed_at !== undefined)
         session.completed_at = patch.completed_at;
     touchSession(session);

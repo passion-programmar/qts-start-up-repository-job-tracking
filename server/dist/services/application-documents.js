@@ -7,9 +7,13 @@ exports.getApplicationDocumentsDir = getApplicationDocumentsDir;
 exports.resolveDocumentFile = resolveDocumentFile;
 const node_fs_1 = __importDefault(require("node:fs"));
 const node_path_1 = __importDefault(require("node:path"));
+const node_os_1 = __importDefault(require("node:os"));
 const paths_1 = require("../config/paths");
 function getApplicationDocumentsDir(sessionId) {
-    return node_path_1.default.join((0, paths_1.getAppRoot)(), 'data', 'application-documents', String(sessionId));
+    const root = process.env.VERCEL
+        ? node_path_1.default.join(node_os_1.default.tmpdir(), 'qts-startup', 'application-documents')
+        : node_path_1.default.join((0, paths_1.getAppRoot)(), 'data', 'application-documents');
+    return node_path_1.default.join(root, String(sessionId));
 }
 function resolveDocumentFile(sessionId, docType, metadata) {
     const docs = metadata?.documents;

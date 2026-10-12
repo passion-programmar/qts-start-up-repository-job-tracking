@@ -84,6 +84,18 @@
     return extraScans;
   }
 
+  function captureCurrentApplicationStep() {
+    const scan = window.__scanApplicationForm
+      ? window.__scanApplicationForm()
+      : { fields: [] };
+    const extraScans = scanSameOriginIframes();
+    return {
+      ...scan,
+      fields: mergeFieldsByStableId([scan, ...extraScans]),
+      extraScans,
+    };
+  }
+
   function detectGenericFlowType(scan, context) {
     if (context?.externalUrl) return 'external_redirect';
     const step = String(scan?.pageStep || '');
@@ -94,15 +106,35 @@
     return 'unknown';
   }
 
-  function findContinueButtons() {
-    const pattern = /^(next|continue|proceed|dalej|kontynuuj)$/i;
-    const buttons = [];
-    document.querySelectorAll('button, a, [role="button"], input[type="submit"]').forEach((el) => {
-      const label = String(el.textContent || el.value || el.getAttribute('aria-label') || '').trim();
-      if (!pattern.test(label)) return;
-      buttons.push({ label, tag: el.tagName });
+  function findNavigationCandidates(mode = 'DISCOVERY') {
+    const candidates = [];
+    const actionText = /(next|continue|proceed|back|previous|submit|apply now|send application|save|verify|captcha|sign in|log in|consent|attest|dalej|kontynuuj|weiter)/i;
+    document.querySelectorAll('button, a, [role="button"], input[type="submit"], input[type="button"]').forEach((el) => {
+      const label = String(el.textContent || el.value || el.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
+      const rect = el.getBoundingClientRect();
+      const style = window.getComputedStyle(el);
+      if (!label || !actionText.test(label) || rect.width <= 0 || rect.height <= 0
+        || style.visibility === 'hidden' || style.display === 'none') return;
+      const type = String(el.getAttribute('type') || '').toLowerCase();
+      const classification = window.__qtsApplicationFlow?.classifyNavigationAction?.(label, {
+        mode,
+        controlType: type,
+      }) || {
+        classification: 'UNKNOWN_OR_SIDE_EFFECT',
+        reason: 'Action classification helper is unavailable.',
+        safe: false,
+      };
+      candidates.push({
+        label: label.slice(0, 180),
+        tag: el.tagName.toLowerCase(),
+        type,
+        disabled: Boolean(el.disabled || el.getAttribute('aria-disabled') === 'true'),
+        classification: classification.classification,
+        reason: classification.reason,
+        safe: classification.safe === true,
+      });
     });
-    return buttons;
+    return candidates.slice(0, 50);
   }
 
   async function observeAndScanFields(options = {}) {
@@ -143,9 +175,7 @@
     const templateDiscovery = template?.discovery || {};
     const discoveredAt = new Date().toISOString();
 
-    const openApplyForm = options.openApplyForm === false
-      ? false
-      : (options.openApplyForm ?? templateDiscovery.openApplyForm ?? true);
+    const openApplyForm = options.openApplyForm === true && options.allowUserApprovedAction === true;
     let expandDynamic = false;
     if (options.expandDynamic === true) {
       expandDynamic = true;
@@ -244,6 +274,9 @@
       dynamicActions,
       template,
     }) || [];
+    if (options.openApplyForm === true && !options.allowUserApprovedAction) {
+      warnings.push('Opening the Apply form was skipped because it was not separately approved; discovery stayed read-only.');
+    }
 
     if (applyFlow?.clicked && !formDetected) {
       warnings.push('Apply was clicked but fields are not visible yet — wait a moment or click Apply again on the job page.');
@@ -254,12 +287,22 @@
       applyFlow.finalFieldCount = scan.fields?.length || 0;
     }
 
+    const fieldStatuses = (scan.fields || []).reduce((acc, field) => {
+      acc[field.status || 'ambiguous'] = (acc[field.status || 'ambiguous'] || 0) + 1;
+      return acc;
+    }, {});
+    const matchedFields = (scan.fields || []).filter((field) => field.status === 'matched').length;
+    const unresolvedFields = (scan.fields || []).filter((field) => field.status !== 'matched').length;
+
+    const navigationCandidates = findNavigationCandidates(options.mode);
     return {
       platform,
       templateId: template?.id || null,
+      templateVersion: template?.version || template?.schemaVersion || 'legacy-v1',
       templateName: template?.name || null,
       flowType,
       discoveredAt,
+      pageSignature: scan.pageSignature || `${platform}:${window.location.href}:${scan.fields?.length || 0}`,
       externalUrl: null,
       fields: scan.fields || [],
       pages,
@@ -268,10 +311,22 @@
         pageTitle: scan.pageTitle,
         pageStep: scan.pageStep,
         scannedAt: scan.scannedAt || discoveredAt,
+        pageSignature: scan.pageSignature || `${platform}:${window.location.href}`,
       },
+      coverage: {
+        visibleFields: (scan.fields || []).length,
+        matchedFields,
+        unresolvedFields,
+      },
+      fieldStatusSummary: fieldStatuses,
       applyFlow,
       dynamicActions,
-      continueButtons: findContinueButtons(),
+      navigationCandidates,
+      continueButtons: navigationCandidates.filter((action) =>
+        /^(next|continue|proceed|dalej|kontynuuj|weiter)$/i.test(action.label)
+      ),
+      host: window.location.hostname.toLowerCase(),
+      siteKey: `${platform}:${window.location.hostname.toLowerCase()}`,
       warnings,
       formDetected,
     };
@@ -279,9 +334,11 @@
       return {
         platform: detectPlatform(),
         templateId: null,
+        templateVersion: 'legacy-v1',
         templateName: null,
         flowType: 'unknown',
         discoveredAt: new Date().toISOString(),
+        pageSignature: `${detectPlatform()}:${window.location.href}:error`,
         externalUrl: null,
         fields: [],
         pages: [],
@@ -290,6 +347,12 @@
           pageTitle: document.title,
           pageStep: '',
           scannedAt: new Date().toISOString(),
+          pageSignature: `${detectPlatform()}:${window.location.href}:error`,
+        },
+        coverage: {
+          visibleFields: 0,
+          matchedFields: 0,
+          unresolvedFields: 0,
         },
         applyFlow: null,
         dynamicActions: [],
@@ -303,4 +366,5 @@
 
   window.__discoverApplicationForm = discoverApplicationForm;
   window.__runDiscoverApplicationForm = (options) => window.__discoverApplicationForm(options);
+  window.__captureApplicationStep = captureCurrentApplicationStep;
 })();

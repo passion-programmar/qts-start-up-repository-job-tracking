@@ -1,5 +1,7 @@
 'use client';
 
+import { LoadingState } from '@/components/LoadingState';
+
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { api, clearToken, setToken, getToken } from '@/lib/api';
@@ -64,7 +66,7 @@ export default function LoginPage() {
     return (
       <div className="auth-screen">
         <div className="auth-card login-card">
-          <p className="text-muted" style={{ textAlign: 'center', margin: 0 }}>Loading…</p>
+          <LoadingState label="Loading…" size="inline" />
         </div>
       </div>
     );

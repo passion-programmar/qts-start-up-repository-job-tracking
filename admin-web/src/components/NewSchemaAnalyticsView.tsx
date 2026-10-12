@@ -1,5 +1,7 @@
 'use client';
 
+import { LoadingState } from '@/components/LoadingState';
+
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '@/components/AuthProvider';
 import { api } from '@/lib/api';
@@ -98,7 +100,7 @@ export function NewSchemaAnalyticsView() {
         </label>
       </div>
       {error && <div className="alert alert-error">{error}</div>}
-      {loading ? <div className="card text-muted">Loading analytics…</div> : data && (
+      {loading ? <div className="card"><LoadingState label="Loading analytics…" /></div> : data && (
         <>
           <div className="analytics-responsive-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16 }}>
             <BarList
@@ -112,8 +114,8 @@ export function NewSchemaAnalyticsView() {
               label={periodText}
             />
             <BarList
-              title="Bids by job status"
-              rows={data.bidsByStatus.map((row) => ({ label: row.status, count: row.count }))}
+              title="Jobs by status"
+              rows={data.jobsByStatus.map((row) => ({ label: row.status, count: row.count }))}
               label={(value) => value}
             />
             <BarList

@@ -1,5 +1,7 @@
 'use client';
 
+import { LoadingState } from '@/components/LoadingState';
+
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { useAuth } from '@/components/AuthProvider';
@@ -193,7 +195,7 @@ export function NewSchemaInterviewsView() {
         {formError && <div className="alert alert-error">{formError}</div>}
       </Modal>
       <div className="card">
-        {loading ? <div className="text-muted">Loading…</div> : (
+        {loading ? <LoadingState label="Loading…" /> : (
           <div className="table-scroll table-scroll--wide">
             <table>
               <thead><tr><th>Account</th><th>Job</th><th>Date</th><th>Time</th><th>Step</th><th>Caller</th><th>Status</th><th>Outcome</th><th>Manager comment</th><th /></tr></thead>

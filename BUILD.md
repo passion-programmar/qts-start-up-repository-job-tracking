@@ -404,9 +404,12 @@ docker build -t qts-startup-server ./server
 - At least one active candidate under the selected Account team
 - Extension login sends `extension: true`; only **manager** role is accepted
 
-### Supported job sites
+### Supported job sites (job-posting capture)
 
-LinkedIn, Indeed, Glassdoor, Greenhouse, Lever, Workable, SmartRecruiters, Ashby, and generic career pages (JSON-LD heuristics).
+LinkedIn, Indeed, Glassdoor, Greenhouse, Lever, Workable, SmartRecruiters,
+Ashby, and generic career pages (JSON-LD heuristics). This refers to job-posting
+capture, not application-form automation. Workable applications are disabled;
+read-only discovery and manual job tracking remain available.
 
 ---
 
@@ -446,6 +449,7 @@ Run these after a fresh build:
 | API via proxy | http://localhost:1027/api/health | Same health JSON |
 | Admin login | UI login with admin credentials | Redirect to `/admin` |
 | Typecheck API | `cd server && npm run check` | Exit 0 |
+| Template validation API tests | `cd server && npm run test:application-templates` | Unit and API/database integration tests pass using an isolated temporary PGlite database |
 | Typecheck UI | `cd admin-web && npx tsc --noEmit` | Exit 0 |
 | Production UI build | `cd admin-web && npm run build` | Completes without error |
 

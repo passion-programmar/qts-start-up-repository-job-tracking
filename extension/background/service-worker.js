@@ -1,6 +1,7 @@
 // Background service worker — tab tracking, capture window, messages
 
 importScripts(
+  '../shared/application-flow.js',
   '../shared/job-detect.js',
   '../shared/api-prefetch.js',
   '../shared/custom-gpt.js',
@@ -65,9 +66,11 @@ const APPLICATION_DISCOVERY_FILE = 'content/application-discovery.js';
 const APPLY_TEMPLATE_DETECTOR_FILE = 'content/apply-template-detector.js';
 const APPLY_MODAL_WATCH_FILE = 'content/apply-modal-watch.js';
 const APPLICATION_FLOW_FILE = 'shared/application-flow.js';
+const LEARNING_RECORDER_FILE = 'content/learning-recorder.js';
 const FORM_SCAN_SCRIPT_FILES = [
   APPLICATION_FLOW_FILE,
   FORM_SCAN_FILE,
+  LEARNING_RECORDER_FILE,
   TEMPLATE_REGISTRY_FILE,
   JUSTJOIN_EASY_APPLY_FILE,
   JUSTJOIN_EXTERNAL_APPLY_FILE,
@@ -80,6 +83,7 @@ const GPT_TAB_STORAGE_KEY = 'qtsCustomGptTabId';
 const JOB_SOURCE_TAB_STORAGE_KEY = 'qtsJobSourceTabId';
 const PENDING_GPT_DISPATCH_KEY = 'qtsPendingGptDispatch';
 const APPLY_TEMPLATE_TAB_KEY = 'qtsApplyTemplateByTab';
+const DISCOVERY_CHECKPOINT_TAB_KEY = 'qtsDiscoveryCheckpointByTab';
 let lastApplyMethodDetectKeyByTab = new Map();
 let gptApprovalWatchTimer = null;
 let gptPollApplyJob = null;
@@ -125,11 +129,43 @@ const HUMAN_REVIEW_SAVED_KEYS = new Set([
   'cover_message',
 ]);
 
+function isWorkableApplicationUrl(url) {
+  try {
+    const hostname = new URL(url || '').hostname.toLowerCase();
+    return hostname === 'workable.com' || hostname.endsWith('.workable.com');
+  } catch {
+    return false;
+  }
+}
+
 async function applyGptPackageToJobTab(applicationId, jobTabId) {
+  let tabId = jobTabId;
+  if (!tabId) {
+    const stored = await chrome.storage.local.get([JOB_SOURCE_TAB_STORAGE_KEY]);
+    tabId = stored[JOB_SOURCE_TAB_STORAGE_KEY] || lastSourceTabId;
+  }
+  if (!tabId) {
+    throw new Error('No job tab found for GPT apply.');
+  }
+  const tab = await getTab(tabId);
+  if (!tab?.id) {
+    throw new Error('No job tab found for GPT apply.');
+  }
+  if (isWorkableApplicationUrl(tab.url)) {
+    throw new Error('Workable applications are disabled. QTS will not fill or submit this form.');
+  }
+
   const api = self.__qtsApiWorker;
   if (!api?.workerApiRequest) {
     throw new Error('API worker helpers not loaded.');
   }
+
+  await self.__qtsApplySessionStore?.setActive?.({
+    applicationId,
+    jobTabId,
+    status: 'apply',
+    applying: true,
+  });
 
   const result = await api.workerApiRequest('GET', `/api/application-sessions/${applicationId}/result`);
   if (!result.success) {
@@ -158,15 +194,6 @@ async function applyGptPackageToJobTab(applicationId, jobTabId) {
     }));
 
   const fileUploadFields = await api.workerBuildFileUploadFields(applicationId, result.fields || []);
-
-  let tabId = jobTabId;
-  if (!tabId) {
-    const stored = await chrome.storage.local.get([JOB_SOURCE_TAB_STORAGE_KEY]);
-    tabId = stored[JOB_SOURCE_TAB_STORAGE_KEY] || lastSourceTabId;
-  }
-  if (!tabId) {
-    throw new Error('No job tab found for GPT apply.');
-  }
 
   const detectedTemplate = await getApplyTemplateForTab(tabId);
   const fillPolicy = self.__qtsFillPolicy?.getFillPolicyForTemplate?.(detectedTemplate?.templateId);
@@ -381,6 +408,7 @@ async function verifyFormScanScripts(tabId) {
         discover: typeof window.__discoverApplicationForm === 'function',
         registry: typeof window.__qtsTemplateRegistry === 'object',
         justjoin: typeof window.__qtsPlatformJustjoin === 'object',
+        learning: typeof window.__qtsLearningRecorder === 'object',
       }),
     });
     return results[0]?.result || {};
@@ -409,7 +437,7 @@ async function ensureFormScanScripts(tabId) {
   }
 
   status = await verifyFormScanScripts(tabId);
-  return { ok: Boolean(status.discover && status.scan), status };
+  return { ok: Boolean(status.discover && status.scan && status.learning), status };
 }
 
 async function injectFormScan(tabId) {
@@ -437,6 +465,75 @@ async function setApplyTemplateForTab(tabId, detection) {
 async function getApplyTemplateForTab(tabId) {
   const map = await readApplyTemplateMap();
   return map[String(tabId)] || null;
+}
+
+async function readDiscoveryCheckpointMap() {
+  const stored = await chrome.storage.session.get([DISCOVERY_CHECKPOINT_TAB_KEY]);
+  return stored[DISCOVERY_CHECKPOINT_TAB_KEY] || {};
+}
+
+async function removeDiscoveryCheckpointForTab(tabId) {
+  const checkpointMap = await readDiscoveryCheckpointMap();
+  delete checkpointMap[String(tabId)];
+  await chrome.storage.session.set({ [DISCOVERY_CHECKPOINT_TAB_KEY]: checkpointMap });
+}
+
+async function persistDiscoveryCheckpoint(tabId, discovery, reusableTemplate = null) {
+  const appFlow = self.__qtsApplicationFlow;
+  if (typeof appFlow?.buildDiscoveryCheckpoint !== 'function') {
+    return { success: false, message: 'Discovery checkpoint helper is unavailable.' };
+  }
+
+  const checkpointMap = await readDiscoveryCheckpointMap();
+  const current = checkpointMap[String(tabId)];
+  const reusableCheckpoint = reusableTemplate?.navigation?.discoveryCheckpoint;
+  const previous = current?.siteKey === discovery.siteKey
+    ? current
+    : (reusableCheckpoint?.siteKey === discovery.siteKey ? reusableCheckpoint : {});
+  const checkpoint = appFlow.buildDiscoveryCheckpoint(discovery, previous);
+  checkpointMap[String(tabId)] = checkpoint;
+  await chrome.storage.session.set({ [DISCOVERY_CHECKPOINT_TAB_KEY]: checkpointMap });
+
+  const fields = checkpoint.steps.flatMap((step) => step.fields.map((field) => ({
+    ...field,
+    fieldId: `${step.stepId}:${field.fieldId}`.slice(0, 255),
+  }))).slice(0, 300);
+  const coverage = {
+    visibleFields: fields.length,
+    matchedFields: fields.filter((field) => field.status === 'matched').length,
+    unresolvedFields: fields.filter((field) => field.status !== 'matched').length,
+  };
+  const payload = {
+    siteKey: checkpoint.siteKey,
+    platform: checkpoint.platform,
+    host: checkpoint.host,
+    templateVersion: 'discovery-v1',
+    pageSignature: discovery.pageSignature || null,
+    status: coverage.matchedFields > 0 ? 'partial' : 'draft',
+    coverage,
+    navigation: {
+      discoveryCheckpoint: checkpoint,
+      candidates: discovery.navigationCandidates || [],
+    },
+    verification: {},
+    metadata: {
+      schemaVersion: 1,
+      source: 'extension-discovery',
+      finalBoundaryFound: checkpoint.finalBoundaryFound,
+    },
+    fields,
+  };
+  const saved = await self.__qtsApiWorker.workerApiRequest(
+    'POST',
+    '/api/application-templates/from-discovery',
+    payload
+  );
+  return {
+    success: Boolean(saved?.success),
+    message: saved?.success ? null : (saved?.message || 'Template draft was not persisted.'),
+    template: saved?.template || null,
+    checkpoint,
+  };
 }
 
 async function removeApplyTemplateForTab(tabId) {
@@ -592,6 +689,41 @@ async function scanApplicationFormOnTab(tabId, options = {}) {
   };
 }
 
+function validateTemplateAgainstDiscovery(template, discovery) {
+  const savedSteps = template?.navigation?.discoveryCheckpoint?.steps;
+  const savedFields = Array.isArray(savedSteps)
+    ? savedSteps.flatMap((step) => Array.isArray(step.fields) ? step.fields : [])
+    : (Array.isArray(template?.fields) ? template.fields : []);
+  const liveFields = Array.isArray(discovery?.fields) ? discovery.fields : [];
+  const fieldResults = liveFields.map((field) => {
+    const hints = field?.selectorHints || {};
+    const question = String(field?.question || field?.label || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    const match = savedFields.find((saved) => {
+      if (String(saved?.fieldType || '') !== String(field?.fieldType || '')) return false;
+      const savedHints = saved?.selectorHints || {};
+      const exactSelector = ['id', 'name', 'data-testid'].some((key) =>
+        hints[key] && savedHints[key] && String(hints[key]) === String(savedHints[key])
+      );
+      const savedQuestion = String(saved?.question || '').replace(/\s+/g, ' ').trim().toLowerCase();
+      return exactSelector || Boolean(question && savedQuestion === question);
+    });
+    return {
+      fieldId: String(field?.stableFieldId || field?.fieldId || 'unknown-field'),
+      matched: Boolean(match),
+      method: match ? 'revalidated-structure' : 'generic-scan-fallback',
+    };
+  });
+  return {
+    templateVersion: template.templateVersion || null,
+    templateStatus: template.status,
+    genericScanUsed: true,
+    matchedFieldCount: fieldResults.filter((field) => field.matched).length,
+    fallbackFieldCount: fieldResults.filter((field) => !field.matched).length,
+    requiresReview: true,
+    fields: fieldResults,
+  };
+}
+
 async function discoverApplicationFormOnTab(tabId, options = {}) {
   const tab = await getTab(tabId);
   if (!tab?.id) return { error: 'No active tab' };
@@ -599,8 +731,38 @@ async function discoverApplicationFormOnTab(tabId, options = {}) {
     return { error: restrictedPageMessage(tab.url), manualOnly: true };
   }
 
+  const appFlow = self.__qtsApplicationFlow;
+  const mode = appFlow?.normalizeApplicationMode?.(options.mode) || 'DISCOVERY';
+  const navigationAction = appFlow?.classifyNavigationAction?.('continue', { mode });
+  if (mode === 'REAL_APPLICATION' && options.readOnly === false && !options.allowUserApprovedAction) {
+    return {
+      success: false,
+      blocked: true,
+      error: 'Real application mode is read-only unless the user explicitly approves a page action.',
+      recovery: appFlow?.buildRecoveryErrorPayload?.({
+        sessionId: options.sessionId || `tab:${tabId}`,
+        stepId: 'DISCOVERY',
+        errorCode: 'REAL_APPLICATION_MODE_REQUIRES_APPROVAL',
+        recoverable: true,
+        attempts: 1,
+        action: 'USER_REQUIRED',
+        diagnostics: { mode, navigationAction },
+      }),
+    };
+  }
+
   const preDetectedTemplate = options.preDetectedTemplate
     || await getApplyTemplateForTab(tab.id);
+  const platform = appFlow?.detectPlatformFromUrl?.(tab.url) || 'generic';
+  const host = new URL(tab.url).hostname.toLowerCase();
+  const siteKey = `${platform}:${host}`;
+  const templateLookup = await self.__qtsApiWorker.workerApiRequest(
+    'GET',
+    `/api/application-templates/reuse?siteKey=${encodeURIComponent(siteKey)}&host=${encodeURIComponent(host)}&platform=${encodeURIComponent(platform)}`
+  );
+  const reusableTemplate = templateLookup?.success && templateLookup.safeToReuse
+    ? templateLookup.template
+    : null;
 
   const scriptReady = await ensureFormScanScripts(tab.id);
   if (!scriptReady.ok) {
@@ -612,8 +774,10 @@ async function discoverApplicationFormOnTab(tabId, options = {}) {
 
   const discoveryOptions = {
     openApplyForm: options.openApplyForm,
+    allowUserApprovedAction: options.allowUserApprovedAction === true,
     expandDynamic: options.expandDynamic,
     dynamicWaitMs: options.dynamicWaitMs,
+    mode,
     preDetectedTemplate,
   };
 
@@ -646,6 +810,16 @@ async function discoverApplicationFormOnTab(tabId, options = {}) {
         debug: discovery.debug,
       };
     }
+    discovery.siteKey = siteKey;
+    discovery.host = host;
+    discovery.platform = platform;
+    discovery.templateVersion = reusableTemplate?.templateVersion || discovery.templateVersion || 'discovery-v1';
+    const templateSave = mode === 'DISCOVERY'
+      ? await persistDiscoveryCheckpoint(tab.id, discovery, reusableTemplate)
+      : null;
+    const templateValidation = reusableTemplate
+      ? validateTemplateAgainstDiscovery(reusableTemplate, discovery)
+      : null;
     return {
       success: true,
       discovery,
@@ -660,15 +834,196 @@ async function discoverApplicationFormOnTab(tabId, options = {}) {
       title: tab.title,
       formDetected: discovery.formDetected,
       applyFlow: discovery.applyFlow,
+      templateReuse: {
+        found: Boolean(reusableTemplate),
+        status: reusableTemplate?.status || null,
+        genericScanUsed: true,
+        validation: templateValidation,
+      },
+      templateSave,
+      templateLookupError: templateLookup?.success || templateLookup?._httpStatus === 404
+        ? null
+        : (templateLookup?.message || 'Template lookup failed.'),
     };
   } catch (e) {
     return { error: e.message || 'Form discovery failed.' };
   }
 }
 
-async function fillApplicationFormOnTab(tabId, fields) {
+async function captureApplicationStepOnTab(tabId, options = {}) {
+  const tab = await getTab(tabId);
+  if (!tab?.id) return { success: false, error: 'No active tab is available for Scanner verification.' };
+  if (!isExtractablePageUrl(tab.url)) {
+    return { success: false, error: restrictedPageMessage(tab.url), manualOnly: true };
+  }
+  const ready = await ensureFormScanScripts(tab.id);
+  if (!ready.ok) return { success: false, error: 'Could not load Scanner verification scripts on this page.' };
+
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: async ({ maxWaitMs, intervalMs, minWaitMs }) => {
+        const capture = () => window.__captureApplicationStep?.();
+        const signature = (scan) => JSON.stringify((scan?.fields || []).map((field) => ({
+          label: String(field.label || '').replace(/\s+/g, ' ').trim().toLowerCase(),
+          type: field.fieldType,
+          required: Boolean(field.required),
+          options: (field.options || []).map((item) => String(item).replace(/\s+/g, ' ').trim().toLowerCase()),
+          section: String(field.sectionHeading || '').replace(/\s+/g, ' ').trim().toLowerCase(),
+          hints: {
+            tag: field.selectorHints?.tag,
+            name: field.selectorHints?.name,
+            role: field.selectorHints?.role,
+            testId: field.selectorHints?.testId,
+            automationId: field.selectorHints?.automationId,
+          },
+          dom: {
+            control: field.domEvidence?.control
+              ? {
+                tag: field.domEvidence.control.tag,
+                role: field.domEvidence.control.role,
+                testId: field.domEvidence.control.testId,
+                automationId: field.domEvidence.control.automationId,
+                classes: (field.domEvidence.control.classNames || []).filter((name) =>
+                  name.length <= 48
+                  && !/(?:^|[-_])[a-f0-9]{8,}(?:$|[-_])/i.test(name)
+                  && !/^(?:css|sc|jss|emotion|jsx)-[a-z0-9_-]{6,}$/i.test(name)
+                  && !/\d{5,}/.test(name)
+                ).sort(),
+              }
+              : null,
+            ancestors: (field.domEvidence?.ancestors || []).map((node) => ({
+              tag: node.tag,
+              role: node.role,
+              testId: node.testId,
+              automationId: node.automationId,
+              classes: (node.classNames || []).filter((name) =>
+                name.length <= 48
+                && !/(?:^|[-_])[a-f0-9]{8,}(?:$|[-_])/i.test(name)
+                && !/^(?:css|sc|jss|emotion|jsx)-[a-z0-9_-]{6,}$/i.test(name)
+                && !/\d{5,}/.test(name)
+              ).sort(),
+            })),
+          },
+        })));
+        const startedAt = Date.now();
+        let previousSignature = '';
+        let stablePasses = 0;
+        let latest = null;
+        while (Date.now() - startedAt <= maxWaitMs) {
+          latest = capture();
+          if (!latest) return { success: false, error: 'Scanner capture helper is unavailable on this page.' };
+          const currentSignature = signature(latest);
+          if (currentSignature === previousSignature) stablePasses += 1;
+          else {
+            previousSignature = currentSignature;
+            stablePasses = 0;
+          }
+          if (Date.now() - startedAt >= minWaitMs && stablePasses >= 1) {
+            return { success: true, scan: latest, settled: true };
+          }
+          await new Promise((resolve) => setTimeout(resolve, intervalMs));
+        }
+        return {
+          success: false,
+          error: 'The application step kept changing during Scanner verification. Wait for the page to settle, then scan again.',
+          scan: latest,
+        };
+      },
+      args: [{
+        maxWaitMs: 2200,
+        intervalMs: 250,
+        minWaitMs: 500,
+      }],
+    });
+    const result = results[0]?.result;
+    if (!result?.success) {
+      return { success: false, error: result?.error || 'Scanner could not verify the current application step.' };
+    }
+    const capturedUrl = result.scan?.pageUrl;
+    if (capturedUrl) {
+      const capturedPage = new URL(capturedUrl);
+      const initialPage = new URL(tab.url);
+      if (capturedPage.origin !== initialPage.origin || capturedPage.pathname !== initialPage.pathname) {
+        return { success: false, error: 'The application navigated to another step during Scanner verification. Scan the new step explicitly.' };
+      }
+    }
+    return { success: true, scan: result.scan, url: tab.url, title: tab.title };
+  } catch (error) {
+    return { success: false, error: error?.message || 'Scanner verification capture failed.' };
+  }
+}
+
+async function saveScannerStepEvidenceOnTab(tabId, metadata, fields) {
+  const tab = await getTab(tabId);
+  if (!tab?.id || !tab.url) {
+    return { success: false, message: 'The application tab is unavailable; verified Scanner evidence was not saved.' };
+  }
+  if (!isExtractablePageUrl(tab.url) || !Array.isArray(fields) || fields.length > 150) {
+    return { success: false, message: 'The current page or Scanner evidence payload is not valid.' };
+  }
+  const host = new URL(tab.url).hostname.toLowerCase();
+  if (String(metadata?.host || '').toLowerCase() !== host) {
+    return { success: false, message: 'The application site changed before Scanner evidence could be saved.' };
+  }
+  const discovery = {
+    siteKey: String(metadata.siteKey || '').slice(0, 255),
+    platform: String(metadata.platform || 'generic').slice(0, 64),
+    host,
+    pageSignature: String(metadata.pageSignature || '').slice(0, 255),
+    discoveredAt: new Date().toISOString(),
+    scanMeta: {
+      pageUrl: String(metadata.pageUrl || '').slice(0, 2000),
+      pageStep: String(metadata.pageStep || '').slice(0, 180),
+      pageSignature: String(metadata.pageSignature || '').slice(0, 255),
+    },
+    fields,
+    navigationCandidates: [],
+  };
+  if (!discovery.siteKey || !discovery.pageSignature) {
+    return { success: false, message: 'Scanner evidence is missing its site or step identity.' };
+  }
+  const saved = await persistDiscoveryCheckpoint(tab.id, discovery);
+  return {
+    success: Boolean(saved?.success),
+    message: saved?.message || null,
+    checkpoint: saved?.checkpoint || null,
+  };
+}
+
+async function fillApplicationFormOnTab(tabId, fields, options = {}) {
+  const appFlow = self.__qtsApplicationFlow;
+  const mode = appFlow?.normalizeApplicationMode?.(options.mode) || 'DISCOVERY';
+  if (mode === 'REAL_APPLICATION' && !options.allowUserApprovedFill) {
+    return {
+      success: false,
+      blocked: true,
+      error: 'Real application mode will not auto-fill fields without explicit user approval.',
+      recovery: appFlow?.buildRecoveryErrorPayload?.({
+        sessionId: options.sessionId || `tab:${tabId}`,
+        stepId: 'FILLING',
+        fieldId: Array.isArray(fields) && fields.length ? fields[0]?.stableFieldId || null : null,
+        errorCode: 'REAL_APPLICATION_MODE_REQUIRES_APPROVAL',
+        recoverable: true,
+        attempts: 1,
+        action: 'USER_REQUIRED',
+        diagnostics: { mode, totalFields: Array.isArray(fields) ? fields.length : 0 },
+      }),
+    };
+  }
+
   const tab = await getTab(tabId);
   if (!tab?.id) return { error: 'No active tab' };
+  if (!tab.url) {
+    return { error: 'The active tab does not have a valid page URL.' };
+  }
+  if (isWorkableApplicationUrl(tab.url)) {
+    return {
+      success: false,
+      blocked: true,
+      error: 'Workable applications are disabled. QTS will not fill fields on this site.',
+    };
+  }
   const injected = await injectFormScan(tab.id);
   if (!injected) return { error: 'Could not access this page for form filling.' };
   try {
@@ -840,6 +1195,14 @@ function startGptPageWatch(tabId, taskId, options = {}) {
       const result = await worker.watchGptTabAfterSend(tabId, taskId, {
         timeoutMs: options.timeoutMs || 180000,
         pollMs: options.pollMs || 1200,
+        getTaskStatus: async () => {
+          const api = self.__qtsApiWorker;
+          if (!api?.workerApiRequest) return null;
+          return api.workerApiRequest(
+            'GET',
+            `/api/v2/gpt-application-tasks/${encodeURIComponent(taskId)}/extension-status`
+          );
+        },
         onStatus: (snap) => {
           if (gptPageWatchJob !== job || job.cancelled) return;
           notifyGptPageStatus(snap);
@@ -880,8 +1243,11 @@ function startGptPageWatch(tabId, taskId, options = {}) {
   })();
 }
 
-async function notifyGptActionApprovalNeeded(jobTabId, taskId) {
-  const message = 'Custom GPT is waiting for Action approval. Open the pinned GPT tab and click Allow.';
+async function notifyGptActionApprovalNeeded(
+  jobTabId,
+  taskId,
+  message = 'Custom GPT is waiting for Action approval. Open the pinned GPT tab and click Allow.'
+) {
   const pinnedGptTabId = await getPinnedGptTabId();
   if (pinnedGptTabId) {
     await focusBrowserWindowForTab(pinnedGptTabId);
@@ -1180,7 +1546,7 @@ async function dispatchCustomGptTask(taskId, prompt, jobTabId, options = {}) {
       message: sendResult.message || message,
     };
 
-    if (handoff.sent) {
+    if (handoff.sent || handoff.needsManualSend) {
       await clearPendingGptDispatch();
     } else {
       await persistPendingGptDispatch({
@@ -1201,14 +1567,18 @@ async function dispatchCustomGptTask(taskId, prompt, jobTabId, options = {}) {
       await showPageDetectAlert(sourceTabId, handoffNote, handoff.sent ? 'success' : 'warn');
     }
 
-    if (handoff.sent && gptTabId) {
+    if (gptTabId && (handoff.sent || handoff.needsManualSend)) {
       startGptPageWatch(gptTabId, taskId, {
         applicationId: options.applicationId,
         pollAndApply: options.pollAndApply,
         jobTabId: sourceTabId,
       });
-    } else if (!handoff.sent) {
-      await notifyGptActionApprovalNeeded(sourceTabId, taskId);
+    }
+    if (!handoff.sent) {
+      const notice = handoff.needsManualSend
+        ? 'PROCESS_TASK may be in the GPT chat but was not confirmed. If it is still in the composer, click Send; approve any requested Action.'
+        : 'PROCESS_TASK was not sent. Open the pinned GPT tab and send it manually.';
+      await notifyGptActionApprovalNeeded(sourceTabId, taskId, notice);
       await chrome.storage.local.set({ qtsLastProcessTaskPrompt: message });
     }
 
@@ -1230,6 +1600,17 @@ async function dispatchCustomGptTask(taskId, prompt, jobTabId, options = {}) {
     clearInterval(keepalive);
   }
 }
+
+self.__qtsDispatchActiveApplicationTask = async ({ taskId, jobTabId }) => {
+  const result = await dispatchCustomGptTask(taskId, null, jobTabId, {
+    pollAndApply: false,
+    focus: true,
+  });
+  if (!result?.handoff?.sent && !result?.handoff?.needsManualSend) {
+    throw new Error(result?.handoff?.error || 'Could not send the application task to the assigned Custom GPT.');
+  }
+  return result;
+};
 
 async function injectDetectToast(tabId) {
   try {
@@ -1617,6 +1998,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return false;
   }
 
+  if (msg.type === 'SET_CUSTOM_GPT_CONFIG') {
+    self.__qtsCustomGpt?.applyCustomGptConfig?.(msg.customGpt || null);
+    if (!msg.customGpt?.url) {
+      chrome.storage.local.remove([GPT_TAB_STORAGE_KEY]);
+      stopGptPollAndApply();
+    }
+    sendResponse({ ok: true });
+    return false;
+  }
+
   if (msg.type === 'DISCOVER_APPLICATION_FORM') {
     (async () => {
       let tabId = msg.tabId || lastSourceTabId;
@@ -1634,8 +2025,47 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         expandDynamic: msg.expandDynamic,
         dynamicWaitMs: msg.dynamicWaitMs || 4000,
         preDetectedTemplate,
+        mode: msg.mode,
+        allowTestNavigation: msg.allowTestNavigation,
+        readOnly: msg.readOnly,
       }));
     })().catch((e) => sendResponse({ error: e.message || 'Form discovery failed.' }));
+    return true;
+  }
+
+  if (msg.type === 'CAPTURE_APPLICATION_STEP') {
+    (async () => {
+      let tabId = msg.tabId || lastSourceTabId;
+      if (!tabId) {
+        const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+        tabId = activeTab?.id;
+      }
+      if (!tabId) {
+        sendResponse({ success: false, error: 'No source tab is available for Scanner verification.' });
+        return;
+      }
+      sendResponse(await captureApplicationStepOnTab(tabId));
+    })().catch((error) => {
+      sendResponse({ success: false, error: error?.message || 'Scanner verification capture failed.' });
+    });
+    return true;
+  }
+
+  if (msg.type === 'SAVE_SCANNER_STEP_EVIDENCE') {
+    (async () => {
+      let tabId = msg.tabId || lastSourceTabId;
+      if (!tabId) {
+        const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+        tabId = activeTab?.id;
+      }
+      if (!tabId) {
+        sendResponse({ success: false, message: 'No source tab is available to save Scanner evidence.' });
+        return;
+      }
+      sendResponse(await saveScannerStepEvidenceOnTab(tabId, msg.metadata || {}, msg.fields || []));
+    })().catch((error) => {
+      sendResponse({ success: false, message: error?.message || 'Verified Scanner evidence could not be saved.' });
+    });
     return true;
   }
 
@@ -1699,7 +2129,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ error: 'No active tab' });
         return;
       }
-      sendResponse(await fillApplicationFormOnTab(tabId, msg.fields || []));
+      sendResponse(await fillApplicationFormOnTab(tabId, msg.fields || [], {
+        mode: msg.mode,
+        allowUserApprovedFill: msg.allowUserApprovedFill,
+      }));
     })().catch((e) => sendResponse({ error: e.message || 'Form fill failed.' }));
     return true;
   }
@@ -1991,6 +2424,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   detectGenerationByTab.delete(tabId);
   removeDetectedJobForTab(tabId).catch(() => {});
   removeApplyTemplateForTab(tabId).catch(() => {});
+  removeDiscoveryCheckpointForTab(tabId).catch(() => {});
   chrome.storage.local.get([GPT_TAB_STORAGE_KEY], (stored) => {
     if (stored[GPT_TAB_STORAGE_KEY] === tabId) {
       chrome.storage.local.remove(GPT_TAB_STORAGE_KEY);

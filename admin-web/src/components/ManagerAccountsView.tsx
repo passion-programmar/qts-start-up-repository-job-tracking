@@ -1,5 +1,7 @@
 'use client';
 
+import { LoadingState } from '@/components/LoadingState';
+
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Modal } from '@/components/Modal';
 import { CandidateColorPicker } from '@/components/CandidateColorPicker';
@@ -289,7 +291,7 @@ export function ManagerAccountsView() {
       </div>
 
       {loading ? (
-        <div className="card"><div className="text-muted">Loading…</div></div>
+        <div className="card"><LoadingState label="Loading…" /></div>
       ) : accountTree.length ? (
         <div className="org-tree-list">
           {accountTree.map((node) => (
@@ -327,7 +329,7 @@ export function ManagerAccountsView() {
         }
       >
         {formLoading ? (
-          <div className="text-muted">Loading saved credentials…</div>
+          <LoadingState label="Loading saved credentials…" size="inline" />
         ) : (
           <>
             <div className="form-group">

@@ -1,21 +1,62 @@
 'use client';
 
+import { LoadingState } from '@/components/LoadingState';
+
 import { useCallback, useEffect, useState } from 'react';
 import { Modal } from '@/components/Modal';
-import { api } from '@/lib/api';
+import { api, uploadPdf } from '@/lib/api';
 import type { NewSchemaAccountProfile, NewSchemaCategory } from '@/lib/types';
 
 type Profile = NewSchemaAccountProfile & {
+  first_name: string | null;
+  last_name: string | null;
   address: string;
   sex: string;
   birthday: string;
   phone: string;
   country: string;
   city: string;
+  education?: EducationRecord[] | null;
+  work_experience?: WorkExperienceRecord[] | null;
+  custom_fields?: AccountCustomField[] | null;
+  custom_answers?: AccountCustomAnswer[] | null;
+  has_resume?: boolean;
+  resume_file_name?: string | null;
 };
 
-const emptyForm = {
-  name: '',
+type AccountCustomField = {
+  fieldName: string;
+  value: string;
+};
+
+type AccountCustomAnswer = {
+  topic: string;
+  question: string;
+  answer: string;
+};
+
+type EducationRecord = {
+  school: string;
+  qualification: string;
+  fieldOfStudy: string;
+  startDate: string;
+  endDate: string;
+  description: string;
+};
+
+type WorkExperienceRecord = {
+  employer: string;
+  jobTitle: string;
+  location: string;
+  startDate: string;
+  endDate: string;
+  currentRole: boolean;
+  description: string;
+};
+
+const emptyForm = () => ({
+  firstName: '',
+  lastName: '',
   email: '',
   address: '',
   sex: '',
@@ -24,12 +65,17 @@ const emptyForm = {
   country: '',
   city: '',
   categoryId: '',
-};
+  education: [] as EducationRecord[],
+  workExperience: [] as WorkExperienceRecord[],
+  customFields: [] as AccountCustomField[],
+  customAnswers: [] as AccountCustomAnswer[],
+});
 
 export function NewSchemaAccountsView() {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [categories, setCategories] = useState<NewSchemaCategory[]>([]);
-  const [form, setForm] = useState(emptyForm);
+  const [form, setForm] = useState(emptyForm());
+  const [resumeFile, setResumeFile] = useState<File | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -58,7 +104,8 @@ export function NewSchemaAccountsView() {
 
   function startCreate() {
     setEditingId(null);
-    setForm(emptyForm);
+    setForm(emptyForm());
+    setResumeFile(null);
     setFormError(null);
     setShowForm(true);
   }
@@ -66,7 +113,8 @@ export function NewSchemaAccountsView() {
   function startEdit(profile: Profile) {
     setEditingId(profile.u_id);
     setForm({
-      name: profile.name,
+      firstName: profile.first_name || profile.name.split(/\s+/)[0] || '',
+      lastName: profile.last_name ?? profile.name.split(/\s+/).slice(1).join(' '),
       email: profile.email,
       address: profile.address,
       sex: profile.sex,
@@ -75,7 +123,34 @@ export function NewSchemaAccountsView() {
       country: profile.country,
       city: profile.city,
       categoryId: String(profile.category_id),
+      education: (profile.education || []).map((item) => ({
+        school: item.school || '',
+        qualification: item.qualification || '',
+        fieldOfStudy: item.fieldOfStudy || '',
+        startDate: item.startDate || '',
+        endDate: item.endDate || '',
+        description: item.description || '',
+      })),
+      workExperience: (profile.work_experience || []).map((item) => ({
+        employer: item.employer || '',
+        jobTitle: item.jobTitle || '',
+        location: item.location || '',
+        startDate: item.startDate || '',
+        endDate: item.endDate || '',
+        currentRole: Boolean(item.currentRole),
+        description: item.description || '',
+      })),
+      customFields: (profile.custom_fields || []).map((item) => ({
+        fieldName: item.fieldName || '',
+        value: item.value || '',
+      })),
+      customAnswers: (profile.custom_answers || []).map((item) => ({
+        topic: item.topic || '',
+        question: item.question || '',
+        answer: item.answer || '',
+      })),
     });
+    setResumeFile(null);
     setFormError(null);
     setShowForm(true);
   }
@@ -86,7 +161,8 @@ export function NewSchemaAccountsView() {
     setSaving(true);
     setFormError(null);
     const payload = {
-      name: form.name.trim(),
+      firstName: form.firstName.trim(),
+      lastName: form.lastName.trim(),
       email: form.email.trim(),
       address: form.address.trim(),
       sex: form.sex,
@@ -95,16 +171,50 @@ export function NewSchemaAccountsView() {
       country: form.country.trim(),
       city: form.city.trim(),
       categoryId: Number(form.categoryId),
+      education: form.education.map((item) => ({
+        ...item,
+        fieldOfStudy: item.fieldOfStudy.trim() || null,
+        startDate: item.startDate || null,
+        endDate: item.endDate || null,
+        description: item.description.trim() || null,
+      })),
+      workExperience: form.workExperience.map((item) => ({
+        ...item,
+        location: item.location.trim() || null,
+        startDate: item.startDate || null,
+        endDate: item.currentRole ? null : item.endDate || null,
+        description: item.description.trim() || null,
+      })),
+      customFields: form.customFields.map((item) => ({
+        fieldName: item.fieldName.trim(),
+        value: item.value.trim(),
+      })),
+      customAnswers: form.customAnswers.map((item) => ({
+        topic: item.topic.trim(),
+        question: item.question.trim(),
+        answer: item.answer.trim(),
+      })),
     };
     const result = editingId
-      ? await api<{ success: boolean; message?: string }>('PUT', `/api/v2/users/${editingId}`, payload)
-      : await api<{ success: boolean; message?: string }>('POST', '/api/v2/users', { ...payload, role: 'account' });
+      ? await api<{ success: boolean; message?: string; account?: { u_id: number } }>('PUT', `/api/v2/users/${editingId}`, payload)
+      : await api<{ success: boolean; message?: string; account?: { u_id: number } }>('POST', '/api/v2/users', { ...payload, role: 'account' });
     if (!result.success) {
       setFormError(result.message || 'Could not save Account profile.');
       setSaving(false);
       return;
     }
+    const accountId = editingId ?? result.account?.u_id;
+    if (resumeFile && accountId) {
+      const upload = await uploadPdf(`/api/v2/users/${accountId}/resume`, resumeFile);
+      if (!upload.success) {
+        setFormError(upload.message || 'Profile saved, but the resume upload failed.');
+        setSaving(false);
+        await load();
+        return;
+      }
+    }
     setShowForm(false);
+    setResumeFile(null);
     try {
       await load();
     } finally {
@@ -127,7 +237,7 @@ export function NewSchemaAccountsView() {
       {error && <div className="alert alert-error">{error}</div>}
       <div className="search-row"><button className="btn btn-primary" type="button" onClick={startCreate}>+ Add Account Profile</button></div>
       <div className="card">
-        {loading ? <div className="text-muted">Loading…</div> : (
+        {loading ? <LoadingState label="Loading…" /> : (
           <div className="table-scroll"><table>
             <thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>City</th><th>Category</th><th /></tr></thead>
             <tbody>{profiles.map((profile) => (
@@ -157,16 +267,19 @@ export function NewSchemaAccountsView() {
       >
         <form id="account-profile-form" onSubmit={(event) => { void save(event); }}>
           {([
-            ['name', 'Name'], ['email', 'Email'], ['address', 'Address'], ['sex', 'Sex'],
+            ['firstName', 'First name'], ['lastName', 'Last name'], ['email', 'Email'],
+            ['address', 'Address'], ['sex', 'Sex'],
             ['birthday', 'Birthday'], ['phone', 'Phone'], ['country', 'Country'], ['city', 'City'],
           ] as const).map(([key, label]) => (
             <div className="form-group" key={key}>
-              <label htmlFor={`account-${key}`}>{label}</label>
+              <label htmlFor={`account-${key}`}>
+                {label}{key === 'lastName' ? ' (if applicable)' : ''}
+              </label>
               <input
                 id={`account-${key}`}
                 type={key === 'email' ? 'email' : key === 'birthday' ? 'date' : 'text'}
-                required
-                maxLength={key === 'address' ? 500 : key === 'country' || key === 'city' ? 100 : key === 'sex' ? 50 : undefined}
+                required={key !== 'lastName'}
+                maxLength={key === 'firstName' || key === 'lastName' ? 100 : key === 'address' ? 500 : key === 'country' || key === 'city' ? 100 : key === 'sex' ? 50 : undefined}
                 value={form[key]}
                 onChange={(event) => setForm({ ...form, [key]: event.target.value })}
               />
@@ -179,6 +292,199 @@ export function NewSchemaAccountsView() {
               {categories.map((category) => <option key={category.category_id} value={category.category_id}>{category.category_title}</option>)}
             </select>
           </div>
+          <h3>Resume</h3>
+          {editingId && profiles.find((profile) => profile.u_id === editingId)?.has_resume && (
+            <p className="text-muted">
+              Current PDF: {profiles.find((profile) => profile.u_id === editingId)?.resume_file_name || 'resume.pdf'}
+            </p>
+          )}
+          <div className="form-group">
+            <label htmlFor="account-resume">Current resume (PDF, maximum 4 MB)</label>
+            <input id="account-resume" type="file" accept="application/pdf,.pdf"
+              onChange={(event) => setResumeFile(event.target.files?.[0] || null)} />
+          </div>
+          <h3>Education</h3>
+          {form.education.map((item, index) => (
+            <fieldset className="card" key={index}>
+              <legend>Education {index + 1}</legend>
+              {([
+                ['school', 'School'], ['qualification', 'Degree or qualification'],
+                ['fieldOfStudy', 'Field of study'], ['startDate', 'Start date'],
+                ['endDate', 'End date'], ['description', 'Description'],
+              ] as const).map(([key, label]) => (
+                <div className="form-group" key={key}>
+                  <label htmlFor={`education-${index}-${key}`}>{label}</label>
+                  {key === 'description' ? (
+                    <textarea id={`education-${index}-${key}`} maxLength={2000} value={item[key]}
+                      onChange={(event) => {
+                        const education = [...form.education];
+                        education[index] = { ...item, [key]: event.target.value };
+                        setForm({ ...form, education });
+                      }} />
+                  ) : (
+                    <input id={`education-${index}-${key}`}
+                      type={key === 'startDate' || key === 'endDate' ? 'date' : 'text'}
+                      required={key === 'school' || key === 'qualification'}
+                      maxLength={key === 'school' ? 300 : 200} value={item[key]}
+                      onChange={(event) => {
+                        const education = [...form.education];
+                        education[index] = { ...item, [key]: event.target.value };
+                        setForm({ ...form, education });
+                      }} />
+                  )}
+                </div>
+              ))}
+              <button className="btn btn-ghost" type="button"
+                onClick={() => setForm({ ...form, education: form.education.filter((_, row) => row !== index) })}>
+                Remove education
+              </button>
+            </fieldset>
+          ))}
+          <button className="btn btn-ghost" type="button" onClick={() => setForm({
+            ...form,
+            education: [...form.education, {
+              school: '', qualification: '', fieldOfStudy: '', startDate: '', endDate: '', description: '',
+            }],
+          })}>Add education</button>
+
+          <h3>Work experience</h3>
+          {form.workExperience.map((item, index) => (
+            <fieldset className="card" key={index}>
+              <legend>Experience {index + 1}</legend>
+              {([
+                ['employer', 'Employer'], ['jobTitle', 'Job title'], ['location', 'Location'],
+                ['startDate', 'Start date'], ['endDate', 'End date'], ['description', 'Description'],
+              ] as const).map(([key, label]) => (
+                <div className="form-group" key={key}>
+                  <label htmlFor={`experience-${index}-${key}`}>{label}</label>
+                  {key === 'description' ? (
+                    <textarea id={`experience-${index}-${key}`} maxLength={3000} value={item[key]}
+                      onChange={(event) => {
+                        const workExperience = [...form.workExperience];
+                        workExperience[index] = { ...item, [key]: event.target.value };
+                        setForm({ ...form, workExperience });
+                      }} />
+                  ) : key === 'endDate' && item.currentRole ? (
+                    <input id={`experience-${index}-${key}`} value="Current role" disabled />
+                  ) : (
+                    <input id={`experience-${index}-${key}`}
+                      type={key === 'startDate' || key === 'endDate' ? 'date' : 'text'}
+                      required={key === 'employer' || key === 'jobTitle'}
+                      maxLength={300} value={item[key]}
+                      onChange={(event) => {
+                        const workExperience = [...form.workExperience];
+                        workExperience[index] = { ...item, [key]: event.target.value };
+                        setForm({ ...form, workExperience });
+                      }} />
+                  )}
+                </div>
+              ))}
+              <div className="form-group">
+                <label htmlFor={`experience-${index}-current`}>This is my current role</label>
+                <input id={`experience-${index}-current`} type="checkbox" checked={item.currentRole}
+                  onChange={(event) => {
+                    const workExperience = [...form.workExperience];
+                    workExperience[index] = { ...item, currentRole: event.target.checked, endDate: '' };
+                    setForm({ ...form, workExperience });
+                  }} />
+              </div>
+              <button className="btn btn-ghost" type="button"
+                onClick={() => setForm({ ...form, workExperience: form.workExperience.filter((_, row) => row !== index) })}>
+                Remove experience
+              </button>
+            </fieldset>
+          ))}
+          <button className="btn btn-ghost" type="button" onClick={() => setForm({
+            ...form,
+            workExperience: [...form.workExperience, {
+              employer: '', jobTitle: '', location: '', startDate: '', endDate: '',
+              currentRole: false, description: '',
+            }],
+          })}>Add work experience</button>
+          <h3>Additional application facts</h3>
+          <p className="text-muted">
+            These name-and-value facts belong to this Account only. For example, “Work authorization expiry” → “2028-04-30”.
+          </p>
+          {form.customFields.map((item, index) => (
+            <fieldset className="card" key={index}>
+              <legend>Additional fact {index + 1}</legend>
+              <div className="form-group">
+                <label htmlFor={`account-custom-field-name-${index}`}>Field name</label>
+                <input id={`account-custom-field-name-${index}`} required maxLength={100}
+                  value={item.fieldName}
+                  onChange={(event) => {
+                    const customFields = [...form.customFields];
+                    customFields[index] = { ...item, fieldName: event.target.value };
+                    setForm({ ...form, customFields });
+                  }} />
+              </div>
+              <div className="form-group">
+                <label htmlFor={`account-custom-field-value-${index}`}>Value</label>
+                <textarea id={`account-custom-field-value-${index}`} required maxLength={4000}
+                  value={item.value}
+                  onChange={(event) => {
+                    const customFields = [...form.customFields];
+                    customFields[index] = { ...item, value: event.target.value };
+                    setForm({ ...form, customFields });
+                  }} />
+              </div>
+              <button className="btn btn-ghost" type="button"
+                onClick={() => setForm({ ...form, customFields: form.customFields.filter((_, row) => row !== index) })}>
+                Remove additional fact
+              </button>
+            </fieldset>
+          ))}
+          <button className="btn btn-ghost" type="button" onClick={() => setForm({
+            ...form,
+            customFields: [...form.customFields, { fieldName: '', value: '' }],
+          })}>Add additional fact</button>
+          <h3>Reusable application questions and answers</h3>
+          <p className="text-muted">
+            These answers belong to this Account and are reused only when an application question matches.
+          </p>
+          {form.customAnswers.map((item, index) => (
+            <fieldset className="card" key={index}>
+              <legend>Saved answer {index + 1}</legend>
+              <div className="form-group">
+                <label htmlFor={`account-answer-topic-${index}`}>Topic</label>
+                <input id={`account-answer-topic-${index}`} required maxLength={100} value={item.topic}
+                  onChange={(event) => {
+                    const customAnswers = [...form.customAnswers];
+                    customAnswers[index] = { ...item, topic: event.target.value };
+                    setForm({ ...form, customAnswers });
+                  }} />
+              </div>
+              <div className="form-group">
+                <label htmlFor={`account-answer-question-${index}`}>Application question</label>
+                <textarea id={`account-answer-question-${index}`} required maxLength={1000} value={item.question}
+                  onChange={(event) => {
+                    const customAnswers = [...form.customAnswers];
+                    customAnswers[index] = { ...item, question: event.target.value };
+                    setForm({ ...form, customAnswers });
+                  }} />
+              </div>
+              <div className="form-group">
+                <label htmlFor={`account-answer-value-${index}`}>Reusable answer</label>
+                <textarea id={`account-answer-value-${index}`} required maxLength={4000} value={item.answer}
+                  onChange={(event) => {
+                    const customAnswers = [...form.customAnswers];
+                    customAnswers[index] = { ...item, answer: event.target.value };
+                    setForm({ ...form, customAnswers });
+                  }} />
+              </div>
+              <button className="btn btn-ghost" type="button"
+                onClick={() => setForm({
+                  ...form,
+                  customAnswers: form.customAnswers.filter((_, row) => row !== index),
+                })}>
+                Remove saved answer
+              </button>
+            </fieldset>
+          ))}
+          <button className="btn btn-ghost" type="button" onClick={() => setForm({
+            ...form,
+            customAnswers: [...form.customAnswers, { topic: '', question: '', answer: '' }],
+          })}>Add reusable question and answer</button>
         </form>
         {formError && <div className="alert alert-error">{formError}</div>}
       </Modal>

@@ -139,47 +139,7 @@ function maskDatabaseUrl(url) {
         return '[configured]';
     }
 }
-async function tableExists(table) {
-    const row = await queryOne(`SELECT EXISTS (
-      SELECT 1 FROM information_schema.tables
-      WHERE table_schema = 'public' AND table_name = $1
-    ) AS exists`, [table]);
-    return Boolean(row?.exists);
-}
-async function migrateLegacyAccountSchema() {
-    const oldTeamTable = 'bidders';
-    const oldTeamSiteTable = 'bidder_job_sites';
-    const newTeamTable = 'accounts';
-    const newTeamSiteTable = 'account_job_sites';
-    if (await tableExists(oldTeamTable)) {
-        if (await tableExists(newTeamTable)) {
-            throw new Error('Both legacy bidder and account tables exist; resolve the table conflict before starting.');
-        }
-        await execute(`ALTER TABLE ${oldTeamTable} RENAME TO ${newTeamTable}`);
-    }
-    if (await tableExists(oldTeamSiteTable)) {
-        if (await tableExists(newTeamSiteTable)) {
-            throw new Error('Both legacy bidder job-site and account job-site tables exist; resolve the table conflict before starting.');
-        }
-        await execute(`ALTER TABLE ${oldTeamSiteTable} RENAME TO ${newTeamSiteTable}`);
-    }
-    const legacyColumn = 'bidder_id';
-    const accountColumn = 'account_id';
-    for (const table of ['admins', 'candidates', 'jobs', 'interview_processes', 'application_sessions', newTeamSiteTable]) {
-        if (!(await tableExists(table)))
-            continue;
-        const hasLegacyColumn = await columnExists(table, legacyColumn);
-        const hasAccountColumn = await columnExists(table, accountColumn);
-        if (hasLegacyColumn && hasAccountColumn) {
-            throw new Error(`Both legacy bidder_id and account_id columns exist in ${table}; resolve the column conflict before starting.`);
-        }
-        if (hasLegacyColumn) {
-            await execute(`ALTER TABLE ${table} RENAME COLUMN ${legacyColumn} TO ${accountColumn}`);
-        }
-    }
-}
 async function runMigrations() {
-    await migrateLegacyAccountSchema();
     await execute(`
     CREATE TABLE IF NOT EXISTS categories (
       category_id SERIAL PRIMARY KEY,
@@ -218,24 +178,159 @@ async function runMigrations() {
     )
   `);
     await execute(`
+    CREATE TABLE IF NOT EXISTS custom_gpts (
+      custom_gpt_id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      url TEXT NOT NULL UNIQUE,
+      gpt_id TEXT NOT NULL UNIQUE,
+      created_by INTEGER REFERENCES users(u_id) ON DELETE SET NULL,
+      created_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_date TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+    await execute(`
+    CREATE TABLE IF NOT EXISTS manager_custom_gpt_assignments (
+      manager_user_id INTEGER PRIMARY KEY REFERENCES users(u_id) ON DELETE CASCADE,
+      custom_gpt_id INTEGER NOT NULL REFERENCES custom_gpts(custom_gpt_id) ON DELETE RESTRICT,
+      assigned_by INTEGER REFERENCES users(u_id) ON DELETE SET NULL,
+      assigned_date TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+    await execute(`
+    CREATE TABLE IF NOT EXISTS admins (
+      id SERIAL PRIMARY KEY,
+      username TEXT NOT NULL UNIQUE,
+      password_encrypted TEXT,
+      role TEXT NOT NULL CHECK (role IN ('super', 'admin', 'manager', 'account', 'caller')),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+    await execute(`
+    CREATE TABLE IF NOT EXISTS accounts (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      notes TEXT,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      manager_id INTEGER REFERENCES admins(id) ON DELETE SET NULL,
+      custom_gpt_url TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+    await execute(`
+    ALTER TABLE admins
+      ADD COLUMN IF NOT EXISTS account_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL
+  `);
+    await execute(`
+    CREATE TABLE IF NOT EXISTS candidates (
+      id SERIAL PRIMARY KEY,
+      account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      email TEXT,
+      phone TEXT,
+      linkedin_url TEXT,
+      notes TEXT,
+      color TEXT,
+      stack TEXT,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+    await execute(`
     CREATE TABLE IF NOT EXISTS job_list (
       j_id SERIAL PRIMARY KEY,
       u_id INTEGER NOT NULL REFERENCES users(u_id) ON DELETE RESTRICT,
-      url TEXT NOT NULL UNIQUE,
+      url TEXT NOT NULL,
+      application_type TEXT NOT NULL DEFAULT 'unknown',
       company TEXT NOT NULL,
       title TEXT NOT NULL,
       category_ids INTEGER[] NOT NULL DEFAULT ARRAY[]::INTEGER[],
-      selected_account_u_ids INTEGER[] NOT NULL DEFAULT ARRAY[]::INTEGER[],
       status TEXT NOT NULL DEFAULT 'todo'
         CHECK (status IN ('processing', 'todo', 'did', 'failed')),
       get_date TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+    await execute('ALTER TABLE job_list ADD COLUMN IF NOT EXISTS application_type TEXT NOT NULL DEFAULT \'unknown\'');
+    await execute(`
+    UPDATE job_list
+    SET application_type = CASE
+      WHEN url ~* '^https?://[^/]*[.]workable[.]com/([^?]*?/)?j/[^/?#]+'
+        THEN 'workable'
+      ELSE regexp_replace(
+        split_part(split_part(split_part(lower(url), '://', 2), '/', 1), ':', 1),
+        '^www[.]',
+        ''
+      )
+    END
+    WHERE application_type = 'unknown'
+  `);
+    await execute('ALTER TABLE job_list DROP CONSTRAINT IF EXISTS job_list_url_key');
+    await execute(`
+    CREATE TABLE IF NOT EXISTS job_account_assignments (
+      job_account_assignment_id SERIAL PRIMARY KEY,
+      j_id INTEGER NOT NULL REFERENCES job_list(j_id) ON DELETE CASCADE,
+      account_user_id INTEGER NOT NULL REFERENCES users(u_id) ON DELETE CASCADE,
+      position INTEGER NOT NULL CHECK (position > 0),
+      UNIQUE (j_id, account_user_id),
+      UNIQUE (j_id, position)
+    )
+  `);
+    await execute(`
+    CREATE TABLE IF NOT EXISTS account_apply_runs (
+      account_user_id INTEGER PRIMARY KEY REFERENCES users(u_id) ON DELETE CASCADE,
+      manager_user_id INTEGER NOT NULL REFERENCES users(u_id) ON DELETE CASCADE,
+      run_id UUID NOT NULL,
+      last_activity_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+    await withTransaction(async (tx) => {
+        await tx.query('LOCK TABLE job_list IN ACCESS EXCLUSIVE MODE');
+        const legacyColumn = await tx.query(`SELECT EXISTS (
+         SELECT 1 FROM information_schema.columns
+         WHERE table_schema = current_schema()
+           AND table_name = 'job_list'
+           AND column_name = 'selected_account_u_ids'
+       ) AS has_legacy_column`);
+        if (legacyColumn.rows[0].has_legacy_column) {
+            const invalidAssignments = await tx.query(`SELECT COUNT(*)::int AS count
+         FROM job_list job
+         CROSS JOIN LATERAL unnest(
+           COALESCE(job.selected_account_u_ids, ARRAY[]::INTEGER[])
+         ) AS selected(account_user_id)
+         LEFT JOIN users account ON account.u_id = selected.account_user_id
+         WHERE account.u_id IS NULL
+           OR account.role <> 'account'
+           OR account.parent_user_id <> job.u_id`);
+            const invalidCount = Number(invalidAssignments.rows[0].count);
+            if (invalidCount > 0) {
+                throw new Error(`Cannot migrate job Account assignments: ${invalidCount} legacy assignment(s) reference a missing or differently owned Account.`);
+            }
+            await tx.query(`
+        INSERT INTO job_account_assignments (j_id, account_user_id, position)
+        SELECT DISTINCT ON (job.j_id, selected.account_user_id)
+               job.j_id, selected.account_user_id, selected.position::int
+        FROM job_list job
+        CROSS JOIN LATERAL unnest(
+          COALESCE(job.selected_account_u_ids, ARRAY[]::INTEGER[])
+        ) WITH ORDINALITY AS selected(account_user_id, position)
+        ORDER BY job.j_id, selected.account_user_id, selected.position
+        ON CONFLICT (j_id, account_user_id) DO NOTHING
+      `);
+            await tx.query('DROP INDEX IF EXISTS idx_job_list_selected_accounts');
+            await tx.query('ALTER TABLE job_list DROP COLUMN selected_account_u_ids');
+        }
+    });
     await execute(`
     CREATE TABLE IF NOT EXISTS bids (
       b_id SERIAL PRIMARY KEY,
       u_id INTEGER NOT NULL REFERENCES users(u_id) ON DELETE RESTRICT,
-      j_id INTEGER NOT NULL REFERENCES job_list(j_id) ON DELETE RESTRICT,
+      j_id INTEGER NOT NULL,
+      manager_user_id INTEGER NOT NULL REFERENCES users(u_id) ON DELETE RESTRICT,
+      job_title TEXT NOT NULL,
+      company TEXT NOT NULL,
+      job_url TEXT NOT NULL,
       resume_path TEXT NOT NULL,
       applied_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       UNIQUE (u_id, j_id)
@@ -267,131 +362,28 @@ async function runMigrations() {
       updated_date TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
-    await execute('CREATE INDEX IF NOT EXISTS idx_users_parent ON users(parent_user_id)');
-    await execute('CREATE INDEX IF NOT EXISTS idx_users_role_parent ON users(role, parent_user_id)');
-    await execute('CREATE INDEX IF NOT EXISTS idx_users_category ON users(category_id)');
-    await execute('CREATE INDEX IF NOT EXISTS idx_job_list_manager ON job_list(u_id)');
-    await execute('CREATE INDEX IF NOT EXISTS idx_job_list_categories ON job_list USING GIN(category_ids)');
-    await execute('CREATE INDEX IF NOT EXISTS idx_job_list_selected_accounts ON job_list USING GIN(selected_account_u_ids)');
-    await execute('CREATE INDEX IF NOT EXISTS idx_bids_user ON bids(u_id)');
-    await execute('CREATE INDEX IF NOT EXISTS idx_bids_job ON bids(j_id)');
-    await execute('CREATE INDEX IF NOT EXISTS idx_interviews_bid ON interviews(b_id)');
-    await execute('CREATE INDEX IF NOT EXISTS idx_interviews_caller ON interviews(caller_user_id)');
-    await execute('CREATE INDEX IF NOT EXISTS idx_interviews_outcome_date ON interviews(outcome, interview_date)');
-    await execute(`
-    CREATE TABLE IF NOT EXISTS admins (
-      id SERIAL PRIMARY KEY,
-      username TEXT NOT NULL UNIQUE,
-      password_hash TEXT NOT NULL,
-      role TEXT NOT NULL DEFAULT 'admin',
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
-    await execute(`
-    CREATE TABLE IF NOT EXISTS candidates (
-      id SERIAL PRIMARY KEY,
-      name TEXT NOT NULL,
-      email TEXT,
-      phone TEXT,
-      linkedin_url TEXT,
-      notes TEXT,
-      color TEXT,
-      is_active BOOLEAN NOT NULL DEFAULT TRUE,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
-    await execute(`
-    CREATE TABLE IF NOT EXISTS jobs (
-      id SERIAL PRIMARY KEY,
-      title TEXT NOT NULL,
-      company TEXT NOT NULL,
-      url TEXT NOT NULL UNIQUE,
-      normalized_url TEXT NOT NULL UNIQUE,
-      description TEXT NOT NULL,
-      source TEXT,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
-    await execute(`
-    CREATE TABLE IF NOT EXISTS candidate_jobs (
-      id SERIAL PRIMARY KEY,
-      candidate_id INTEGER NOT NULL REFERENCES candidates(id) ON DELETE CASCADE,
-      job_id INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
-      status TEXT NOT NULL DEFAULT 'none' CHECK (status IN ('none', 'applied')),
-      applied_at TIMESTAMPTZ,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      UNIQUE (candidate_id, job_id)
-    )
-  `);
-    await execute(`
-    CREATE TABLE IF NOT EXISTS settings (
-      key TEXT PRIMARY KEY,
-      value TEXT,
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
-    await execute(`
-    CREATE TABLE IF NOT EXISTS accounts (
-      id SERIAL PRIMARY KEY,
-      name TEXT NOT NULL,
-      notes TEXT,
-      is_active BOOLEAN NOT NULL DEFAULT TRUE,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
-    await execute(`
-    CREATE TABLE IF NOT EXISTS interview_processes (
-      id SERIAL PRIMARY KEY,
-      candidate_id INTEGER REFERENCES candidates(id) ON DELETE SET NULL,
-      candidate_name TEXT NOT NULL,
-      caller_user_id INTEGER REFERENCES admins(id) ON DELETE SET NULL,
-      account_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL,
-      scheduled_date DATE,
-      attend_date DATE,
-      interview_time TEXT,
-      timezone TEXT NOT NULL DEFAULT 'UTC',
-      position TEXT,
-      company TEXT,
-      job_url TEXT,
-      resume TEXT,
-      meeting_url TEXT,
-      salary TEXT,
-      stage TEXT,
-      created_by_user_id INTEGER REFERENCES admins(id) ON DELETE SET NULL,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
-    await execute('CREATE INDEX IF NOT EXISTS idx_jobs_company ON jobs(company)');
-    await execute('CREATE INDEX IF NOT EXISTS idx_jobs_title ON jobs(title)');
-    await execute('CREATE INDEX IF NOT EXISTS idx_candidate_jobs_candidate ON candidate_jobs(candidate_id)');
-    await execute('CREATE INDEX IF NOT EXISTS idx_candidate_jobs_job ON candidate_jobs(job_id)');
-    await execute('CREATE INDEX IF NOT EXISTS idx_candidate_jobs_status ON candidate_jobs(status)');
-    await execute('CREATE INDEX IF NOT EXISTS idx_candidate_jobs_applied_at ON candidate_jobs(applied_at)');
     await execute(`
     CREATE TABLE IF NOT EXISTS application_sessions (
-      id SERIAL PRIMARY KEY,
+      id BIGSERIAL PRIMARY KEY,
       candidate_id INTEGER NOT NULL REFERENCES candidates(id) ON DELETE CASCADE,
-      job_id INTEGER REFERENCES jobs(id) ON DELETE SET NULL,
-      user_id INTEGER NOT NULL REFERENCES admins(id) ON DELETE CASCADE,
+      job_id INTEGER REFERENCES job_list(j_id) ON DELETE SET NULL,
+      user_id INTEGER NOT NULL REFERENCES users(u_id) ON DELETE RESTRICT,
       account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
       job_url TEXT NOT NULL,
-      normalized_url TEXT,
+      normalized_url TEXT NOT NULL,
       job_title TEXT,
       company TEXT,
       job_description TEXT,
       platform TEXT,
-      current_step TEXT NOT NULL DEFAULT 'init',
-      discovered_pages JSONB NOT NULL DEFAULT '[]',
-      generated_answers JSONB NOT NULL DEFAULT '{}',
-      status TEXT NOT NULL DEFAULT 'active'
-        CHECK (status IN ('active', 'scanning', 'filling', 'awaiting_ai', 'completed', 'abandoned', 'error')),
-      metadata JSONB NOT NULL DEFAULT '{}',
+      current_step TEXT NOT NULL DEFAULT 'scan',
+      discovered_pages JSONB NOT NULL DEFAULT '[]'::jsonb,
+      generated_answers JSONB NOT NULL DEFAULT '{}'::jsonb,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      status TEXT NOT NULL DEFAULT 'scanning'
+        CHECK (status IN ('active', 'scanning', 'filling', 'awaiting_ai', 'apply', 'completed', 'abandoned', 'error')),
+      template_version TEXT,
+      page_fingerprint TEXT,
+      mode TEXT CHECK (mode IN ('DISCOVERY', 'REAL_APPLICATION')),
       started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       last_activity_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       completed_at TIMESTAMPTZ,
@@ -401,13 +393,13 @@ async function runMigrations() {
   `);
     await execute(`
     CREATE TABLE IF NOT EXISTS application_session_fields (
-      id SERIAL PRIMARY KEY,
-      session_id INTEGER NOT NULL REFERENCES application_sessions(id) ON DELETE CASCADE,
+      id BIGSERIAL PRIMARY KEY,
+      session_id BIGINT NOT NULL REFERENCES application_sessions(id) ON DELETE CASCADE,
       stable_field_id TEXT NOT NULL,
       label TEXT,
       field_type TEXT NOT NULL,
       required BOOLEAN NOT NULL DEFAULT FALSE,
-      options JSONB,
+      options JSONB NOT NULL DEFAULT '[]'::jsonb,
       current_value TEXT,
       placeholder TEXT,
       section_heading TEXT,
@@ -416,69 +408,489 @@ async function runMigrations() {
       name_attr TEXT,
       autocomplete_attr TEXT,
       validation_message TEXT,
-      selector_hints JSONB,
+      selector_hints JSONB NOT NULL DEFAULT '{}'::jsonb,
       field_fingerprint TEXT NOT NULL,
-      category TEXT NOT NULL DEFAULT 'unknown'
-        CHECK (category IN ('candidate_profile', 'saved_answer', 'ai_generation', 'document_upload', 'unknown')),
+      category TEXT NOT NULL DEFAULT 'unknown',
       profile_key TEXT,
       saved_answer_key TEXT,
       document_slot TEXT,
       fill_value TEXT,
-      fill_status TEXT NOT NULL DEFAULT 'pending'
-        CHECK (fill_status IN ('pending', 'filled', 'skipped', 'awaiting_answer', 'error', 'manual')),
+      fill_status TEXT NOT NULL DEFAULT 'pending',
       generated_answer TEXT,
+      match_method TEXT,
+      confidence NUMERIC(5,4),
+      status TEXT,
+      requires_review BOOLEAN NOT NULL DEFAULT FALSE,
+      status_reason TEXT,
       discovered_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       UNIQUE (session_id, stable_field_id)
     )
   `);
     await execute(`
+    CREATE TABLE IF NOT EXISTS application_session_documents (
+      session_id BIGINT NOT NULL REFERENCES application_sessions(id) ON DELETE CASCADE,
+      doc_type TEXT NOT NULL CHECK (doc_type IN ('resume', 'cover_letter')),
+      file_name TEXT NOT NULL,
+      content BYTEA NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (session_id, doc_type)
+    )
+  `);
+    await execute(`
     CREATE TABLE IF NOT EXISTS candidate_saved_answers (
-      id SERIAL PRIMARY KEY,
+      id BIGSERIAL PRIMARY KEY,
       candidate_id INTEGER NOT NULL REFERENCES candidates(id) ON DELETE CASCADE,
       answer_key TEXT NOT NULL,
       answer_value TEXT NOT NULL,
-      approved BOOLEAN NOT NULL DEFAULT TRUE,
+      approved BOOLEAN NOT NULL DEFAULT FALSE,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       UNIQUE (candidate_id, answer_key)
     )
   `);
-    await execute('CREATE INDEX IF NOT EXISTS idx_app_sessions_candidate ON application_sessions(candidate_id)');
-    await execute('CREATE INDEX IF NOT EXISTS idx_app_sessions_job ON application_sessions(job_id)');
-    await execute('CREATE INDEX IF NOT EXISTS idx_app_sessions_account ON application_sessions(account_id)');
-    await execute('CREATE INDEX IF NOT EXISTS idx_app_sessions_user ON application_sessions(user_id)');
-    await execute('CREATE INDEX IF NOT EXISTS idx_app_sessions_status ON application_sessions(status)');
-    await execute('CREATE INDEX IF NOT EXISTS idx_app_session_fields_session ON application_session_fields(session_id)');
-    await execute('CREATE INDEX IF NOT EXISTS idx_app_session_fields_category ON application_session_fields(category)');
-    await execute('CREATE INDEX IF NOT EXISTS idx_candidate_saved_answers_candidate ON candidate_saved_answers(candidate_id)');
     await execute(`
-    CREATE TABLE IF NOT EXISTS job_sites (
-      id SERIAL PRIMARY KEY,
-      name TEXT NOT NULL,
-      platform_key TEXT NOT NULL UNIQUE,
-      url_host TEXT,
-      notes TEXT,
-      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    CREATE TABLE IF NOT EXISTS application_site_templates (
+      template_id BIGSERIAL PRIMARY KEY,
+      site_key TEXT NOT NULL,
+      platform TEXT,
+      host TEXT,
+      template_version TEXT NOT NULL DEFAULT 'discovery-v1',
+      page_signature TEXT,
+      status TEXT NOT NULL DEFAULT 'draft'
+        CHECK (status IN ('draft', 'partial', 'active', 'deprecated')),
+      coverage JSONB NOT NULL DEFAULT '{}'::jsonb,
+      navigation JSONB NOT NULL DEFAULT '{}'::jsonb,
+      verification JSONB NOT NULL DEFAULT '{}'::jsonb,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      fields JSONB NOT NULL DEFAULT '[]'::jsonb,
+      validation_report JSONB NOT NULL DEFAULT '{}'::jsonb,
+      promoted_by INTEGER REFERENCES users(u_id) ON DELETE SET NULL,
+      promoted_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (site_key, template_version)
+    )
+  `);
+    await execute(`ALTER TABLE application_site_templates ADD COLUMN IF NOT EXISTS validation_report JSONB NOT NULL DEFAULT '{}'::jsonb`);
+    await execute(`ALTER TABLE application_site_templates ADD COLUMN IF NOT EXISTS promoted_by INTEGER REFERENCES users(u_id) ON DELETE SET NULL`);
+    await execute(`ALTER TABLE application_site_templates ADD COLUMN IF NOT EXISTS promoted_at TIMESTAMPTZ`);
+    await execute(`
+    CREATE INDEX IF NOT EXISTS idx_application_site_templates_lookup
+    ON application_site_templates (lower(host), platform, status, updated_at DESC)
+  `);
+    await execute(`
+    CREATE TABLE IF NOT EXISTS application_field_semantics (
+      id BIGSERIAL PRIMARY KEY,
+      stable_field_id TEXT NOT NULL,
+      normalized_question TEXT,
+      question_hash TEXT,
+      field_type TEXT,
+      section_heading TEXT,
+      inferred_semantic_group TEXT NOT NULL,
+      confidence NUMERIC(5,4) NOT NULL DEFAULT 0,
+      source_session_id BIGINT REFERENCES application_sessions(id) ON DELETE SET NULL,
+      source_template_id BIGINT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (stable_field_id, inferred_semantic_group)
+    )
+  `);
+    await execute(`
+    CREATE TABLE IF NOT EXISTS application_answer_policies (
+      id BIGSERIAL PRIMARY KEY,
+      semantic_id BIGINT REFERENCES application_field_semantics(id) ON DELETE CASCADE,
+      policy_type TEXT NOT NULL CHECK (policy_type IN ('reusable_profile','generated_ai','requires_review','manual_only','ignore')),
+      answer_source TEXT,
+      approved_by_user BOOLEAN NOT NULL DEFAULT FALSE,
+      confidence NUMERIC(5,4) NOT NULL DEFAULT 0,
+      observed_answer TEXT,
+      edited_answer TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
     await execute(`
-    CREATE TABLE IF NOT EXISTS account_job_sites (
-      id SERIAL PRIMARY KEY,
-      account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-      job_site_id INTEGER NOT NULL REFERENCES job_sites(id) ON DELETE CASCADE,
-      default_candidate_id INTEGER REFERENCES candidates(id) ON DELETE SET NULL,
-      admitted_by INTEGER REFERENCES admins(id) ON DELETE SET NULL,
-      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    CREATE TABLE IF NOT EXISTS application_learning_sessions (
+      id BIGSERIAL PRIMARY KEY,
+      session_id BIGINT REFERENCES application_sessions(id) ON DELETE CASCADE,
+      platform TEXT,
+      host TEXT,
+      template_key TEXT,
+      status TEXT NOT NULL DEFAULT 'learning'
+        CHECK (status IN ('learning','confirmed','rejected','archived')),
+      observed_steps JSONB NOT NULL DEFAULT '[]'::jsonb,
+      observed_fields JSONB NOT NULL DEFAULT '[]'::jsonb,
+      outcome_status TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      UNIQUE (account_id, job_site_id)
+      completed_at TIMESTAMPTZ
     )
   `);
+    await execute(`
+    CREATE TABLE IF NOT EXISTS application_learning_events (
+      id BIGSERIAL PRIMARY KEY,
+      learning_session_id BIGINT REFERENCES application_learning_sessions(id) ON DELETE CASCADE,
+      event_type TEXT NOT NULL,
+      field_stable_id TEXT,
+      payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+    await execute(`
+    CREATE INDEX IF NOT EXISTS idx_application_field_semantics_question_hash
+    ON application_field_semantics (question_hash)
+  `);
+    await execute(`
+    CREATE INDEX IF NOT EXISTS idx_application_field_semantics_group
+    ON application_field_semantics (inferred_semantic_group, confidence DESC)
+  `);
+    await execute(`
+    CREATE INDEX IF NOT EXISTS idx_application_answer_policies_semantic
+    ON application_answer_policies (semantic_id, policy_type)
+  `);
+    await execute('ALTER TABLE users ADD COLUMN IF NOT EXISTS managed_country TEXT');
+    await execute(`
+    CREATE TABLE IF NOT EXISTS manager_application_profiles (
+      manager_user_id INTEGER PRIMARY KEY REFERENCES users(u_id) ON DELETE CASCADE,
+      authorized_to_work BOOLEAN,
+      authorization_status TEXT,
+      sponsorship_required BOOLEAN,
+      authorization_expires_on DATE,
+      relocation_willing BOOLEAN DEFAULT FALSE,
+      relocation_details TEXT,
+      notice_period_value INTEGER CHECK (notice_period_value IS NULL OR notice_period_value >= 0),
+      notice_period_unit TEXT CHECK (notice_period_unit IS NULL OR notice_period_unit IN ('days', 'weeks', 'months')),
+      notice_period_text TEXT,
+      updated_date TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+    await execute(`
+    CREATE TABLE IF NOT EXISTS qts_schema_migrations (
+      migration_key TEXT PRIMARY KEY,
+      applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+    await withTransaction(async (tx) => {
+        const migration = await tx.query(`INSERT INTO qts_schema_migrations (migration_key)
+       VALUES ('20261010_manager_global_profile_scope')
+       ON CONFLICT (migration_key) DO NOTHING
+       RETURNING migration_key`);
+        if (!migration.rows.length)
+            return;
+        await tx.query(`
+      UPDATE manager_application_profiles
+      SET authorization_expires_on = NULL,
+          relocation_details = NULL,
+          relocation_willing = FALSE
+    `);
+    });
+    await execute(`
+    CREATE TABLE IF NOT EXISTS manager_salary_answers (
+      salary_answer_id SERIAL PRIMARY KEY,
+      manager_user_id INTEGER NOT NULL REFERENCES users(u_id) ON DELETE CASCADE,
+      currency TEXT NOT NULL CHECK (currency ~ '^[A-Z]{3}$'),
+      minimum_amount NUMERIC(14, 2),
+      maximum_amount NUMERIC(14, 2),
+      pay_period TEXT NOT NULL CHECK (pay_period IN ('hour', 'day', 'week', 'month', 'year')),
+      answer_text TEXT,
+      CHECK (minimum_amount IS NULL OR minimum_amount >= 0),
+      CHECK (maximum_amount IS NULL OR maximum_amount >= 0),
+      CHECK (minimum_amount IS NULL OR maximum_amount IS NULL OR maximum_amount >= minimum_amount)
+    )
+  `);
+    await execute(`
+    CREATE TABLE IF NOT EXISTS manager_custom_application_answers (
+      custom_answer_id SERIAL PRIMARY KEY,
+      manager_user_id INTEGER NOT NULL REFERENCES users(u_id) ON DELETE CASCADE,
+      topic TEXT NOT NULL,
+      question TEXT NOT NULL,
+      answer TEXT NOT NULL
+    )
+  `);
+    await execute(`
+    CREATE TABLE IF NOT EXISTS manager_application_template_rules (
+      rule_id BIGSERIAL PRIMARY KEY,
+      manager_user_id INTEGER NOT NULL REFERENCES users(u_id) ON DELETE CASCADE,
+      template_id BIGINT NOT NULL REFERENCES application_site_templates(template_id) ON DELETE CASCADE,
+      field_id TEXT NOT NULL,
+      semantic_key TEXT NOT NULL,
+      question TEXT NOT NULL,
+      strategy TEXT NOT NULL CHECK (strategy IN ('profile', 'reusable', 'generated', 'manual')),
+      profile_field_key TEXT,
+      reusable_answer_id INTEGER REFERENCES manager_custom_application_answers(custom_answer_id) ON DELETE SET NULL,
+      context JSONB NOT NULL DEFAULT '{}'::jsonb,
+      field_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
+      history JSONB NOT NULL DEFAULT '[]'::jsonb,
+      confirmed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (manager_user_id, template_id, field_id)
+    )
+  `);
+    await execute(`
+    CREATE INDEX IF NOT EXISTS idx_manager_template_rules_lookup
+    ON manager_application_template_rules (manager_user_id, template_id, semantic_key)
+  `);
+    await execute(`
+    ALTER TABLE manager_application_template_rules
+    ADD COLUMN IF NOT EXISTS field_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb
+  `);
+    await execute(`
+    CREATE TABLE IF NOT EXISTS account_application_profiles (
+      account_user_id INTEGER PRIMARY KEY REFERENCES users(u_id) ON DELETE CASCADE,
+      first_name TEXT NOT NULL,
+      last_name TEXT NOT NULL,
+      resume_file_name TEXT,
+      resume_content BYTEA,
+      education JSONB NOT NULL DEFAULT '[]'::jsonb,
+      work_experience JSONB NOT NULL DEFAULT '[]'::jsonb,
+      custom_fields JSONB NOT NULL DEFAULT '[]'::jsonb,
+      updated_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CHECK (resume_content IS NULL OR octet_length(resume_content) <= 4194304),
+      CHECK ((resume_content IS NULL) = (resume_file_name IS NULL))
+    )
+  `);
+    await execute(`
+    CREATE TABLE IF NOT EXISTS account_custom_application_answers (
+      custom_answer_id SERIAL PRIMARY KEY,
+      account_user_id INTEGER NOT NULL REFERENCES users(u_id) ON DELETE CASCADE,
+      topic TEXT NOT NULL,
+      question TEXT NOT NULL,
+      answer TEXT NOT NULL
+    )
+  `);
+    await execute(`
+    ALTER TABLE account_application_profiles
+    ADD COLUMN IF NOT EXISTS custom_fields JSONB NOT NULL DEFAULT '[]'::jsonb
+  `);
+    await execute(`
+    CREATE TABLE IF NOT EXISTS gpt_application_tasks (
+      task_id TEXT PRIMARY KEY,
+      job_id INTEGER NOT NULL REFERENCES job_list(j_id) ON DELETE CASCADE,
+      status TEXT NOT NULL DEFAULT 'waiting_for_page'
+        CHECK (status IN ('waiting_for_page', 'waiting_for_gpt', 'ready', 'failed', 'completed')),
+      page_number INTEGER NOT NULL DEFAULT 0 CHECK (page_number >= 0),
+      task_context JSONB NOT NULL DEFAULT '{}'::jsonb,
+      package JSONB NOT NULL DEFAULT '{}'::jsonb,
+      answers JSONB NOT NULL DEFAULT '[]'::jsonb,
+      resume_text TEXT,
+      resume_text_expires_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      last_activity_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+    await execute(`
+    CREATE TABLE IF NOT EXISTS gpt_application_task_documents (
+      task_id TEXT NOT NULL REFERENCES gpt_application_tasks(task_id) ON DELETE CASCADE,
+      document_type TEXT NOT NULL CHECK (document_type IN ('resume', 'cover_letter')),
+      file_name TEXT NOT NULL,
+      content BYTEA NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (task_id, document_type)
+    )
+  `);
+    await execute(`
+    ALTER TABLE gpt_application_tasks
+    ADD COLUMN IF NOT EXISTS answers JSONB NOT NULL DEFAULT '[]'::jsonb
+  `);
+    await execute(`
+    ALTER TABLE gpt_application_tasks
+    ADD COLUMN IF NOT EXISTS job_id INTEGER REFERENCES job_list(j_id) ON DELETE CASCADE
+  `);
+    await migrateAccountSpecificJobRows();
+    await execute(`
+    INSERT INTO account_application_profiles (account_user_id, first_name, last_name)
+    SELECT u.u_id,
+           split_part(trim(u.name), ' ', 1),
+           COALESCE(NULLIF(substr(trim(u.name), length(split_part(trim(u.name), ' ', 1)) + 2), ''), '')
+    FROM users u
+    WHERE u.role = 'account'
+    ON CONFLICT (account_user_id) DO NOTHING
+  `);
+    await withTransaction(async (tx) => {
+        const migration = await tx.query(`INSERT INTO qts_schema_migrations (migration_key)
+       VALUES ('20261010_account_single_name_profile_fix')
+       ON CONFLICT (migration_key) DO NOTHING
+       RETURNING migration_key`);
+        if (!migration.rows.length)
+            return;
+        await tx.query(`
+      UPDATE account_application_profiles profile
+      SET last_name = ''
+      FROM users account
+      WHERE account.u_id = profile.account_user_id
+        AND account.role = 'account'
+        AND position(' ' IN trim(account.name)) = 0
+        AND profile.first_name = trim(account.name)
+        AND profile.last_name = profile.first_name
+    `);
+    });
+    await execute(`
+    INSERT INTO app_settings (setting_name, setting_value)
+    VALUES ('application_submission_mode', 'manual')
+    ON CONFLICT (setting_name) DO NOTHING
+  `);
+    await execute(`
+    CREATE TABLE IF NOT EXISTS prompts (
+      prompt_id SERIAL PRIMARY KEY,
+      prompt_name TEXT NOT NULL UNIQUE,
+      prompt_content TEXT NOT NULL,
+      created_by INTEGER REFERENCES users(u_id) ON DELETE SET NULL,
+      updated_by INTEGER REFERENCES users(u_id) ON DELETE SET NULL,
+      created_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_date TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+    await execute('CREATE INDEX IF NOT EXISTS idx_users_parent ON users(parent_user_id)');
+    await execute('CREATE INDEX IF NOT EXISTS idx_users_role_parent ON users(role, parent_user_id)');
+    await execute('CREATE INDEX IF NOT EXISTS idx_users_category ON users(category_id)');
+    await execute('CREATE INDEX IF NOT EXISTS idx_job_list_manager ON job_list(u_id)');
+    await execute('CREATE INDEX IF NOT EXISTS idx_job_list_categories ON job_list USING GIN(category_ids)');
+    await execute('CREATE INDEX IF NOT EXISTS idx_job_account_assignments_account ON job_account_assignments(account_user_id, j_id)');
+    await execute('CREATE INDEX IF NOT EXISTS idx_bids_user ON bids(u_id)');
+    await execute('CREATE INDEX IF NOT EXISTS idx_bids_job ON bids(j_id)');
+    await execute('CREATE INDEX IF NOT EXISTS idx_interviews_bid ON interviews(b_id)');
+    await execute('CREATE INDEX IF NOT EXISTS idx_interviews_caller ON interviews(caller_user_id)');
+    await execute('CREATE INDEX IF NOT EXISTS idx_interviews_outcome_date ON interviews(outcome, interview_date)');
+    await execute('CREATE INDEX IF NOT EXISTS idx_manager_salary_answers_manager ON manager_salary_answers(manager_user_id)');
+    await execute('CREATE INDEX IF NOT EXISTS idx_manager_custom_answers_manager ON manager_custom_application_answers(manager_user_id)');
+    await execute('CREATE INDEX IF NOT EXISTS idx_account_custom_answers_account ON account_custom_application_answers(account_user_id)');
+    await execute('CREATE INDEX IF NOT EXISTS idx_account_application_profiles_account ON account_application_profiles(account_user_id)');
+    await execute('CREATE INDEX IF NOT EXISTS idx_job_list_manager_url ON job_list(u_id, url)');
+    await execute('CREATE INDEX IF NOT EXISTS idx_job_list_queue_type_status ON job_list(u_id, application_type, status, get_date)');
+    await execute('CREATE INDEX IF NOT EXISTS idx_gpt_application_tasks_resume_expiry ON gpt_application_tasks(resume_text_expires_at) WHERE resume_text IS NOT NULL');
     await migrateSchema();
+    await execute(`
+    DROP TABLE IF EXISTS
+      bidders, bidder_job_sites, account_job_sites, job_sites,
+      candidate_jobs, interview_processes, jobs, settings
+    CASCADE
+  `);
+    logger_1.logger.info('Legacy tables removed; new-schema data retained');
     logger_1.logger.info('Database migrations complete');
+}
+async function migrateAccountSpecificJobRows() {
+    await withTransaction(async (tx) => {
+        const attemptTable = await tx.query(`SELECT to_regclass('public.application_attempts') IS NOT NULL AS exists`);
+        const hasAttempts = Boolean(attemptTable.rows[0].exists);
+        const taskAttemptColumn = await tx.query(`SELECT EXISTS (
+         SELECT 1 FROM information_schema.columns
+         WHERE table_schema = current_schema()
+           AND table_name = 'gpt_application_tasks'
+           AND column_name = 'attempt_id'
+       ) AS exists`);
+        const hasTaskAttemptColumn = Boolean(taskAttemptColumn.rows[0].exists);
+        if (hasAttempts) {
+            await tx.query(`WITH missing AS (
+           SELECT attempt.j_id, attempt.account_user_id
+           FROM application_attempts attempt
+           JOIN users account ON account.u_id = attempt.account_user_id
+             AND account.role = 'account'
+           WHERE NOT EXISTS (
+             SELECT 1 FROM job_account_assignments assignment
+             WHERE assignment.j_id = attempt.j_id
+               AND assignment.account_user_id = attempt.account_user_id
+           )
+         ), numbered AS (
+           SELECT missing.j_id, missing.account_user_id,
+                  COALESCE((
+                    SELECT MAX(existing.position)
+                    FROM job_account_assignments existing WHERE existing.j_id = missing.j_id
+                  ), 0) + ROW_NUMBER() OVER (
+                    PARTITION BY missing.j_id ORDER BY missing.account_user_id
+                  ) AS position
+           FROM missing
+         )
+         INSERT INTO job_account_assignments (j_id, account_user_id, position)
+         SELECT j_id, account_user_id, position::int FROM numbered
+         ON CONFLICT (j_id, account_user_id) DO NOTHING`);
+        }
+        const assignedJobs = await tx.query(`SELECT job.j_id, job.u_id, job.url, job.application_type, job.company, job.title, job.category_ids,
+              job.status, job.get_date, assignment.job_account_assignment_id,
+              assignment.account_user_id
+       FROM job_list job
+       JOIN job_account_assignments assignment ON assignment.j_id = job.j_id
+       ORDER BY job.j_id, assignment.position, assignment.job_account_assignment_id`);
+        const rows = assignedJobs.rows;
+        let currentJobId = -1;
+        let keptFirstAccount = false;
+        for (const row of rows) {
+            if (Number(row.j_id) !== currentJobId) {
+                currentJobId = Number(row.j_id);
+                keptFirstAccount = false;
+            }
+            if (!keptFirstAccount) {
+                keptFirstAccount = true;
+                continue;
+            }
+            const inserted = await tx.query(`INSERT INTO job_list (u_id, url, application_type, company, title, category_ids, status, get_date)
+         VALUES ($1, $2, $3, $4, $5, $6::int[], $7, $8)
+         RETURNING j_id`, [
+                row.u_id, row.url, row.application_type, row.company,
+                row.title, row.category_ids, row.status, row.get_date,
+            ]);
+            const newJobId = Number(inserted.rows[0].j_id);
+            await tx.query(`UPDATE job_account_assignments
+         SET j_id = $1, position = 1
+         WHERE job_account_assignment_id = $2`, [newJobId, row.job_account_assignment_id]);
+            await tx.query('UPDATE bids SET j_id = $1 WHERE j_id = $2 AND u_id = $3', [newJobId, row.j_id, row.account_user_id]);
+            if (hasAttempts) {
+                await tx.query('UPDATE application_attempts SET j_id = $1 WHERE j_id = $2 AND account_user_id = $3', [newJobId, row.j_id, row.account_user_id]);
+            }
+        }
+        if (hasAttempts) {
+            await tx.query(`UPDATE job_list job
+         SET status = CASE
+           WHEN attempt.status = 'submitted' THEN 'did'
+           WHEN attempt.status = 'failed' THEN 'failed'
+           ELSE 'processing'
+         END
+         FROM application_attempts attempt
+         WHERE attempt.j_id = job.j_id
+           AND attempt.account_user_id = (
+             SELECT assignment.account_user_id
+             FROM job_account_assignments assignment
+             WHERE assignment.j_id = job.j_id
+             LIMIT 1
+           )`);
+        }
+        await tx.query(`UPDATE job_list job SET status = 'did'
+       FROM bids bid
+       JOIN job_account_assignments assignment
+         ON assignment.j_id = bid.j_id AND assignment.account_user_id = bid.u_id
+       WHERE job.j_id = bid.j_id AND job.status <> 'failed'`);
+        if (hasTaskAttemptColumn) {
+            if (!hasAttempts) {
+                throw new Error('GPT tasks still reference application attempts, but the attempt table is missing.');
+            }
+            await tx.query(`UPDATE gpt_application_tasks task
+         SET job_id = attempt.j_id
+         FROM application_attempts attempt
+         WHERE task.attempt_id = attempt.attempt_id AND task.job_id IS NULL`);
+            await tx.query(`UPDATE gpt_application_tasks
+         SET task_context = jsonb_set(
+           task_context,
+           '{jobContext,jobId}',
+           to_jsonb(job_id),
+           true
+         )
+         WHERE task_context->'jobContext' IS NOT NULL`);
+            const orphanedTasks = await tx.query('SELECT COUNT(*)::int AS count FROM gpt_application_tasks WHERE job_id IS NULL');
+            const orphanedCount = Number(orphanedTasks.rows[0].count);
+            if (orphanedCount) {
+                throw new Error(`Cannot migrate ${orphanedCount} GPT task(s) without a matching Account job row.`);
+            }
+            await tx.query('ALTER TABLE gpt_application_tasks DROP CONSTRAINT IF EXISTS gpt_application_tasks_attempt_id_fkey');
+            await tx.query('ALTER TABLE gpt_application_tasks DROP CONSTRAINT IF EXISTS gpt_application_tasks_attempt_id_key');
+            await tx.query('ALTER TABLE gpt_application_tasks DROP COLUMN attempt_id');
+        }
+        await tx.query('ALTER TABLE gpt_application_tasks ALTER COLUMN job_id SET NOT NULL');
+        await tx.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_gpt_application_tasks_job_id ON gpt_application_tasks(job_id)');
+        if (hasAttempts) {
+            await tx.query('DROP TABLE application_attempts');
+        }
+    });
 }
 async function columnExists(table, column) {
     const row = await queryOne(`SELECT EXISTS (
@@ -488,70 +900,62 @@ async function columnExists(table, column) {
     return Boolean(row?.exists);
 }
 async function migrateSchema() {
-    if (await tableExists('users') && !(await columnExists('users', 'must_change_password'))) {
+    if (!(await columnExists('users', 'must_change_password'))) {
         await execute(`ALTER TABLE users ADD COLUMN must_change_password BOOLEAN NOT NULL DEFAULT FALSE`);
     }
-    if (!(await columnExists('admins', 'role'))) {
-        await execute(`ALTER TABLE admins ADD COLUMN role TEXT NOT NULL DEFAULT 'admin'`);
-    }
-    if (!(await columnExists('candidates', 'color'))) {
-        await execute(`ALTER TABLE candidates ADD COLUMN color TEXT`);
-    }
-    if (!(await columnExists('admins', 'account_id'))) {
-        await execute(`ALTER TABLE admins ADD COLUMN account_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL`);
-    }
-    if (!(await columnExists('candidates', 'account_id'))) {
-        await execute(`ALTER TABLE candidates ADD COLUMN account_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL`);
-    }
-    if (!(await columnExists('candidates', 'stack'))) {
-        await execute(`ALTER TABLE candidates ADD COLUMN stack TEXT`);
-    }
-    if (!(await columnExists('jobs', 'account_id'))) {
-        await execute(`ALTER TABLE jobs ADD COLUMN account_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL`);
-    }
-    if (!(await columnExists('jobs', 'created_by_user_id'))) {
-        await execute(`ALTER TABLE jobs ADD COLUMN created_by_user_id INTEGER REFERENCES admins(id) ON DELETE SET NULL`);
-    }
-    if (!(await columnExists('accounts', 'manager_id'))) {
-        await execute(`ALTER TABLE accounts ADD COLUMN manager_id INTEGER REFERENCES admins(id) ON DELETE SET NULL`);
-    }
-    if (!(await columnExists('accounts', 'custom_gpt_url'))) {
-        await execute(`ALTER TABLE accounts ADD COLUMN custom_gpt_url TEXT`);
-    }
-    if (!(await columnExists('admins', 'password_encrypted'))) {
-        await execute(`ALTER TABLE admins ADD COLUMN password_encrypted TEXT`);
-    }
-    if (!(await columnExists('admins', 'is_active'))) {
-        await execute(`ALTER TABLE admins ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT TRUE`);
+    if (!(await columnExists('bids', 'resume_path'))) {
+        await execute(`ALTER TABLE bids ADD COLUMN resume_path TEXT`);
     }
     if (!(await columnExists('interviews', 'outcome'))) {
         await execute(`ALTER TABLE interviews ADD COLUMN outcome TEXT CHECK (outcome IN ('good', 'bad', 'normal'))`);
     }
-    if (!(await columnExists('application_session_fields', 'document_slot'))) {
-        await execute(`ALTER TABLE application_session_fields ADD COLUMN document_slot TEXT`);
+    await execute('ALTER TABLE bids ADD COLUMN IF NOT EXISTS manager_user_id INTEGER REFERENCES users(u_id) ON DELETE RESTRICT');
+    await execute('ALTER TABLE bids ADD COLUMN IF NOT EXISTS job_title TEXT');
+    await execute('ALTER TABLE bids ADD COLUMN IF NOT EXISTS company TEXT');
+    await execute('ALTER TABLE bids ADD COLUMN IF NOT EXISTS job_url TEXT');
+    await execute(`
+    UPDATE bids b SET
+      manager_user_id = j.u_id,
+      job_title = j.title,
+      company = j.company,
+      job_url = j.url
+    FROM job_list j
+    WHERE j.j_id = b.j_id AND (
+      b.manager_user_id IS NULL OR b.job_title IS NULL OR b.company IS NULL
+      OR b.job_url IS NULL
+    )
+  `);
+    const incompleteBids = await queryOne(`SELECT count(*)::int AS count FROM bids
+     WHERE manager_user_id IS NULL OR job_title IS NULL OR company IS NULL
+       OR job_url IS NULL`);
+    if (Number(incompleteBids?.count ?? 0) > 0) {
+        throw new Error('Cannot migrate bids: one or more bid records have no matching job-list snapshot.');
     }
-    await execute(`
-    ALTER TABLE application_session_fields
-    DROP CONSTRAINT IF EXISTS application_session_fields_category_check
-  `);
-    await execute(`
-    ALTER TABLE application_session_fields
-    ADD CONSTRAINT application_session_fields_category_check
-    CHECK (category IN ('candidate_profile', 'saved_answer', 'ai_generation', 'document_upload', 'unknown'))
-  `);
-    await execute(`UPDATE admins SET role = 'account' WHERE role IN ('user', 'bidder')`);
-    await execute('CREATE INDEX IF NOT EXISTS idx_candidates_account ON candidates(account_id)');
-    await execute('CREATE INDEX IF NOT EXISTS idx_candidates_account_active ON candidates(account_id, is_active)');
-    await execute('CREATE INDEX IF NOT EXISTS idx_jobs_account ON jobs(account_id)');
-    await execute('CREATE INDEX IF NOT EXISTS idx_admins_account ON admins(account_id)');
-    await execute('CREATE INDEX IF NOT EXISTS idx_admins_username ON admins(username)');
-    await execute('CREATE INDEX IF NOT EXISTS idx_candidate_jobs_status_job ON candidate_jobs(status, job_id)');
-    await execute('CREATE INDEX IF NOT EXISTS idx_accounts_manager ON accounts(manager_id)');
-    await execute('CREATE INDEX IF NOT EXISTS idx_interviews_caller ON interview_processes(caller_user_id)');
-    await execute('CREATE INDEX IF NOT EXISTS idx_interviews_account ON interview_processes(account_id)');
-    await execute('CREATE INDEX IF NOT EXISTS idx_job_sites_platform ON job_sites(platform_key)');
-    await execute('CREATE INDEX IF NOT EXISTS idx_account_job_sites_account ON account_job_sites(account_id)');
-    await execute('CREATE INDEX IF NOT EXISTS idx_account_job_sites_site ON account_job_sites(job_site_id)');
+    await execute('ALTER TABLE bids ALTER COLUMN manager_user_id SET NOT NULL');
+    await execute('ALTER TABLE bids ALTER COLUMN job_title SET NOT NULL');
+    await execute('ALTER TABLE bids ALTER COLUMN company SET NOT NULL');
+    await execute('ALTER TABLE bids ALTER COLUMN job_url SET NOT NULL');
+    await execute('ALTER TABLE bids DROP COLUMN IF EXISTS job_status');
+    await execute('ALTER TABLE bids DROP CONSTRAINT IF EXISTS bids_j_id_fkey');
+    await withTransaction(async (tx) => {
+        await tx.query(`INSERT INTO bids (
+         u_id, j_id, manager_user_id, job_title, company, job_url, resume_path
+       )
+       SELECT assignment.account_user_id, job.j_id, job.u_id, job.title, job.company,
+              job.url, 'account-profile:' || assignment.account_user_id::text
+       FROM job_list job
+       JOIN job_account_assignments assignment ON assignment.j_id = job.j_id
+       WHERE job.status = 'did'
+       ON CONFLICT (u_id, j_id) DO NOTHING`);
+        await tx.query(`DELETE FROM job_list job
+       WHERE job.status = 'did'
+         AND EXISTS (
+           SELECT 1 FROM job_account_assignments assignment
+           WHERE assignment.j_id = job.j_id
+         )`);
+    });
+    await execute('CREATE INDEX IF NOT EXISTS idx_bids_manager ON bids(manager_user_id)');
+    await execute('CREATE INDEX IF NOT EXISTS idx_bids_manager_url ON bids(manager_user_id, job_url)');
 }
 async function backupDb() {
     const backupDir = env_1.config.backupsPath;
@@ -595,7 +999,13 @@ function runPgDump(destination) {
     });
 }
 async function runLogicalBackup(destination) {
-    const tables = ['accounts', 'admins', 'candidates', 'jobs', 'candidate_jobs', 'interview_processes', 'settings', 'application_sessions', 'application_session_fields', 'candidate_saved_answers'];
+    const tables = [
+        'categories', 'users', 'job_list', 'job_account_assignments', 'bids', 'interviews', 'app_settings', 'prompts',
+        'custom_gpts', 'manager_custom_gpt_assignments',
+        'manager_application_profiles', 'manager_salary_answers', 'manager_custom_application_answers',
+        'account_application_profiles', 'account_custom_application_answers',
+        'gpt_application_tasks', 'gpt_application_task_documents',
+    ];
     const lines = [
         `-- ${branding_1.APP_NAME} PostgreSQL logical backup`,
         `-- Generated: ${new Date().toISOString()}`,

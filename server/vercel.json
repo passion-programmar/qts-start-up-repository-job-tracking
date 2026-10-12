@@ -1,3 +1,14 @@
 {
-  "framework": "express"
+  "framework": "express",
+  "functions": {
+    "src/app.ts": {
+      "includeFiles": "{node_modules/pdf-parse/dist/pdf-parse/cjs/pdf.worker.mjs,node_modules/{@sparticuz/chromium,@puppeteer,puppeteer-core,chromium-bidi,devtools-protocol,webdriver-bidi-protocol,ws,zod,mitt,tar-*,streamx,pump,yargs*}/**,assets/fonts/**}"
+    }
+  },
+  "crons": [
+    {
+      "path": "/api/v2/gpt-application-tasks/cleanup",
+      "schedule": "0 3 * * *"
+    }
+  ]
 }

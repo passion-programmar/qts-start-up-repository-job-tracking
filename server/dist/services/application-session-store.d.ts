@@ -1,4 +1,5 @@
-export type ApplicationSessionStatus = 'active' | 'scanning' | 'filling' | 'awaiting_ai' | 'completed' | 'abandoned' | 'error';
+export declare const MEMORY_APPLICATION_SESSION_TTL_MS: number;
+export type ApplicationSessionStatus = 'active' | 'scanning' | 'filling' | 'awaiting_ai' | 'apply' | 'completed' | 'abandoned' | 'error';
 export interface MemorySessionField {
     id: number;
     session_id: number;
@@ -44,6 +45,9 @@ export interface MemorySession {
     generated_answers: Record<string, string>;
     status: ApplicationSessionStatus;
     metadata: Record<string, unknown>;
+    template_version: string | null;
+    page_fingerprint: string | null;
+    mode: 'DISCOVERY' | 'REAL_APPLICATION' | null;
     started_at: string;
     last_activity_at: string;
     completed_at: string | null;
@@ -68,6 +72,9 @@ type CreateSessionInput = {
     currentStep?: string | null;
     discoveredPages?: unknown[];
     metadata?: Record<string, unknown>;
+    templateVersion?: string | null;
+    pageFingerprint?: string | null;
+    mode?: 'DISCOVERY' | 'REAL_APPLICATION' | null;
     candidate?: {
         name?: string | null;
         email?: string | null;
@@ -100,6 +107,7 @@ export type UpsertFieldInput = {
     fillStatus?: string;
     generatedAnswer?: string | null;
 };
+export declare function registerMemorySessionCleanupListener(listener: (sessionId: number) => void): void;
 export declare function readPublicTaskIdFromSession(session: MemorySession): string | null;
 export declare function createMemoryApplicationSession(input: CreateSessionInput): MemorySession;
 export declare function getMemoryApplicationSession(sessionId: number): MemorySession | null;
@@ -110,7 +118,7 @@ export declare function upsertMemorySessionFields(sessionId: number, fields: Ups
     status?: ApplicationSessionStatus;
 }): MemorySessionField[];
 export declare function listMemorySessionFields(sessionId: number): MemorySessionField[];
-export declare function updateMemorySession(sessionId: number, patch: Partial<Pick<MemorySession, 'status' | 'current_step' | 'discovered_pages' | 'generated_answers' | 'metadata' | 'completed_at'>>): MemorySession | null;
+export declare function updateMemorySession(sessionId: number, patch: Partial<Pick<MemorySession, 'status' | 'current_step' | 'discovered_pages' | 'generated_answers' | 'metadata' | 'completed_at' | 'template_version' | 'page_fingerprint' | 'mode'>>): MemorySession | null;
 export declare function updateMemorySessionField(sessionId: number, stableFieldId: string, patch: Partial<Pick<MemorySessionField, 'generated_answer' | 'fill_value' | 'fill_status'>>): void;
 export declare function countMemoryPendingAiFields(sessionId: number): number;
 export {};

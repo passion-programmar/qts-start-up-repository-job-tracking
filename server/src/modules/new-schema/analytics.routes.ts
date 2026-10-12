@@ -44,7 +44,7 @@ router.get('/', async (req: NewSchemaAuthRequest, res: Response) => {
   const where = scope.clause ? `AND ${scope.clause}` : '';
   const params = scope.params;
 
-  const [bidsByPeriod, interviewsByPeriod, bidsByStatus, interviewsByOutcome, byManager, byAccount] =
+  const [bidsByPeriod, interviewsByPeriod, jobsByStatus, interviewsByOutcome, byManager, byAccount] =
     await Promise.all([
       queryAll<{ bucket: Date; count: number | string }>(
         `SELECT date_trunc('${period.buckets}', b.applied_date) AS bucket, count(*)::int AS count
@@ -65,11 +65,11 @@ router.get('/', async (req: NewSchemaAuthRequest, res: Response) => {
         params
       ),
       queryAll<{ status: string; count: number | string }>(
-        `SELECT b.job_status AS status, count(*)::int AS count
-         FROM bids b
-         JOIN users manager ON manager.u_id = b.manager_user_id AND manager.role = 'manager'
-         WHERE b.applied_date >= NOW() - INTERVAL '${period.interval}' ${where}
-         GROUP BY b.job_status ORDER BY b.job_status`,
+        `SELECT job.status, count(*)::int AS count
+         FROM job_list job
+         JOIN users manager ON manager.u_id = job.u_id AND manager.role = 'manager'
+         WHERE job.get_date >= NOW() - INTERVAL '${period.interval}' ${where}
+         GROUP BY job.status ORDER BY job.status`,
         params
       ),
       queryAll<{ outcome: string; count: number | string }>(
@@ -157,7 +157,7 @@ router.get('/', async (req: NewSchemaAuthRequest, res: Response) => {
       period: parsedPeriod.data,
       bidsByPeriod: bidsByPeriod.map((row) => ({ bucket: row.bucket, count: Number(row.count) })),
       interviewsByPeriod: interviewsByPeriod.map((row) => ({ bucket: row.bucket, count: Number(row.count) })),
-      bidsByStatus: asCount(bidsByStatus),
+      jobsByStatus: asCount(jobsByStatus),
       interviewsByOutcome: asCount(interviewsByOutcome),
       byManager: asCount(byManager),
       byAccount: asCount(byAccount),
