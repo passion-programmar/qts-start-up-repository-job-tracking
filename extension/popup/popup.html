@@ -257,6 +257,16 @@
       line-height: 1.5;
       text-align: center;
     }
+    .application-disabled-note {
+      margin: 14px 0 0;
+      padding: 10px;
+      border: 1px solid #fed7aa;
+      border-radius: 8px;
+      background: #fff7ed;
+      color: #9a3412;
+      font-size: 12px;
+      line-height: 1.45;
+    }
     .action-buttons {
       display: grid;
       gap: 10px;
@@ -269,6 +279,37 @@
       background: #166534;
       color: #fff;
       box-shadow: 0 0 0 3px #bbf7d0;
+    }
+    .site-discovery {
+      margin-top: 18px;
+      padding: 14px;
+      border: 1px solid #cbd5e1;
+      border-radius: 12px;
+      background: #fff;
+    }
+    .site-discovery h3 {
+      margin: 0 0 6px;
+      color: #0f172a;
+      font-size: 15px;
+    }
+    .site-discovery > p {
+      margin: 0 0 10px;
+      color: #64748b;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .site-discovery-actions {
+      display: grid;
+      gap: 6px;
+    }
+    .site-discovery-actions .btn {
+      min-height: 34px;
+    }
+    .site-discovery .site-discovery-status {
+      margin: 10px 0 0;
+      color: #475569;
+      font-size: 11px;
+      line-height: 1.4;
     }
     #get-jd-confirmation {
       width: min(340px, calc(100% - 40px));
@@ -295,6 +336,38 @@
       display: flex;
       justify-content: flex-end;
       gap: 8px;
+    }
+    #scanner-save-status {
+      margin: 0;
+      padding: 8px 16px 12px;
+      color: #475569;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+    #scanner-document-review {
+      width: min(720px, calc(100% - 24px));
+      max-width: 100%;
+      max-height: calc(100vh - 24px);
+      padding: 16px;
+      border: 1px solid #cbd5e1;
+      border-radius: 12px;
+      box-shadow: 0 16px 40px rgba(15, 23, 42, 0.24);
+    }
+    #scanner-document-review::backdrop {
+      background: rgba(15, 23, 42, 0.58);
+    }
+    #scanner-document-preview {
+      width: 100%;
+      height: min(62vh, 620px);
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      background: #f8fafc;
+    }
+    .scanner-document-review-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 12px;
     }
     .job-mode-actions {
       display: flex;
@@ -427,12 +500,23 @@
         <div class="action-card">
           <h2 class="action-title">Job Application</h2>
           <p class="action-subtitle">Select an action for the current job page.</p>
+          <div id="action-alert" aria-live="polite"></div>
           <div class="action-buttons">
             <button class="btn btn-primary" id="btn-get-jd" type="button" aria-pressed="false">Get JD</button>
-            <button class="btn btn-primary" id="btn-apply" type="button" aria-pressed="false">Apply</button>
             <button class="btn btn-primary" id="btn-custom-apply" type="button" aria-pressed="false">Custom Apply</button>
             <button class="btn btn-ghost" id="btn-action-logout" type="button">Logout</button>
           </div>
+          <p class="application-disabled-note hidden" id="application-disabled-note">
+            The Manager Apply queue and final submission are disabled. Scanner assist requires your confirmation and never submits an application.
+          </p>
+          <section class="site-discovery" aria-labelledby="site-discovery-title">
+            <h3 id="site-discovery-title">Scanner</h3>
+            <p>Managers click Scan for the current step, review job details extracted through Get JD, and choose an Account. Save Job &amp; Scan saves or updates the job, starts that Account's row, then scans the form. New steps are checked twice automatically; later unchanged scans use one check, and differences pause for Manager review. Profile and Reusable answers require confirmation; generated answers and resume or cover-letter uploads use the job's GPT task and require Manager review. Scanner never advances pages or submits.</p>
+            <div class="site-discovery-actions">
+              <button class="btn btn-ghost btn-sm" id="btn-discover-site-step" type="button">Scan current step</button>
+            </div>
+            <p class="site-discovery-status" id="site-discovery-status" role="status" aria-live="polite">Scanner has not scanned this step yet.</p>
+          </section>
         </div>
       </div>
     </div>
@@ -445,6 +529,16 @@
       <form method="dialog" class="get-jd-confirmation-actions">
         <button class="btn btn-ghost" type="submit" value="no">No</button>
         <button class="btn btn-primary" type="submit" value="yes">Yes</button>
+      </form>
+    </dialog>
+
+    <dialog id="scanner-document-review" aria-labelledby="scanner-document-review-title" aria-describedby="scanner-document-review-description">
+      <h2 id="scanner-document-review-title">Review generated document</h2>
+      <p id="scanner-document-review-description"></p>
+      <iframe id="scanner-document-preview" title="Generated PDF preview"></iframe>
+      <form method="dialog" class="scanner-document-review-actions">
+        <button class="btn btn-ghost" type="submit" value="reject">Do not upload</button>
+        <button class="btn btn-primary" type="submit" value="approve">Approve upload</button>
       </form>
     </dialog>
 
@@ -524,6 +618,14 @@
         </div>
       </div>
 
+      <div id="learning-review-panel" class="learning-review-panel hidden" aria-live="polite">
+        <div class="learning-review-head">
+          <span class="learning-review-title">Learned answer review</span>
+        </div>
+        <div id="learning-review-status" class="learning-review-status" role="status" aria-live="polite"></div>
+        <ul id="learning-review-list" class="learning-review-list"></ul>
+      </div>
+
       <!-- DEV ONLY: temporary field-capture inspector — remove before production GPT handoff -->
       <div id="dev-capture-debug" class="dev-capture-debug hidden" aria-label="Development capture debug">
         <div class="dev-capture-head">
@@ -580,6 +682,7 @@
         <textarea id="f-desc" class="desc-textbox" placeholder="Full job description…" spellcheck="true"></textarea>
         <div class="field-error" id="err-desc">Could not save the description.</div>
       </div>
+      <p class="site-discovery-status hidden" id="scanner-save-status" role="status" aria-live="polite"></p>
     </div>
     </div>
   </div>
@@ -587,6 +690,7 @@
   <div class="actions-bar" id="action-bar">
     <button class="btn btn-ghost" id="btn-refresh" type="button">↻ Refresh</button>
     <button class="btn btn-primary" id="btn-save" type="button">Save Job</button>
+    <button class="btn btn-primary hidden" id="btn-save-and-scan" type="button">Save Job &amp; Scan</button>
   </div>
 
   <div id="qts-toast-host" class="qts-toast-host" aria-live="polite" aria-atomic="true"></div>
@@ -616,10 +720,12 @@
   <script src="../shared/field-classifier.js"></script>
   <script src="../shared/candidate-matcher.js"></script>
   <script src="../shared/fill-policy.js"></script>
+  <script src="../shared/scanner-capture.js"></script>
   <script src="../shared/custom-gpt.js"></script>
   <script src="../shared/account-auth-storage.js"></script>
   <script src="../shared/apply-session-store.js"></script>
   <script src="api-client.js"></script>
+  <script src="learning-review-panel.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

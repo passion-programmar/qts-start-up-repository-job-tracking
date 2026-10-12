@@ -816,6 +816,8 @@
     let idlePolls = 0;
     const history = [];
     let lastSnap = null;
+    let nextServerStatusCheckAt = started;
+    let lastServerStatusWarningAt = 0;
 
     await setGptTabStatus(tabId, {
       phase: 'allowing',
@@ -833,6 +835,54 @@
     await startAllowWatchInTab(tabId);
 
     while (Date.now() - started < timeoutMs) {
+      if (typeof options.getTaskStatus === 'function' && Date.now() >= nextServerStatusCheckAt) {
+        nextServerStatusCheckAt = Date.now() + 5000;
+        try {
+          const serverStatus = await options.getTaskStatus();
+          if (serverStatus?.success && serverStatus.status === 'ready') {
+            await setGptTabStatus(tabId, {
+              phase: 'finished',
+              taskId,
+              message: 'Answer package confirmed by the server',
+              type: 'success',
+              persistent: false,
+            });
+            return {
+              ok: true,
+              phase: 'task_ready',
+              taskId,
+              tabId,
+              totalAllowClicks,
+              serverStatus: serverStatus.status,
+              history,
+            };
+          }
+          if (serverStatus?.success && ['failed', 'completed'].includes(serverStatus.status)) {
+            await setGptTabStatus(tabId, {
+              phase: 'error',
+              taskId,
+              message: `Server task ended unexpectedly (${serverStatus.status})`,
+              type: 'error',
+              persistent: false,
+            });
+            return {
+              ok: false,
+              phase: 'task_ended',
+              taskId,
+              tabId,
+              totalAllowClicks,
+              serverStatus: serverStatus.status,
+              history,
+            };
+          }
+        } catch (error) {
+          if (Date.now() - lastServerStatusWarningAt >= 30000) {
+            console.warn('[QTS GPT] Could not check server task status while watching ChatGPT:', error);
+            lastServerStatusWarningAt = Date.now();
+          }
+        }
+      }
+
       const snap = await clickAllowViaContentScript(tabId, {
         focus: false,
         snapshotOnly: true,

@@ -22,6 +22,7 @@ import {
   type ApplicationSessionStatus,
   type UpsertFieldInput,
 } from '../../services/application-session-store';
+import { evaluateAssistDecision } from '../../services/application-learning-store';
 import { createPublicTaskId, formatTaskId } from './application-task-id';
 import applicationDocumentsRoutes from './application-documents.routes';
 
@@ -36,9 +37,10 @@ const FieldCategorySchema = z.enum([
   'saved_answer',
   'ai_generation',
   'document_upload',
+  'needs_review',
   'unknown',
 ]);
-const FillStatusSchema = z.enum(['pending', 'filled', 'skipped', 'awaiting_answer', 'error', 'manual']);
+const FillStatusSchema = z.enum(['pending', 'filled', 'skipped', 'awaiting_answer', 'needs_review', 'error', 'manual']);
 
 const CreateSessionSchema = z.object({
   candidateId: z.number().int().positive(),
@@ -48,6 +50,9 @@ const CreateSessionSchema = z.object({
   company: z.string().optional().nullable(),
   jobDescription: z.string().optional().nullable(),
   platform: z.string().optional().nullable(),
+  templateVersion: z.string().max(64).optional().nullable(),
+  mode: z.enum(['DISCOVERY', 'REAL_APPLICATION']).optional().nullable(),
+  pageFingerprint: z.string().max(512).optional().nullable(),
   currentStep: z.string().optional().nullable(),
   discoveredPages: z.array(z.record(z.unknown())).optional(),
   metadata: z.record(z.unknown()).optional(),
@@ -76,14 +81,60 @@ const SessionFieldSchema = z.object({
   fillValue: z.string().optional().nullable(),
   fillStatus: FillStatusSchema.optional().default('pending'),
   generatedAnswer: z.string().optional().nullable(),
+  matchMethod: z.string().max(64).optional().nullable(),
+  confidence: z.number().min(0).max(1).optional().nullable(),
+  status: z.enum(['matched', 'ambiguous', 'unresolved', 'needs_review']).optional().nullable(),
+  requiresReview: z.boolean().optional().nullable(),
+  statusReason: z.string().max(250).optional().nullable(),
 });
 
 const PatchFieldsSchema = z.object({
   fields: z.array(SessionFieldSchema).min(1),
   currentStep: z.string().optional().nullable(),
   discoveredPages: z.array(z.record(z.unknown())).optional(),
-  status: z.enum(['active', 'scanning', 'filling', 'awaiting_ai', 'completed', 'abandoned', 'error']).optional(),
+  status: z.enum(['active', 'scanning', 'filling', 'awaiting_ai', 'apply', 'completed', 'abandoned', 'error']).optional(),
+  templateVersion: z.string().max(64).optional().nullable(),
+  pageFingerprint: z.string().max(512).optional().nullable(),
+  mode: z.enum(['DISCOVERY', 'REAL_APPLICATION']).optional().nullable(),
+  metadata: z.record(z.unknown()).optional(),
 });
+
+async function applyAssistSafetyGate(sessionId: number, field: z.infer<typeof SessionFieldSchema>) {
+  const isAssistCandidate = field.category === 'candidate_profile'
+    || field.category === 'ai_generation'
+    || field.fillStatus === 'awaiting_answer'
+    || Boolean(field.generatedAnswer && field.generatedAnswer.trim());
+
+  const candidateValue = field.fillValue ?? field.generatedAnswer ?? field.currentValue ?? null;
+  if (!isAssistCandidate || !candidateValue || !candidateValue.trim()) {
+    return field;
+  }
+
+  const decision = await evaluateAssistDecision(sessionId, {
+    stableFieldId: field.stableFieldId,
+    question: field.label ?? field.nameAttr ?? field.sectionHeading ?? null,
+    fieldType: field.fieldType,
+    sectionHeading: field.sectionHeading ?? null,
+  });
+
+  if (decision.allowed) {
+    return {
+      ...field,
+      requiresReview: false,
+      status: field.status ?? 'matched',
+      statusReason: field.statusReason ?? 'Approved by learning policy.',
+    };
+  }
+
+  return {
+    ...field,
+    category: 'needs_review',
+    fillStatus: 'needs_review',
+    requiresReview: true,
+    status: 'needs_review',
+    statusReason: decision.reason,
+  };
+}
 
 const SubmitAnswersSchema = z.object({
   answers: z.array(z.object({
@@ -133,6 +184,14 @@ async function getSessionForRequest(req: AuthRequest, sessionId: number) {
 }
 
 function mapSessionRow(row: Record<string, unknown>) {
+  const metadata = (row.metadata ?? {}) as Record<string, unknown>;
+  const reviewRequired = metadata.reviewRequired === true
+    || metadata.reviewRequired === 'true'
+    || Number(metadata.reviewCount ?? 0) > 0;
+  const reviewCount = Number(metadata.reviewCount ?? 0) || 0;
+  const reviewReasons = Array.isArray(metadata.reviewReasons)
+    ? metadata.reviewReasons.filter((value): value is string => typeof value === 'string')
+    : [];
   return {
     applicationId: row.id,
     candidateId: row.candidate_id,
@@ -149,7 +208,13 @@ function mapSessionRow(row: Record<string, unknown>) {
     discoveredPages: row.discovered_pages ?? [],
     generatedAnswers: row.generated_answers ?? {},
     status: row.status,
-    metadata: row.metadata ?? {},
+    metadata,
+    reviewRequired,
+    reviewCount,
+    reviewReasons,
+    templateVersion: (typeof metadata.templateVersion === 'string' ? metadata.templateVersion : row.template_version) ?? null,
+    pageFingerprint: (typeof metadata.pageFingerprint === 'string' ? metadata.pageFingerprint : row.page_fingerprint) ?? null,
+    mode: (typeof metadata.mode === 'string' ? metadata.mode : row.mode) ?? null,
     startedAt: row.started_at,
     lastActivityAt: row.last_activity_at,
     completedAt: row.completed_at,
@@ -164,7 +229,32 @@ function mapSessionRow(row: Record<string, unknown>) {
   };
 }
 
+function getSelectorHintValue(selectorHints: Record<string, unknown> | null | undefined, key: string) {
+  if (!selectorHints || typeof selectorHints !== 'object') return undefined;
+  if (Object.prototype.hasOwnProperty.call(selectorHints, key)) return selectorHints[key];
+  return undefined;
+}
+
+function buildSelectorHints(field: {
+  selectorHints?: Record<string, unknown> | null;
+  matchMethod?: string | null;
+  confidence?: number | null;
+  status?: string | null;
+  requiresReview?: boolean | null;
+  statusReason?: string | null;
+}) {
+  return {
+    ...(field.selectorHints ?? {}),
+    ...(field.matchMethod ? { matchMethod: field.matchMethod } : {}),
+    ...(field.confidence != null ? { confidence: field.confidence } : {}),
+    ...(field.status ? { status: field.status } : {}),
+    ...(field.requiresReview != null ? { requiresReview: field.requiresReview } : {}),
+    ...(field.statusReason ? { statusReason: field.statusReason } : {}),
+  };
+}
+
 function mapFieldRow(row: Record<string, unknown>) {
+  const selectorHints = (row.selector_hints ?? {}) as Record<string, unknown>;
   return {
     id: row.id,
     stableFieldId: row.stable_field_id,
@@ -180,7 +270,7 @@ function mapFieldRow(row: Record<string, unknown>) {
     nameAttr: row.name_attr,
     autocompleteAttr: row.autocomplete_attr,
     validationMessage: row.validation_message,
-    selectorHints: row.selector_hints ?? {},
+    selectorHints,
     fieldFingerprint: row.field_fingerprint,
     category: row.category,
     profileKey: row.profile_key,
@@ -189,6 +279,11 @@ function mapFieldRow(row: Record<string, unknown>) {
     fillValue: row.fill_value,
     fillStatus: row.fill_status,
     generatedAnswer: row.generated_answer,
+    matchMethod: getSelectorHintValue(selectorHints, 'matchMethod') ?? null,
+    confidence: getSelectorHintValue(selectorHints, 'confidence') ?? null,
+    status: getSelectorHintValue(selectorHints, 'status') ?? null,
+    requiresReview: getSelectorHintValue(selectorHints, 'requiresReview') ?? false,
+    statusReason: getSelectorHintValue(selectorHints, 'statusReason') ?? null,
     discoveredAt: row.discovered_at,
     updatedAt: row.updated_at,
   };
@@ -245,6 +340,9 @@ router.post('/', async (req: AuthRequest, res: Response) => {
     ...(data.metadata ?? {}),
     publicTaskId,
     taskId: publicTaskId,
+    ...(data.templateVersion ? { templateVersion: data.templateVersion } : {}),
+    ...(data.pageFingerprint ? { pageFingerprint: data.pageFingerprint } : {}),
+    ...(data.mode ? { mode: data.mode } : {}),
   };
 
   if (!config.applicationSessionPersistDb) {
@@ -349,7 +447,8 @@ router.patch('/:id/fields', async (req: AuthRequest, res: Response) => {
     return;
   }
 
-  const { fields, currentStep, discoveredPages, status } = parsed.data;
+  const { fields: rawFields, currentStep, discoveredPages, status, templateVersion, pageFingerprint, mode, metadata } = parsed.data;
+  const fields = await Promise.all(rawFields.map(async (field) => applyAssistSafetyGate(sessionId, field)));
   const aiPending = fields.some(
     (f) => (f.category === 'ai_generation' || f.category === 'document_upload')
       && (f.fillStatus === 'pending' || f.fillStatus === 'awaiting_answer')
@@ -371,7 +470,7 @@ router.patch('/:id/fields', async (req: AuthRequest, res: Response) => {
       nameAttr: field.nameAttr ?? null,
       autocompleteAttr: field.autocompleteAttr ?? null,
       validationMessage: field.validationMessage ?? null,
-      selectorHints: field.selectorHints ?? {},
+      selectorHints: buildSelectorHints(field),
       fieldFingerprint: field.fieldFingerprint,
       category: field.category ?? 'unknown',
       profileKey: field.profileKey ?? null,
@@ -388,6 +487,16 @@ router.patch('/:id/fields', async (req: AuthRequest, res: Response) => {
       status: nextStatus as ApplicationSessionStatus,
     });
 
+    const currentMetadata = ((session as Record<string, unknown>)?.metadata ?? {}) as Record<string, unknown>;
+    const metadataPatch = {
+      ...currentMetadata,
+      ...(metadata ?? {}),
+      ...(templateVersion ? { templateVersion } : {}),
+      ...(pageFingerprint ? { pageFingerprint } : {}),
+      ...(mode ? { mode } : {}),
+    };
+    updateMemorySession(sessionId, { metadata: metadataPatch });
+
     res.json({
       success: true,
       fields: updatedFields.map((row) => mapFieldRow(row as unknown as Record<string, unknown>)),
@@ -403,6 +512,7 @@ router.patch('/:id/fields', async (req: AuthRequest, res: Response) => {
 
   await withTransaction(async (client) => {
     for (const field of fields) {
+      const selectorHints = buildSelectorHints(field);
       await client.query(
         `INSERT INTO application_session_fields (
           session_id, stable_field_id, label, field_type, required, options,
@@ -452,7 +562,7 @@ router.patch('/:id/fields', async (req: AuthRequest, res: Response) => {
           field.nameAttr ?? null,
           field.autocompleteAttr ?? null,
           field.validationMessage ?? null,
-          JSON.stringify(field.selectorHints ?? {}),
+          JSON.stringify(selectorHints),
           field.fieldFingerprint,
           field.category ?? 'unknown',
           field.profileKey ?? null,
@@ -466,10 +576,17 @@ router.patch('/:id/fields', async (req: AuthRequest, res: Response) => {
     }
 
     const nextStatus = status ?? (aiPending ? 'awaiting_ai' : 'filling');
+    const metadataPatch = {
+      ...(metadata ?? {}),
+      ...(templateVersion ? { templateVersion } : {}),
+      ...(pageFingerprint ? { pageFingerprint } : {}),
+      ...(mode ? { mode } : {}),
+    };
     await client.query(
       `UPDATE application_sessions
        SET current_step = COALESCE($2, current_step),
            discovered_pages = COALESCE($3::jsonb, discovered_pages),
+           metadata = metadata || $5::jsonb,
            status = $4,
            last_activity_at = NOW(),
            updated_at = NOW()
@@ -479,6 +596,7 @@ router.patch('/:id/fields', async (req: AuthRequest, res: Response) => {
         currentStep ?? null,
         discoveredPages ? JSON.stringify(discoveredPages) : null,
         nextStatus,
+        JSON.stringify(metadataPatch),
       ]
     );
   });

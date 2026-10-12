@@ -513,6 +513,114 @@
   flex: 1 1 auto;
 }
 
+.popup-app .learning-review-panel {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.popup-app .learning-review-panel.hidden {
+  display: none;
+}
+
+.popup-app .learning-review-head {
+  margin-bottom: 8px;
+}
+
+.popup-app .learning-review-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: #334155;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.popup-app .learning-review-status {
+  margin-bottom: 6px;
+  font-size: 11px;
+  color: #475569;
+}
+
+.popup-app .learning-review-status:empty {
+  display: none;
+}
+
+.popup-app .learning-review-status.error {
+  color: #b91c1c;
+}
+
+.popup-app .learning-review-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.popup-app .learning-review-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+}
+
+.popup-app .learning-review-question {
+  font-size: 12px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.popup-app .learning-review-meta {
+  font-size: 10px;
+  color: #64748b;
+}
+
+.popup-app .learning-review-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: #475569;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.popup-app .learning-review-answer {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 54px;
+  resize: vertical;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: #0f172a;
+  background: #fff;
+}
+
+.popup-app .learning-review-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.popup-app .learning-review-actions .btn {
+  flex: 1 1 calc(33.333% - 6px);
+  min-width: 70px;
+}
+
+.popup-app .learning-review-empty {
+  list-style: none;
+  padding: 8px 10px;
+  font-size: 11px;
+  color: #64748b;
+}
+
 /* --- DEV ONLY: temporary capture inspector (remove before GPT production) --- */
 .popup-app .dev-capture-debug {
   margin: 0 0 14px;
