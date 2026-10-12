@@ -58,13 +58,16 @@ requirement to put every future template in the FlowCV component.
    and connect preview readiness, error handling, and download behavior. Do
    not make the UI selector claim to support a template until the API accepts
    and renders that same ID.
-7. **Compare preview and output.** Check the first, middle, and last pages at
+7. **Keep editing responsive.** Update the loaded preview document in place
+    when valid JSON changes; avoid reloading the iframe for each edit. Rebuild
+    pagination and the downloadable HTML from the updated preview.
+8. **Compare preview and output.** Check the first, middle, and last pages at
    normal zoom. Verify page size, margins, page breaks, font loading, icons and
    colors, contact alignment, long names/headlines, missing optional fields,
    and content overflow. Extract PDF text to confirm that all expected content
    appears once and in the right order. Check for blank pages and print-time
    animation or color changes.
-8. **Validate and record.** Run the focused web lint and API type-check, then
+9. **Validate and record.** Run the focused web lint and API type-check, then
    exercise the preview-to-download flow locally. Use non-personal fixture
    content in repeatable tests. Add a dated feature-log entry with the project
    version, template ID, source format/provenance, renderer, and material

@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import type { QtsResumeDocument } from '@/components/ResumeDocumentTypes';
+import { replaceResumePages } from '@/components/resume-preview-dom';
 
 type QtsResume2PreviewProps = {
   resume: QtsResumeDocument;
@@ -238,6 +239,8 @@ function paginateDocument(document: Document): number {
   return document.querySelectorAll('.resumePage').length;
 }
 
+export { paginateDocument as paginateQtsResume2Document };
+
 export function QtsResume2Preview({
   resume,
   iframeRef,
@@ -247,11 +250,17 @@ export function QtsResume2Preview({
   onDocumentReady,
 }: QtsResume2PreviewProps) {
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const resumeRef = useRef(resume);
   const [fonts, setFonts] = useState<FontAssets | null>(null);
+  const [srcDoc, setSrcDoc] = useState('');
+  const [frameReady, setFrameReady] = useState(false);
   const [pageCount, setPageCount] = useState(1);
   const [scale, setScale] = useState(1);
   const [viewportWidth, setViewportWidth] = useState(0);
-  const srcDoc = useMemo(() => fonts ? makeDocument(resume, fonts) : '', [fonts, resume]);
+
+  useLayoutEffect(() => {
+    resumeRef.current = resume;
+  }, [resume]);
 
   useEffect(() => {
     let cancelled = false;
@@ -261,7 +270,10 @@ export function QtsResume2Preview({
       loadFont('/fonts/ZillaSlab-Bold.ttf'),
     ])
       .then(([abril, zillaRegular, zillaBold]) => {
-        if (!cancelled) setFonts({ abril, zillaRegular, zillaBold });
+        if (cancelled) return;
+        const assets = { abril, zillaRegular, zillaBold };
+        setFonts(assets);
+        setSrcDoc(makeDocument(resumeRef.current, assets));
       })
       .catch((error: unknown) => {
         if (cancelled) return;
@@ -272,6 +284,41 @@ export function QtsResume2Preview({
       cancelled = true;
     };
   }, [onError, onReady]);
+
+  useLayoutEffect(() => {
+    const loadedFonts = fonts;
+    if (!loadedFonts || !frameReady) return undefined;
+    let cancelled = false;
+    const frameDocument = iframeRef.current?.contentDocument;
+    if (!frameDocument) {
+      onReady(false);
+      onError('Could not read the QTS Resume 2 preview.');
+      return undefined;
+    }
+    const previewDocument = frameDocument;
+
+    async function updatePreview(previewDocument: Document, previewFonts: FontAssets) {
+      try {
+        await previewDocument.fonts.ready;
+        if (cancelled) return;
+        replaceResumePages(previewDocument, makeDocument(resume, previewFonts));
+        const pages = paginateDocument(previewDocument);
+        setPageCount(pages);
+        onDocumentReady(`<!doctype html>${previewDocument.documentElement.outerHTML}`);
+        onReady(true);
+        onError('');
+      } catch (error) {
+        if (cancelled) return;
+        onReady(false);
+        onError(error instanceof Error ? error.message : 'Could not update the QTS Resume 2 preview.');
+      }
+    }
+
+    void updatePreview(previewDocument, loadedFonts);
+    return () => {
+      cancelled = true;
+    };
+  }, [frameReady, fonts, iframeRef, onDocumentReady, onError, onReady, resume]);
 
   useEffect(() => {
     const wrapper = wrapperRef.current;
@@ -287,27 +334,6 @@ export function QtsResume2Preview({
     return () => observer.disconnect();
   }, [scaleMode]);
 
-  async function handleLoad() {
-    setPageCount(1);
-    const document = iframeRef.current?.contentDocument;
-    if (!document) {
-      onReady(false);
-      onError('Could not read the QTS Resume 2 preview.');
-      return;
-    }
-    try {
-      await document.fonts.ready;
-      const pages = paginateDocument(document);
-      setPageCount(pages);
-      onDocumentReady(`<!doctype html>${document.documentElement.outerHTML}`);
-      onReady(true);
-      onError('');
-    } catch (error) {
-      onReady(false);
-      onError(error instanceof Error ? error.message : 'Could not lay out the QTS Resume 2 preview.');
-    }
-  }
-
   const frameHeight = pageCount * pageHeight + Math.max(0, pageCount - 1) * pageGap;
 
   return (
@@ -322,7 +348,7 @@ export function QtsResume2Preview({
           ref={iframeRef}
           title="QTS_Resume_2 live resume"
           srcDoc={srcDoc}
-          onLoad={() => { void handleLoad(); }}
+          onLoad={() => setFrameReady(true)}
           style={{
             width: `${pageWidth}px`,
             height: `${frameHeight}px`,

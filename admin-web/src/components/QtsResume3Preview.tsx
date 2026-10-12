@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import type { QtsResumeDocument, QtsResumeSectionItem } from '@/components/ResumeDocumentTypes';
+import { replaceResumePages } from '@/components/resume-preview-dom';
 
 type QtsResume3PreviewProps = {
   resume: QtsResumeDocument;
@@ -263,10 +264,11 @@ export function QtsResume3Preview({
   onDocumentReady,
 }: QtsResume3PreviewProps) {
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const [srcDoc] = useState(() => buildQtsResume3Document(resume));
+  const [frameReady, setFrameReady] = useState(false);
   const [pageCount, setPageCount] = useState(1);
   const [scale, setScale] = useState(1);
   const [viewportWidth, setViewportWidth] = useState(0);
-  const srcDoc = useMemo(() => buildQtsResume3Document(resume), [resume]);
 
   useEffect(() => {
     const wrapper = wrapperRef.current;
@@ -282,26 +284,38 @@ export function QtsResume3Preview({
     return () => observer.disconnect();
   }, [scaleMode]);
 
-  async function handleLoad() {
-    setPageCount(1);
-    const document = iframeRef.current?.contentDocument;
-    if (!document) {
+  useLayoutEffect(() => {
+    if (!frameReady) return undefined;
+    let cancelled = false;
+    const frameDocument = iframeRef.current?.contentDocument;
+    if (!frameDocument) {
       onReady(false);
       onError('Could not read the QTS Resume 3 preview.');
-      return;
+      return undefined;
     }
-    try {
-      await document.fonts.ready;
-      const pages = paginateQtsResume3Document(document);
-      setPageCount(pages);
-      onDocumentReady(`<!doctype html>${document.documentElement.outerHTML}`);
-      onReady(true);
-      onError('');
-    } catch (error) {
-      onReady(false);
-      onError(error instanceof Error ? error.message : 'Could not lay out the QTS Resume 3 preview.');
+
+    async function updatePreview(previewDocument: Document) {
+      try {
+        await previewDocument.fonts.ready;
+        if (cancelled) return;
+        replaceResumePages(previewDocument, buildQtsResume3Document(resume));
+        const pages = paginateQtsResume3Document(previewDocument);
+        setPageCount(pages);
+        onDocumentReady(`<!doctype html>${previewDocument.documentElement.outerHTML}`);
+        onReady(true);
+        onError('');
+      } catch (error) {
+        if (cancelled) return;
+        onReady(false);
+        onError(error instanceof Error ? error.message : 'Could not lay out the QTS Resume 3 preview.');
+      }
     }
-  }
+
+    void updatePreview(frameDocument);
+    return () => {
+      cancelled = true;
+    };
+  }, [frameReady, iframeRef, onDocumentReady, onError, onReady, resume]);
 
   const frameHeight = pageCount * pageHeight + Math.max(0, pageCount - 1) * pageGap;
 
@@ -316,7 +330,7 @@ export function QtsResume3Preview({
         ref={iframeRef}
         title="QTS_Resume_3 live resume"
         srcDoc={srcDoc}
-        onLoad={() => { void handleLoad(); }}
+        onLoad={() => setFrameReady(true)}
         style={{
           width: `${pageWidth}px`,
           height: `${frameHeight}px`,

@@ -31,6 +31,10 @@
   remote resources are needed at runtime.
 - Wired the live preview, API validation, and PDF download to the QTS Resume 3
   template ID while leaving existing template IDs and renderers separate.
+- Kept the preview frame loaded while JSON edits update the resume content and
+  pagination in place, matching QTS Resume 1's live editing behavior.
+- Browser-verified long-to-short edits refresh all content and pagination
+  without navigating the preview iframe.
 
 ## Independent design update
 
