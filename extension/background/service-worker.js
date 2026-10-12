@@ -40,11 +40,7 @@ function restrictedPageMessage(url) {
 
 const capturePanelOpenPromisesByTab = new Map();
 let lastSourceTabId = null;
-const lastAutoOpenKeyByTab = new Map();
-const autoOpenCapturePanelTimersByTab = new Map();
-const autoOpenCapturePanelUrlsByTab = new Map();
-const openedCapturePanelUrlsByTab = new Map();
-const AUTO_OPEN_CAPTURE_DELAY_MS = 3000;
+const lastAutoDetectKeyByTab = new Map();
 const CAPTURE_PANEL_FILE = 'content/capture-panel.js';
 const detectGenerationByTab = new Map();
 
@@ -1651,7 +1647,7 @@ async function isAutoApplyArmed() {
 }
 
 function disarmJobPageActivity() {
-  lastAutoOpenKeyByTab.clear();
+  lastAutoDetectKeyByTab.clear();
   lastAutoPipelineKeyByTab.clear();
   lastApplyMethodDetectKeyByTab.clear();
   autoPipelineInFlight.clear();
@@ -1663,7 +1659,7 @@ function disarmJobPageActivity() {
 async function autoDetectJob(
   tabId,
   url,
-  { forcePipeline = false, autoOpenCapture = false, captureOnly = false } = {}
+  { forcePipeline = false, captureOnly = false } = {}
 ) {
   if (!forcePipeline && !captureOnly && !(await isAutoApplyArmed())) return;
 
@@ -1694,10 +1690,6 @@ async function autoDetectJob(
   prefetchTabContext(tabId).catch(() => {});
   detectApplyTemplateOnTab(tabId, pageUrl).catch(() => {});
 
-  if (autoOpenCapture && (entry.valid || isLikelyJobDetailUrl(pageUrl))) {
-    scheduleCapturePanelOpen(tabId, pageUrl);
-  }
-
   notifyCapturePopup(tabId);
   if (!captureOnly) {
     maybeStartAutoApplicationPipeline(tabId, pageUrl, entry, {
@@ -1721,7 +1713,7 @@ async function startAutoApplyOnJobTab(tabId) {
   }
 
   lastAutoPipelineKeyByTab.delete(tabId);
-  lastAutoOpenKeyByTab.delete(tabId);
+  lastAutoDetectKeyByTab.delete(tabId);
   lastSourceTabId = tabId;
   await chrome.storage.local.set({ [JOB_SOURCE_TAB_STORAGE_KEY]: tabId });
 
@@ -1803,7 +1795,7 @@ async function runDetectForActiveTab(tabId) {
   const tab = await getTab(tabId);
   if (!tab?.id || !tab.url) return;
   if (!isExtractablePageUrl(tab.url) || isIgnoredSite(tab.url) || isChatGptHostUrl(tab.url)) return;
-  lastAutoOpenKeyByTab.delete(tabId);
+  lastAutoDetectKeyByTab.delete(tabId);
   await autoDetectJob(tabId, tab.url).catch(() => {});
 }
 
@@ -1811,53 +1803,16 @@ function maybeTrackAutoOpen(tabId, url) {
   if (!isJobPageCandidateUrl(url)) return;
   (async () => {
     const autoKey = `${tabId}:${url}`;
-    if (lastAutoOpenKeyByTab.get(tabId) === autoKey) return;
-    lastAutoOpenKeyByTab.set(tabId, autoKey);
-    if (isLikelyJobDetailUrl(url)) {
-      scheduleCapturePanelOpen(tabId, url, 0);
-    }
+    if (lastAutoDetectKeyByTab.get(tabId) === autoKey) return;
+    lastAutoDetectKeyByTab.set(tabId, autoKey);
     const autoApplyArmed = await isAutoApplyArmed();
     if (autoApplyArmed) maybePrewarmCustomGptOnJobPage(url);
     await autoDetectJob(tabId, url, {
-      autoOpenCapture: true,
       captureOnly: !autoApplyArmed,
     });
   })().catch((error) => {
     console.warn('[QTS_Startup] Could not inspect the loaded job page:', error);
   });
-}
-
-function scheduleCapturePanelOpen(tabId, pageUrl, delayMs = AUTO_OPEN_CAPTURE_DELAY_MS) {
-  if (openedCapturePanelUrlsByTab.get(tabId) === pageUrl) return;
-  if (autoOpenCapturePanelUrlsByTab.get(tabId) === pageUrl) return;
-
-  const existingTimer = autoOpenCapturePanelTimersByTab.get(tabId);
-  if (existingTimer) clearTimeout(existingTimer);
-  autoOpenCapturePanelUrlsByTab.set(tabId, pageUrl);
-
-  const timer = setTimeout(async () => {
-    if (autoOpenCapturePanelTimersByTab.get(tabId) !== timer) return;
-    autoOpenCapturePanelTimersByTab.delete(tabId);
-    autoOpenCapturePanelUrlsByTab.delete(tabId);
-
-    try {
-      const tab = await getTab(tabId);
-      if (!tab?.id || tab.url !== pageUrl) return;
-      await openCapturePanel(tabId);
-      openedCapturePanelUrlsByTab.set(tabId, pageUrl);
-    } catch (error) {
-      console.warn('[QTS_Startup] Could not open the detected job panel:', error);
-    }
-  }, delayMs);
-
-  autoOpenCapturePanelTimersByTab.set(tabId, timer);
-}
-
-function cancelScheduledCapturePanelOpen(tabId) {
-  const timer = autoOpenCapturePanelTimersByTab.get(tabId);
-  if (timer) clearTimeout(timer);
-  autoOpenCapturePanelTimersByTab.delete(tabId);
-  autoOpenCapturePanelUrlsByTab.delete(tabId);
 }
 
 chrome.runtime.onConnect.addListener((port) => {
@@ -1991,7 +1946,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (!tabId || !url || !isExtractablePageUrl(url) || isIgnoredSite(url)) return false;
     (async () => {
       if (!(await isAutoApplyArmed())) return;
-      lastAutoOpenKeyByTab.delete(tabId);
+      lastAutoDetectKeyByTab.delete(tabId);
       lastAutoPipelineKeyByTab.delete(tabId);
       await autoDetectJob(tabId, url).catch(() => {});
     })().catch(() => {});
@@ -2367,9 +2322,7 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.status === 'loading') {
-    lastAutoOpenKeyByTab.delete(tabId);
-    cancelScheduledCapturePanelOpen(tabId);
-    openedCapturePanelUrlsByTab.delete(tabId);
+    lastAutoDetectKeyByTab.delete(tabId);
     lastAutoPipelineKeyByTab.delete(tabId);
     lastApplyMethodDetectKeyByTab.delete(tabId);
     return;
@@ -2395,7 +2348,7 @@ chrome.webNavigation.onCommitted.addListener((details) => {
     if (!(await isAutoApplyArmed())) return;
     injectExtractors(details.tabId).catch(() => {});
     if (details.transitionQualifiers?.includes('reload') || details.transitionType === 'reload') {
-      lastAutoOpenKeyByTab.delete(details.tabId);
+      lastAutoDetectKeyByTab.delete(details.tabId);
       lastApplyMethodDetectKeyByTab.delete(details.tabId);
     }
     maybeDetectApplyMethodOnOpen(details.tabId, details.url);
@@ -2412,9 +2365,7 @@ chrome.webNavigation.onHistoryStateUpdated.addListener((details) => {
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
-  lastAutoOpenKeyByTab.delete(tabId);
-  cancelScheduledCapturePanelOpen(tabId);
-  openedCapturePanelUrlsByTab.delete(tabId);
+  lastAutoDetectKeyByTab.delete(tabId);
   capturePanelOpenPromisesByTab.delete(tabId);
   lastAutoPipelineKeyByTab.delete(tabId);
   lastApplyMethodDetectKeyByTab.delete(tabId);
