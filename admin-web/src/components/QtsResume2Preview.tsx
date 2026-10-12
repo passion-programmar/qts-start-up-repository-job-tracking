@@ -137,6 +137,7 @@ function makeDocument(resume: QtsResumeDocument, fonts: FontAssets): string {
         margin: 0 0 32px; padding: 13.4708mm 12mm 10.5604mm;
         overflow: visible; background: #fff; color: #000;
       }
+      .resumePage:last-child { margin-bottom: 0; }
       .page-content { height: 100%; }
       .resume-header { margin: 0 0 10px; text-align: center; }
       .resume-name { margin: 0; padding-bottom: .2em; color: #355c7d; font-family: "Abril Fatface", Georgia, serif; font-size: 30pt; font-weight: 400; letter-spacing: 1px; line-height: 46px; overflow-wrap: anywhere; }
@@ -324,7 +325,7 @@ export function QtsResume2Preview({
     const viewport = wrapper?.parentElement;
     if (!wrapper || !viewport) return undefined;
     const updateScale = () => {
-      setScale(scaleMode === 'actual' ? 1 : Math.min(1, viewport.clientWidth / pageWidth));
+      setScale(scaleMode === 'actual' ? 1 : Math.min(1.8, viewport.clientWidth / pageWidth));
     };
     updateScale();
     const observer = new ResizeObserver(updateScale);

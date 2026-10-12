@@ -3,7 +3,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { requestPdf } from '@/lib/api';
 import { ManagerPdfCanvasPreview } from '@/components/ManagerPdfCanvasPreview';
-import { createQtsCoverLetterHtml, QtsCoverLetterPreview } from '@/components/QtsCoverLetterPreview';
+import {
+  createQtsCoverLetterHtml,
+  QtsCoverLetterPreview,
+  type QtsCoverLetterTemplate,
+} from '@/components/QtsCoverLetterPreview';
 import { QtsResumePreview, type QtsResumeDocument } from '@/components/QtsResumePreview';
 import { QtsResume2Preview } from '@/components/QtsResume2Preview';
 import { QtsResume3Preview } from '@/components/QtsResume3Preview';
@@ -119,9 +123,9 @@ async function requestPersistentStorage(): Promise<{ granted: boolean; message: 
 }
 
 const templates: Array<{ id: ResumeTemplate; label: string }> = [
-  { id: 'qts_resume_1', label: 'QTS_Resume_1' },
-  { id: 'qts_resume_2', label: 'QTS_Resume_2' },
-  { id: 'qts_resume_3', label: 'QTS_Resume_3' },
+  { id: 'qts_resume_1', label: 'QTS Resume 1 - FlowCV' },
+  { id: 'qts_resume_2', label: 'QTS Resume 2 - Serif' },
+  { id: 'qts_resume_3', label: 'QTS Resume 3 - Teal header' },
   { id: 'classic', label: '2. Classic ATS' },
   { id: 'compact', label: '3. Compact modern' },
 ];
@@ -167,6 +171,7 @@ const sampleResume: QtsResumeDocument = {
           bullets: [
             'Built and maintained application features using the team technology stack.',
             'Collaborated with teammates to test, document, and deliver reliable changes.',
+            'Improved existing workflows by resolving defects and simplifying repetitive tasks.',
           ],
         },
         {
@@ -176,6 +181,7 @@ const sampleResume: QtsResumeDocument = {
           bullets: [
             'Implemented and tested features across the company web application.',
             'Worked with senior engineers to improve code quality and team documentation.',
+            'Supported releases by investigating issues and validating fixes before deployment.',
           ],
         },
       ],
@@ -193,6 +199,66 @@ const sampleResume: QtsResumeDocument = {
   ],
 };
 
+const sampleResume2: QtsResumeDocument = {
+  candidate: {
+    fullName: 'Jordan Lee',
+    email: 'jordan.lee@example.com',
+    phone: '+1 202-555-0186',
+    linkedinUrl: 'https://example.com/in/jordan-lee',
+    location: 'Austin, Texas',
+    headline: 'Product Designer | Research, Systems, and Accessible UX',
+  },
+  targetRole: 'Product Designer',
+  targetCompany: 'Cedar & Stone',
+  targetJobsite: 'Example Jobsite',
+  summary: 'Product designer who turns customer research into clear, accessible product experiences. Experienced in partnering with product and engineering teams from discovery through delivery.',
+  sections: [
+    {
+      title: 'Professional Experience',
+      items: [
+        {
+          heading: 'Cedar & Stone',
+          subheading: 'Product Designer',
+          dateRange: '2023 - Present | Austin, Texas',
+          bullets: [
+            'Led discovery interviews and usability studies to identify high-impact customer needs.',
+            'Designed and tested end-to-end workflows with product managers and engineers.',
+            'Built accessible design-system components that improved consistency across the product.',
+          ],
+        },
+        {
+          heading: 'Brightpath Studio',
+          subheading: 'UX Designer',
+          dateRange: '2020 - 2023 | Denver, Colorado',
+          bullets: [
+            'Created wireframes, prototypes, and visual specifications for responsive products.',
+            'Synthesized research findings into practical recommendations for client teams.',
+            'Partnered with developers to review implementation details and refine shipped work.',
+          ],
+        },
+      ],
+    },
+    {
+      title: 'Education',
+      items: [
+        {
+          heading: 'B.F.A. in Communication Design',
+          subheading: 'Rocky Mountain College',
+          dateRange: '2016 - 2020 | Denver, Colorado',
+        },
+      ],
+    },
+    {
+      title: 'Skills',
+      items: [
+        { heading: 'Design', subheading: 'Interaction Design, Prototyping, Design Systems' },
+        { heading: 'Research', subheading: 'User Interviews, Usability Testing, Journey Mapping' },
+        { heading: 'Tools', subheading: 'Figma, FigJam, HTML, CSS' },
+      ],
+    },
+  ],
+};
+
 const defaultJson = JSON.stringify({
   ...sampleResume,
   coverLetter: {
@@ -201,6 +267,19 @@ const defaultJson = JSON.stringify({
       'I am excited to apply for the Software Engineer role at Example Company. My background building dependable web applications and collaborating across product and engineering teams aligns well with this opportunity.',
       'In my recent work, I have delivered user-facing features, improved application quality through testing, and communicated technical decisions clearly. I would bring that same practical, team-focused approach to your engineering group.',
       'Thank you for considering my application. I would welcome the opportunity to discuss how my experience can support Example Company.',
+    ],
+    closing: 'Sincerely,',
+  },
+}, null, 2);
+
+const defaultJson2 = JSON.stringify({
+  ...sampleResume2,
+  coverLetter: {
+    salutation: 'Dear Hiring Manager,',
+    bodyParagraphs: [
+      'I am excited to apply for the Product Designer role at Cedar & Stone. My experience connecting customer research with thoughtful, accessible product design aligns with the way your team builds useful digital experiences.',
+      'In my recent work, I have led discovery, tested end-to-end workflows, and partnered closely with product managers and engineers. I would bring a collaborative, detail-oriented approach from early research through implementation.',
+      'Thank you for considering my application. I would welcome the opportunity to discuss how I can contribute to Cedar & Stone.',
     ],
     closing: 'Sincerely,',
   },
@@ -230,6 +309,7 @@ const sampleResume3: QtsResumeDocument = {
           bullets: [
             'Built and evaluated forecasting and classification models for product and operations teams.',
             'Partnered with engineering to improve data quality and publish reusable model insights.',
+            'Presented model performance and tradeoffs to stakeholders to guide product decisions.',
           ],
         },
         {
@@ -238,6 +318,8 @@ const sampleResume3: QtsResumeDocument = {
           dateRange: '2021 – 2023 | Seattle, Washington',
           bullets: [
             'Designed controlled experiments and translated results into practical product recommendations.',
+            'Created repeatable analysis workflows that helped teams monitor product outcomes.',
+            'Collaborated with analysts and engineers to validate data and communicate findings.',
           ],
         },
       ],
@@ -490,7 +572,7 @@ export function ManagerPdfsView() {
   const [previewDocument, setPreviewDocument] = useState<PreviewDocument>('resume');
   const [resumeJson, setResumeJson] = useState<Record<ResumeTemplate, string>>({
     qts_resume_1: defaultJson,
-    qts_resume_2: defaultJson,
+    qts_resume_2: defaultJson2,
     qts_resume_3: defaultJson3,
     classic: defaultJson,
     compact: defaultJson,
@@ -515,8 +597,11 @@ export function ManagerPdfsView() {
   const json = resumeJson[template];
   const isLiveTemplate = template === 'qts_resume_1' || template === 'qts_resume_2' || template === 'qts_resume_3';
   const parsedResume = parseResumeJson(json);
+  const coverLetterTemplate: QtsCoverLetterTemplate = template === 'qts_resume_2' || template === 'qts_resume_3'
+    ? template
+    : 'qts_resume_1';
   const coverLetterHtml = parsedResume.resume && parsedResume.coverLetter
-    ? createQtsCoverLetterHtml(parsedResume.resume, parsedResume.coverLetter)
+    ? createQtsCoverLetterHtml(parsedResume.resume, parsedResume.coverLetter, coverLetterTemplate)
     : '';
 
   useEffect(() => {
@@ -856,10 +941,14 @@ export function ManagerPdfsView() {
           {downloadError && <div className="alert alert-error" role="alert">{downloadError}</div>}
           <p className="manager-pdfs__path-note">
             {downloadDirectory ? `Path inside ${downloadDirectory.name}:` : 'Suggested folder structure:'}{' '}
-            <code>{suggestedPath || '$_QTS_Resume_$/Account/date_time_title_company_jobsite/Account.pdf and Account_Cover_Letter.pdf'}</code>
+            <code>{suggestedPath || '$_QTS_Resume_$/Account/date_time_title_company_jobsite/'}</code>
           </p>
-          <p className="text-muted">Every resume template, including QTS Resume 1–3, uses this same paired-PDF folder and duplicate-check rule.</p>
-          {!downloadDirectory && <p className="text-muted">Choose any folder on your computer; both PDFs are saved under $_QTS_Resume_$/account/date_time_title_company_jobsite. Add targetJobsite to the resume JSON; if blank, the folder uses Unknown. An existing folder for the same title and company under that account stops the download. The picker starts in Music, and your selected folder is remembered in this browser when supported.</p>}
+          {!downloadDirectory && (
+            <details className="manager-pdfs__folder-help">
+              <summary>Folder and duplicate rules (all templates)</summary>
+              <p>Both PDFs are saved as Account.pdf and Account_Cover_Letter.pdf under $_QTS_Resume_$/account/date_time_title_company_jobsite. Add targetJobsite to the resume JSON or it defaults to Unknown. An existing folder for the same account, title, and company stops the download. Your selected folder is remembered in this browser when supported.</p>
+            </details>
+          )}
           {downloadStatus && <p role="status" className="manager-pdfs__path-note">{downloadStatus}</p>}
         </section>
         <section className="manager-pdfs__preview card" aria-labelledby="resume-pdf-preview-title">
@@ -890,9 +979,17 @@ export function ManagerPdfsView() {
             </button>
           </div>
           {previewDocument === 'cover-letter' && parsedResume.resume && parsedResume.coverLetter ? (
-            <div className="manager-pdfs__live-resume manager-pdfs__cover-letter">
-              <QtsCoverLetterPreview resume={parsedResume.resume} coverLetter={parsedResume.coverLetter} />
-            </div>
+            <>
+              {livePreviewError && <div className="alert alert-error" role="alert">{livePreviewError}</div>}
+              <div className="manager-pdfs__live-resume manager-pdfs__cover-letter">
+                <QtsCoverLetterPreview
+                  resume={parsedResume.resume}
+                  coverLetter={parsedResume.coverLetter}
+                  template={coverLetterTemplate}
+                  onError={setLivePreviewError}
+                />
+              </div>
+            </>
           ) : isLiveTemplate ? (
             <>
               {livePreviewError && <div className="alert alert-error" role="alert">{livePreviewError}</div>}

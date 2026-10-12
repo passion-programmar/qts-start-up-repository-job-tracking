@@ -126,6 +126,7 @@ export function buildQtsResume3Document(resume: QtsResumeDocument): string {
         position: relative; width: 215.9mm; height: 279.4mm; min-height: 279.4mm;
         margin: 0 0 32px; overflow: visible; background: #fff; color: #263445;
       }
+      .resumePage:last-child { margin-bottom: 0; }
       .page-content { height: 100%; padding: 44px 56px 50px; }
       .resume-header {
         display: flex; flex-direction: column; align-items: flex-start; text-align: left;
@@ -274,7 +275,7 @@ export function QtsResume3Preview({
     const viewport = wrapper?.parentElement;
     if (!wrapper || !viewport) return undefined;
     const updateScale = () => {
-      setScale(scaleMode === 'actual' ? 1 : Math.min(1, viewport.clientWidth / pageWidth));
+      setScale(scaleMode === 'actual' ? 1 : Math.min(1.8, viewport.clientWidth / pageWidth));
     };
     updateScale();
     const observer = new ResizeObserver(updateScale);

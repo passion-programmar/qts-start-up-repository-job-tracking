@@ -7,14 +7,87 @@ type ManagerPdfCanvasPreviewProps = {
   pdf: Blob | null;
 };
 
+type PdfPageCanvasProps = {
+  document: PDFDocumentProxy;
+  pageNumber: number;
+  scale: number;
+};
+
+function PdfPageCanvas({ document, pageNumber, scale }: PdfPageCanvasProps) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [pageResult, setPageResult] = useState<{ document: PDFDocumentProxy; page: PDFPageProxy } | null>(null);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    document.getPage(pageNumber).then((loadedPage) => {
+      if (!cancelled) {
+        setPageResult({ document, page: loadedPage });
+        setError('');
+      }
+    }).catch((pageError: unknown) => {
+      if (!cancelled) {
+        setError(pageError instanceof Error ? pageError.message : 'Could not load this PDF page.');
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [document, pageNumber]);
+
+  const page = pageResult?.document === document ? pageResult.page : null;
+
+  useEffect(() => {
+    let task: RenderTask | null = null;
+    const canvas = canvasRef.current;
+    if (!page || !canvas) return undefined;
+
+    const viewport = page.getViewport({ scale });
+    const outputScale = window.devicePixelRatio || 1;
+    const context = canvas.getContext('2d');
+    if (!context) {
+      setError('Your browser could not create a PDF preview canvas.');
+      return undefined;
+    }
+
+    canvas.width = Math.floor(viewport.width * outputScale);
+    canvas.height = Math.floor(viewport.height * outputScale);
+    canvas.style.width = `${viewport.width}px`;
+    canvas.style.height = `${viewport.height}px`;
+    task = page.render({
+      canvas,
+      canvasContext: context,
+      viewport,
+      transform: outputScale === 1 ? undefined : [outputScale, 0, 0, outputScale, 0, 0],
+    });
+    void task.promise.catch((renderError: unknown) => {
+      if (renderError instanceof Error && renderError.name === 'RenderingCancelledException') return;
+      setError(renderError instanceof Error ? renderError.message : 'Could not render this PDF page.');
+    });
+
+    return () => task?.cancel();
+  }, [page, scale]);
+
+  return (
+    <article className="manager-pdf-viewer__page">
+      <p className="manager-pdf-viewer__page-label">Page {pageNumber}</p>
+      {error ? (
+        <div className="manager-pdf-viewer__message" role="alert">{error}</div>
+      ) : page ? (
+        <canvas ref={canvasRef} aria-label={`PDF page ${pageNumber}`} />
+      ) : (
+        <div className="manager-pdf-viewer__message" role="status">Rendering page {pageNumber}…</div>
+      )}
+    </article>
+  );
+}
+
 export function ManagerPdfCanvasPreview({ pdf }: ManagerPdfCanvasPreviewProps) {
   const [document, setDocument] = useState<PDFDocumentProxy | null>(null);
-  const [pageNumber, setPageNumber] = useState(1);
-  const [pageResult, setPageResult] = useState<{ pageNumber: number; page: PDFPageProxy } | null>(null);
-  const [scale, setScale] = useState(1);
+  const [scale, setScale] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(Boolean(pdf));
   const [error, setError] = useState('');
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [fitWidthScale, setFitWidthScale] = useState(1);
   const viewportRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -39,6 +112,7 @@ export function ManagerPdfCanvasPreview({ pdf }: ManagerPdfCanvasPreviewProps) {
           return;
         }
         setDocument(loadedDocument);
+        setIsLoading(false);
         setError('');
       } catch (loadError) {
         if (!cancelled) {
@@ -60,111 +134,63 @@ export function ManagerPdfCanvasPreview({ pdf }: ManagerPdfCanvasPreviewProps) {
   }, [pdf]);
 
   useEffect(() => {
+    if (!document || !viewportRef.current) return undefined;
     let cancelled = false;
-
-    if (!document) return undefined;
-
-    void document.getPage(pageNumber).then((loadedPage) => {
+    let pageWidth = 0;
+    const updateFitWidth = () => {
+      if (!pageWidth || !viewportRef.current) return;
+      const availableWidth = Math.max(200, viewportRef.current.clientWidth - 20);
+      setFitWidthScale(Math.min(2, Math.max(0.35, availableWidth / pageWidth)));
+    };
+    const observer = new ResizeObserver(updateFitWidth);
+    observer.observe(viewportRef.current);
+    document.getPage(1).then((firstPage) => {
       if (cancelled) return;
-      setPageResult({ pageNumber, page: loadedPage });
-      setError('');
+      pageWidth = firstPage.getViewport({ scale: 1 }).width;
+      updateFitWidth();
     }).catch((pageError: unknown) => {
       if (!cancelled) {
-        setError(pageError instanceof Error ? pageError.message : 'Could not render this PDF page.');
+        setError(pageError instanceof Error ? pageError.message : 'Could not read the first PDF page.');
       }
     });
-
     return () => {
       cancelled = true;
+      observer.disconnect();
     };
-  }, [document, pageNumber]);
+  }, [document]);
 
-  useEffect(() => {
-    let task: RenderTask | null = null;
-    const canvas = canvasRef.current;
-    const page = pageResult?.pageNumber === pageNumber ? pageResult.page : null;
-    if (!page || !canvas) return undefined;
-
-    const viewport = page.getViewport({ scale });
-    const outputScale = window.devicePixelRatio || 1;
-    const context = canvas.getContext('2d');
-    if (!context) {
-      console.error('Your browser could not create a PDF preview canvas.');
-      setError('Your browser could not create a PDF preview canvas.');
-      return undefined;
-    }
-
-    canvas.width = Math.floor(viewport.width * outputScale);
-    canvas.height = Math.floor(viewport.height * outputScale);
-    canvas.style.width = `${viewport.width}px`;
-    canvas.style.height = `${viewport.height}px`;
-    task = page.render({
-      canvas,
-      canvasContext: context,
-      viewport,
-      transform: outputScale === 1 ? undefined : [outputScale, 0, 0, outputScale, 0, 0],
-    });
-    void task.promise.catch((renderError: unknown) => {
-      if (renderError instanceof Error && renderError.name === 'RenderingCancelledException') return;
-      setError(renderError instanceof Error ? renderError.message : 'Could not render this PDF page.');
-    });
-
-    return () => task?.cancel();
-  }, [pageNumber, pageResult, scale]);
+  const currentScale = scale ?? fitWidthScale;
 
   function fitWidth() {
-    const page = pageResult?.pageNumber === pageNumber ? pageResult.page : null;
-    if (!page || !viewportRef.current) return;
-    const availableWidth = viewportRef.current.clientWidth - 32;
-    const pageWidth = page.getViewport({ scale: 1 }).width;
-    setScale(Math.min(2, Math.max(0.5, availableWidth / pageWidth)));
+    setScale(null);
   }
 
   return (
     <div className="manager-pdf-viewer">
       <div className="manager-pdf-viewer__toolbar" role="toolbar" aria-label="PDF preview controls">
-        <button
-          className="manager-pdf-viewer__button"
-          type="button"
-          aria-label="Previous page"
-          disabled={!document || pageNumber <= 1}
-          onClick={() => setPageNumber((current) => Math.max(1, current - 1))}
-        >
-          ‹
-        </button>
         <span className="manager-pdf-viewer__page-count">
-          Page {document ? pageNumber : 0} of {document?.numPages ?? 0}
+          {document ? `${document.numPages} page${document.numPages === 1 ? '' : 's'}` : 'PDF preview'}
         </span>
         <button
           className="manager-pdf-viewer__button"
           type="button"
-          aria-label="Next page"
-          disabled={!document || pageNumber >= document.numPages}
-          onClick={() => setPageNumber((current) => Math.min(document?.numPages ?? current, current + 1))}
-        >
-          ›
-        </button>
-        <span className="manager-pdf-viewer__separator" aria-hidden="true" />
-        <button
-          className="manager-pdf-viewer__button"
-          type="button"
           aria-label="Zoom out"
-          disabled={scale <= 0.5}
-          onClick={() => setScale((current) => Math.max(0.5, Math.round((current - 0.1) * 100) / 100))}
+          disabled={currentScale <= 0.35}
+          onClick={() => setScale((current) => Math.max(0.35, Math.round(((current ?? fitWidthScale) - 0.1) * 100) / 100))}
         >
           −
         </button>
-        <span className="manager-pdf-viewer__zoom">{Math.round(scale * 100)}%</span>
+        <span className="manager-pdf-viewer__zoom">{Math.round(currentScale * 100)}%</span>
         <button
           className="manager-pdf-viewer__button"
           type="button"
           aria-label="Zoom in"
-          disabled={scale >= 2}
-          onClick={() => setScale((current) => Math.min(2, Math.round((current + 0.1) * 100) / 100))}
+          disabled={currentScale >= 2}
+          onClick={() => setScale((current) => Math.min(2, Math.round(((current ?? fitWidthScale) + 0.1) * 100) / 100))}
         >
           +
         </button>
-        <button className="manager-pdf-viewer__fit" type="button"         disabled={!pageResult || pageResult.pageNumber !== pageNumber} onClick={fitWidth}>
+        <button className="manager-pdf-viewer__fit" type="button" disabled={!document} onClick={fitWidth}>
           Fit width
         </button>
       </div>
@@ -173,9 +199,16 @@ export function ManagerPdfCanvasPreview({ pdf }: ManagerPdfCanvasPreviewProps) {
           <div className="manager-pdf-viewer__message" role="alert">{error}</div>
         ) : isLoading ? (
           <div className="manager-pdf-viewer__message" role="status">Preparing PDF preview…</div>
-        ) : pageResult?.pageNumber === pageNumber ? (
-          <div className="manager-pdf-viewer__page">
-            <canvas ref={canvasRef} aria-label={`PDF page ${pageNumber}`} />
+        ) : document ? (
+          <div className="manager-pdf-viewer__pages">
+            {Array.from({ length: document.numPages }, (_, index) => (
+              <PdfPageCanvas
+                key={index + 1}
+                document={document}
+                pageNumber={index + 1}
+                scale={currentScale}
+              />
+            ))}
           </div>
         ) : (
           <div className="manager-pdf-viewer__message">A valid resume JSON is required to display the PDF.</div>

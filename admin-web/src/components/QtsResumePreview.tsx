@@ -426,7 +426,7 @@ export function QtsResumePreview({
     const viewport = wrapper?.parentElement;
     if (!wrapper || !viewport) return undefined;
     const updateScale = () => {
-      setScale(scaleMode === 'actual' ? 1 : Math.min(1, viewport.clientWidth / pageWidth));
+      setScale(scaleMode === 'actual' ? 1 : Math.min(1.8, viewport.clientWidth / pageWidth));
     };
     updateScale();
     const observer = new ResizeObserver(updateScale);
