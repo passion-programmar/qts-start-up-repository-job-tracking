@@ -10,6 +10,10 @@ the project's shared resume data and download flow.
   label, sample resume data, and preview/download behavior.
 - `admin-web/src/components/QtsResumePreview.tsx` adapts the FlowCV HTML to the
   shared resume document, embeds CSS and fonts, and prepares print output.
+- `admin-web/src/components/QtsResume2Preview.tsx` and
+  `admin-web/src/components/QtsResume3Preview.tsx` provide separate,
+  self-contained renderers for QTS Resume 2 and the independently designed
+  QTS Resume 3 template.
 - `admin-web/public/flowcv-resume-structure.html` and
   `admin-web/public/flowcv-assets/` contain the local FlowCV structure and CSS.
 - `server/src/modules/new-schema/resume-pdfs.routes.ts` validates the template
@@ -80,12 +84,15 @@ requirement to put every future template in the FlowCV component.
 ## History
 
 - [2026-10-10 — First downloaded FlowCV resume template](2026-10-10.md)
+- [2026-10-11 — QTS Resume 3 template](2026-10-11-qts-resume-3-template.md)
 
 ## Reusable request
 
 > Add a resume template using the downloaded design in my local source folder.
 > Follow `logs/resume-template-generation/README.md`: inspect the source and
-> its reuse rights, preserve the source design using locally bundled assets,
+> its reuse rights, implement only a design whose reuse is permitted (or create
+> a distinct original design when permission is unclear), use locally bundled
+> permitted assets,
 > map it to the shared resume schema, wire preview and PDF download under a
 > new template ID, compare the preview and generated PDF, run focused checks,
 > and add a dated feature log without committing source documents or personal

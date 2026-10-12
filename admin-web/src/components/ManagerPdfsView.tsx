@@ -5,8 +5,9 @@ import { requestPdf } from '@/lib/api';
 import { ManagerPdfCanvasPreview } from '@/components/ManagerPdfCanvasPreview';
 import { QtsResumePreview, type QtsResumeDocument } from '@/components/QtsResumePreview';
 import { QtsResume2Preview } from '@/components/QtsResume2Preview';
+import { QtsResume3Preview } from '@/components/QtsResume3Preview';
 
-type ResumeTemplate = 'qts_resume_1' | 'qts_resume_2' | 'classic' | 'compact';
+type ResumeTemplate = 'qts_resume_1' | 'qts_resume_2' | 'qts_resume_3' | 'classic' | 'compact';
 
 type DirectoryPickerWindow = Window & {
   showDirectoryPicker?: (options?: { id?: string; mode?: 'read' | 'readwrite' }) => Promise<FileSystemDirectoryHandle>;
@@ -15,6 +16,7 @@ type DirectoryPickerWindow = Window & {
 const templates: Array<{ id: ResumeTemplate; label: string }> = [
   { id: 'qts_resume_1', label: 'QTS_Resume_1' },
   { id: 'qts_resume_2', label: 'QTS_Resume_2' },
+  { id: 'qts_resume_3', label: 'QTS_Resume_3' },
   { id: 'classic', label: '2. Classic ATS' },
   { id: 'compact', label: '3. Compact modern' },
 ];
@@ -76,6 +78,75 @@ const sampleResume: QtsResumeDocument = {
 };
 
 const defaultJson = JSON.stringify(sampleResume, null, 2);
+
+const sampleResume3: QtsResumeDocument = {
+  candidate: {
+    fullName: 'Taylor Morgan',
+    email: 'taylor.morgan@example.com',
+    phone: '+1 202-555-0148',
+    linkedinUrl: 'https://example.com/in/taylor-morgan',
+    location: 'Portland, Oregon',
+    headline: 'Data Scientist | Applied Machine Learning | Product Analytics',
+  },
+  targetRole: 'Data Scientist',
+  summary: 'Data scientist with experience turning complex product data into reliable models, experiments, and clear decisions. Enjoys partnering with engineers and product teams to deliver measurable improvements.',
+  sections: [
+    {
+      title: 'Professional Experience',
+      items: [
+        {
+          heading: 'Northstar Analytics',
+          subheading: 'Data Scientist',
+          dateRange: '2023 – Present | Portland, Oregon',
+          bullets: [
+            'Built and evaluated forecasting and classification models for product and operations teams.',
+            'Partnered with engineering to improve data quality and publish reusable model insights.',
+          ],
+        },
+        {
+          heading: 'Juniper Labs',
+          subheading: 'Associate Data Scientist',
+          dateRange: '2021 – 2023 | Seattle, Washington',
+          bullets: [
+            'Designed controlled experiments and translated results into practical product recommendations.',
+          ],
+        },
+      ],
+    },
+    {
+      title: 'Education',
+      items: [
+        {
+          heading: 'B.S. in Applied Mathematics',
+          subheading: 'Cascadia State University',
+          dateRange: '2017 – 2021 | Portland, Oregon',
+        },
+      ],
+    },
+    {
+      title: 'Projects',
+      items: [
+        {
+          heading: 'Customer Retention Insights',
+          subheading: 'Independent Project',
+          bullets: [
+            'Created a reproducible analysis pipeline and interactive report using a fictional public dataset.',
+          ],
+        },
+      ],
+    },
+    {
+      title: 'Skills',
+      items: [
+        { heading: 'Analytics', subheading: 'Experiment Design, Product Metrics, Statistical Modeling' },
+        { heading: 'Technology', subheading: 'Python, SQL, scikit-learn, pandas, Jupyter' },
+        { heading: 'Collaboration', subheading: 'Data Storytelling, Documentation, Cross-functional Delivery' },
+      ],
+    },
+  ],
+};
+
+const defaultJson3 = JSON.stringify(sampleResume3, null, 2);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -199,6 +270,7 @@ export function ManagerPdfsView() {
   const [resumeJson, setResumeJson] = useState<Record<ResumeTemplate, string>>({
     qts_resume_1: defaultJson,
     qts_resume_2: defaultJson,
+    qts_resume_3: defaultJson3,
     classic: defaultJson,
     compact: defaultJson,
   });
@@ -220,7 +292,7 @@ export function ManagerPdfsView() {
   const downloadUrlRef = useRef<string | null>(null);
   const livePreviewFrameRef = useRef<HTMLIFrameElement>(null);
   const json = resumeJson[template];
-  const isLiveTemplate = template === 'qts_resume_1' || template === 'qts_resume_2';
+  const isLiveTemplate = template === 'qts_resume_1' || template === 'qts_resume_2' || template === 'qts_resume_3';
   const parsedResume = parseResumeJson(json);
 
   useEffect(() => {
@@ -382,7 +454,7 @@ export function ManagerPdfsView() {
                 const selected = templates.find((item) => item.id === event.target.value);
                 if (selected) {
                   const selectedJson = resumeJson[selected.id];
-                  if (selected.id === 'qts_resume_1' || selected.id === 'qts_resume_2') {
+                  if (selected.id === 'qts_resume_1' || selected.id === 'qts_resume_2' || selected.id === 'qts_resume_3') {
                     const parsed = parseResumeJson(selectedJson);
                     if (parsed.resume) setLiveResume(parsed.resume);
                     setPreviewError(parsed.error || '');
@@ -474,6 +546,16 @@ export function ManagerPdfsView() {
               <div className="manager-pdfs__live-resume">
                 {template === 'qts_resume_2' ? (
                   <QtsResume2Preview
+                    key={template}
+                    resume={liveResume}
+                    iframeRef={livePreviewFrameRef}
+                    scaleMode="fit"
+                    onReady={setIsLivePreviewReady}
+                    onError={setLivePreviewError}
+                    onDocumentReady={setRenderedHtml}
+                  />
+                ) : template === 'qts_resume_3' ? (
+                  <QtsResume3Preview
                     key={template}
                     resume={liveResume}
                     iframeRef={livePreviewFrameRef}

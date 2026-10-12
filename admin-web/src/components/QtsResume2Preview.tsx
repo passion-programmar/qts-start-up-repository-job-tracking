@@ -59,11 +59,11 @@ function safeWebUrl(value: string | undefined): string {
   }
 }
 
-function contactItem(label: string, value: string | undefined, href?: string): string {
+function contactItem(value: string | undefined, href?: string, separator = false): string {
   if (!value?.trim()) return '';
   const text = escapeHtml(value.trim());
   const safeHref = href ? escapeHtml(href) : '';
-  return `<span class="contact-item"><span class="contact-icon" aria-hidden="true">${label}</span>${safeHref
+  return `<span class="contact-item">${separator ? '<span class="contact-separator" aria-hidden="true">•</span>' : ''}${safeHref
     ? `<a href="${safeHref}">${text}</a>`
     : `<span>${text}</span>`}</span>`;
 }
@@ -101,12 +101,15 @@ function makeDocument(resume: QtsResumeDocument, fonts: FontAssets): string {
   const name = escapeHtml(resume.candidate.fullName);
   const headline = escapeHtml(resume.candidate.headline);
   const linkedIn = safeWebUrl(resume.candidate.linkedinUrl);
-  const contact = [
-    contactItem('⌖', resume.candidate.location),
-    contactItem('✉', resume.candidate.email, resume.candidate.email ? `mailto:${resume.candidate.email}` : undefined),
-    contactItem('☎', resume.candidate.phone, resume.candidate.phone ? `tel:${resume.candidate.phone}` : undefined),
-    contactItem('in', resume.candidate.linkedinUrl, linkedIn),
-  ].filter(Boolean).join('');
+  const contactDetails = [
+    { value: resume.candidate.location },
+    { value: resume.candidate.email, href: resume.candidate.email ? `mailto:${resume.candidate.email}` : undefined },
+    { value: resume.candidate.phone, href: resume.candidate.phone ? `tel:${resume.candidate.phone}` : undefined },
+    { value: resume.candidate.linkedinUrl, href: linkedIn, isLinkedIn: true },
+  ].filter((detail) => detail.value?.trim());
+  const contact = contactDetails
+    .map((detail, index) => contactItem(detail.value, detail.href, index > 0 && !detail.isLinkedIn))
+    .join('');
   const summary = resume.summary?.trim()
     ? `<section class="resume-section"><h2 class="section-title">Summary</h2><div class="resume-block summary-text">${escapeHtml(resume.summary)}</div></section>`
     : '';
@@ -137,9 +140,9 @@ function makeDocument(resume: QtsResumeDocument, fonts: FontAssets): string {
       .resume-header { margin: 0 0 10px; text-align: center; }
       .resume-name { margin: 0; padding-bottom: .2em; color: #355c7d; font-family: "Abril Fatface", Georgia, serif; font-size: 30pt; font-weight: 400; letter-spacing: 1px; line-height: 46px; overflow-wrap: anywhere; }
       .resume-headline { margin: 0; padding-bottom: .16em; color: #355c7d; font-size: 15pt; line-height: 23px; overflow-wrap: anywhere; }
-      .contact-list { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 2px 12px; margin-top: 5px; font-size: 13pt; line-height: 23px; }
-      .contact-item { display: inline-flex; align-items: baseline; gap: 4px; min-width: 0; }
-      .contact-icon { font-family: Arial, sans-serif; font-size: 10pt; font-weight: 700; }
+      .contact-list { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; column-gap: 0; row-gap: 2px; margin-top: 5px; font-size: 13pt; line-height: 23px; }
+      .contact-item { display: inline-flex; align-items: baseline; min-width: 0; overflow-wrap: anywhere; }
+      .contact-separator { margin: 0 12px; }
       a { color: inherit; text-decoration: none; }
       .resume-section { margin: 0 0 10px; }
       .section-title { margin: 0 0 11.98px; border-bottom: 2px solid #355c7d; color: #355c7d; font-size: 16pt; font-weight: 700; letter-spacing: .5px; line-height: 28px; }

@@ -642,14 +642,16 @@
 .manager-pdfs__preview:fullscreen .manager-pdfs__live-resume {
   min-height: 0;
 }
-.qts-flowcv-preview {
+.qts-flowcv-preview,
+.qts-resume3-preview {
   position: relative;
   width: 100%;
   flex: 0 0 auto;
   margin: 0 auto;
   overflow: hidden;
 }
-.qts-flowcv-preview iframe {
+.qts-flowcv-preview iframe,
+.qts-resume3-preview iframe {
   position: absolute;
   top: 0;
   left: 0;

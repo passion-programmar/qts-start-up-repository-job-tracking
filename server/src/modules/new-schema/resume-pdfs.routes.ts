@@ -11,11 +11,11 @@ import { ResumeDocumentSchema } from '../document-builder/document.schemas';
 
 const router = Router();
 const requestSchema = z.object({
-  template: z.enum(['qts_resume_1', 'qts_resume_2', 'flowcv', 'classic', 'compact']),
+  template: z.enum(['qts_resume_1', 'qts_resume_2', 'qts_resume_3', 'flowcv', 'classic', 'compact']),
   resume: ResumeDocumentSchema,
   renderedHtml: z.string().max(1_500_000).optional(),
 }).strict().superRefine((data, context) => {
-  if ((data.template === 'qts_resume_1' || data.template === 'qts_resume_2') && !data.renderedHtml) {
+  if ((data.template === 'qts_resume_1' || data.template === 'qts_resume_2' || data.template === 'qts_resume_3') && !data.renderedHtml) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
       path: ['renderedHtml'],
@@ -48,7 +48,7 @@ router.post(
 
     try {
       const template: ResumePdfTemplate = parsed.data.template;
-      const pdf = (template === 'qts_resume_1' || template === 'qts_resume_2') && parsed.data.renderedHtml
+      const pdf = (template === 'qts_resume_1' || template === 'qts_resume_2' || template === 'qts_resume_3') && parsed.data.renderedHtml
         ? await renderFlowCvHtmlPdfBuffer(parsed.data.renderedHtml)
         : await renderResumePdfBuffer(parsed.data.resume, template);
       const fileName = `${safePdfFileName(parsed.data.resume.candidate.fullName) || 'Resume'}.pdf`;
