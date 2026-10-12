@@ -951,9 +951,11 @@ export function ManagerPdfsView() {
           )}
           {downloadStatus && <p role="status" className="manager-pdfs__path-note">{downloadStatus}</p>}
         </section>
-        <section className="manager-pdfs__preview card" aria-labelledby="resume-pdf-preview-title">
+        <section className="manager-pdfs__preview card" aria-label="PDF preview">
           <div className="manager-pdfs__preview-header">
-            <h3 id="resume-pdf-preview-title">{previewDocument === 'resume' && isLiveTemplate ? 'Live resume preview' : `${previewDocument === 'resume' ? 'Resume' : 'Cover letter'} preview`}</h3>
+            {!(previewDocument === 'resume' && isLiveTemplate) && (
+              <h3 id="resume-pdf-preview-title">{`${previewDocument === 'resume' ? 'Resume' : 'Cover letter'} preview`}</h3>
+            )}
             {previewDocument === 'resume' && isLoading && <span className="text-muted" role="status">Generating PDF…</span>}
             {previewDocument === 'resume' && isLiveTemplate && !isLivePreviewReady && <span className="text-muted" role="status">Preparing live preview…</span>}
           </div>
