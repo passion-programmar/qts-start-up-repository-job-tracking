@@ -371,6 +371,7 @@ export function ManagerPdfsView() {
   const [suggestedPath, setSuggestedPath] = useState('');
   const [downloadDirectory, setDownloadDirectory] = useState<PermissionedDirectoryHandle | null>(null);
   const [savedDownloadDirectory, setSavedDownloadDirectory] = useState<PermissionedDirectoryHandle | null>(null);
+  const [isRestoringDownloadDirectory, setIsRestoringDownloadDirectory] = useState(true);
   const previewUrlRef = useRef<string | null>(null);
   const downloadUrlRef = useRef<string | null>(null);
   const livePreviewFrameRef = useRef<HTMLIFrameElement>(null);
@@ -397,6 +398,9 @@ export function ManagerPdfsView() {
         if (!cancelled) {
           setDownloadError(error instanceof Error ? error.message : 'Could not restore the saved download folder.');
         }
+      })
+      .finally(() => {
+        if (!cancelled) setIsRestoringDownloadDirectory(false);
       });
     return () => {
       cancelled = true;
@@ -463,11 +467,11 @@ export function ManagerPdfsView() {
         startIn: 'music',
       });
       setDownloadDirectory(directory);
-      setSavedDownloadDirectory(directory);
       setDownloadStatus(`PDFs will be saved in ${directory.name}.`);
       const persistence = await requestPersistentStorage();
       try {
         await saveDirectory(directory);
+        setSavedDownloadDirectory(directory);
         setDownloadStatus(`PDFs will be saved in ${directory.name}. This folder is remembered in this browser. ${persistence.message} Clearing site data can still remove it.`);
       } catch (error) {
         setDownloadError(error instanceof Error
@@ -486,7 +490,7 @@ export function ManagerPdfsView() {
     try {
       const permission = await savedDownloadDirectory.requestPermission({ mode: 'readwrite' });
       if (permission !== 'granted') {
-        setDownloadError('Folder access was not granted. Choose the folder again or allow access in your browser.');
+        setDownloadError('Folder access was not granted. Allow access in your browser, then reconnect the saved folder.');
         return;
       }
       setDownloadDirectory(savedDownloadDirectory);
@@ -658,12 +662,12 @@ export function ManagerPdfsView() {
             disabled={!parsedResume.resume || (isLiveTemplate ? (!isLivePreviewReady || !renderedHtml) : !previewUrl) || isLoading || isDownloading || Boolean(previewError)}>
             {isDownloading ? 'Generating PDF…' : isLoading ? 'Preparing preview…' : 'Download PDF'}
           </button>
-          {savedDownloadDirectory && !downloadDirectory && (
+          {!isRestoringDownloadDirectory && savedDownloadDirectory && !downloadDirectory && (
             <button className="btn" type="button" onClick={reconnectDownloadFolder}>Reconnect saved folder</button>
           )}
-          <button className="btn" type="button" onClick={chooseDownloadFolder}>
-            {downloadDirectory || savedDownloadDirectory ? 'Choose a different folder' : 'Choose download folder'}
-          </button>
+          {!isRestoringDownloadDirectory && !savedDownloadDirectory && (
+            <button className="btn" type="button" onClick={chooseDownloadFolder}>Choose a folder</button>
+          )}
           {downloadError && <div className="alert alert-error" role="alert">{downloadError}</div>}
           {isLiveTemplate && <p className="text-muted"></p>}
           <p className="manager-pdfs__path-note">
