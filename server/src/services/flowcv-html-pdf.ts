@@ -1,8 +1,13 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import chromium from '@sparticuz/chromium';
 import puppeteer, { type Browser } from 'puppeteer-core';
+
+type ChromiumModule = typeof import('@sparticuz/chromium');
+
+const importEsm = new Function('specifier', 'return import(specifier)') as (
+  specifier: string,
+) => Promise<ChromiumModule>;
 
 const MAX_HTML_LENGTH = 1_500_000;
 const CSP = [
@@ -49,21 +54,25 @@ function findLocalBrowser(): string | null {
 
 async function launchBrowser(): Promise<Browser> {
   const isVercel = Boolean(process.env.VERCEL);
-  const executablePath = isVercel
+  // Keep the ESM-only Chromium package out of the CommonJS startup path.
+  const chromium = isVercel
+    ? (await importEsm('@sparticuz/chromium')).default
+    : null;
+  const executablePath = chromium
     ? await chromium.executablePath()
     : findLocalBrowser();
   if (!executablePath) {
     throw new Error('Could not find Chrome or Chromium. Install a local browser or set CHROME_EXECUTABLE_PATH.');
   }
 
-  const args = isVercel
+  const args = chromium
     ? await puppeteer.defaultArgs({ args: chromium.args, headless: 'shell' })
     : ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'];
   return puppeteer.launch({
     args,
     defaultViewport: { width: 816, height: 1056, deviceScaleFactor: 1 },
     executablePath,
-    headless: isVercel ? 'shell' : true,
+    headless: chromium ? 'shell' : true,
   });
 }
 
