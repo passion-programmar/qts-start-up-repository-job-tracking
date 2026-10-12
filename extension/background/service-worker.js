@@ -494,10 +494,11 @@ async function persistDiscoveryCheckpoint(tabId, discovery, reusableTemplate = n
   checkpointMap[String(tabId)] = checkpoint;
   await chrome.storage.session.set({ [DISCOVERY_CHECKPOINT_TAB_KEY]: checkpointMap });
 
-  const fields = checkpoint.steps.flatMap((step) => step.fields.map((field) => ({
+  const checkpointFields = checkpoint.steps.flatMap((step) => step.fields.map((field) => ({
     ...field,
     fieldId: `${step.stepId}:${field.fieldId}`.slice(0, 255),
   }))).slice(0, 300);
+  const fields = appFlow.sanitizeTemplateDiscovery({ fields: checkpointFields }).fields;
   const coverage = {
     visibleFields: fields.length,
     matchedFields: fields.filter((field) => field.status === 'matched').length,
@@ -530,7 +531,14 @@ async function persistDiscoveryCheckpoint(tabId, discovery, reusableTemplate = n
   );
   return {
     success: Boolean(saved?.success),
-    message: saved?.success ? null : (saved?.message || 'Template draft was not persisted.'),
+    message: saved?.success
+      ? null
+      : [
+          saved?.message || 'Template draft was not persisted.',
+          ...(Array.isArray(saved?.errors)
+            ? saved.errors.slice(0, 5).map((error) => `${error.field || 'field'}: ${error.message}`)
+            : []),
+        ].join(' '),
     template: saved?.template || null,
     checkpoint,
   };

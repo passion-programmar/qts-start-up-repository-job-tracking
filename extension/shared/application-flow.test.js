@@ -96,6 +96,43 @@ test('verified Scanner evidence survives later structural refreshes without savi
   assert.equal(JSON.stringify(refreshed).includes('private@example.invalid'), false);
 });
 
+test('template draft fields omit unpersisted locator evidence and entered values', () => {
+  const draft = flow.sanitizeTemplateDiscovery({
+    fields: [{
+      fieldId: 'contact-step:email',
+      question: 'Email',
+      fieldType: 'email',
+      required: true,
+      matchMethod: 'stable_name',
+      confidence: 0.95,
+      status: 'matched',
+      currentValue: 'private@example.invalid',
+      selectorHints: { name: 'email' },
+      domEvidence: { control: { tag: 'input', classNames: ['email-input'] }, ancestors: [] },
+      scannerCapture: {
+        captureCount: 2,
+        captureVerified: true,
+        managerReviewed: false,
+        observations: [],
+      },
+    }],
+  });
+
+  assert.deepEqual(draft.fields, [{
+    fieldId: 'contact-step:email',
+    question: 'Email',
+    fieldType: 'email',
+    required: true,
+    matchMethod: 'stable_name',
+    confidence: 0.95,
+    status: 'matched',
+    selectorHints: { name: 'email' },
+  }]);
+  assert.equal(JSON.stringify(draft).includes('private@example.invalid'), false);
+  assert.equal(JSON.stringify(draft).includes('domEvidence'), false);
+  assert.equal(JSON.stringify(draft).includes('scannerCapture'), false);
+});
+
 test('discovery navigation remains review-gated and marks final submit without activating it', () => {
   const next = flow.classifyNavigationAction('Continue', {
     mode: 'DISCOVERY',
