@@ -33,15 +33,17 @@ tables listed above are kept. Legacy tables are not recreated by migrations.
   create Account profiles.
 - Managers create and manage job listings, assigning categories and Account
   profiles.
+- Managers can use the extension's Scanner on supported application sites,
+  including Workable. Scanner captures only the visible step, requires
+  Manager-confirmed strategies/fills, and never advances or submits.
 - Bids and interviews use the active new-schema data model.
 - Users sign in to the web app at the deployed Vercel URL.
 
 ## Retired workflows
 
-The extension's Manager login uses the new-schema API. Its job capture,
-Account selection, candidate tracking, job-site admissions, and Custom GPT
-application/PDF workflows still depend on retired endpoints and are not
-available until those workflows are refactored.
+The legacy hands-off auto-apply and final submission flows remain disabled.
+Scanner's explicit Manager-reviewed application assistance is separate from
+those retired workflows.
 
 ## Deployment
 

@@ -18,6 +18,10 @@
   options, and nearby DOM structure take priority.
 - Structural evidence does not persist entered field values. Reviewed capture
   evidence can be updated independently of answer-policy history.
+- Workable is enabled for the Manager-reviewed Scanner flow: Managers may
+  claim its Account row, capture/review visible fields, and apply explicitly
+  confirmed fills. Legacy automatic application flows remain blocked, and
+  Scanner does not navigate or submit.
 - 12 focused unit tests and 7 Scanner/template/learning/safety API integration
   tests passed, as did the server build and changed-script
   syntax checks, Problems check, and `git diff --check` passed. Live ATS

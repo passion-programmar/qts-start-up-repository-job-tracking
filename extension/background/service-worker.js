@@ -152,7 +152,7 @@ async function applyGptPackageToJobTab(applicationId, jobTabId) {
     throw new Error('No job tab found for GPT apply.');
   }
   if (isWorkableApplicationUrl(tab.url)) {
-    throw new Error('Workable applications are disabled. QTS will not fill or submit this form.');
+    throw new Error('The legacy application-session flow is disabled for Workable. Use Manager-confirmed Scanner.');
   }
 
   const api = self.__qtsApiWorker;
@@ -1018,11 +1018,18 @@ async function fillApplicationFormOnTab(tabId, fields, options = {}) {
     return { error: 'The active tab does not have a valid page URL.' };
   }
   if (isWorkableApplicationUrl(tab.url)) {
-    return {
-      success: false,
-      blocked: true,
-      error: 'Workable applications are disabled. QTS will not fill fields on this site.',
-    };
+    const sessionUser = await self.__qtsAccountAuth?.readWorkerSessionUser?.();
+    const managerScannerApproved = options.managerScannerConfirmed === true
+      && mode === 'REAL_APPLICATION'
+      && options.allowUserApprovedFill === true
+      && sessionUser?.role === 'manager';
+    if (!managerScannerApproved) {
+      return {
+        success: false,
+        blocked: true,
+        error: 'Workable field filling is available only through Manager-confirmed Scanner.',
+      };
+    }
   }
   const injected = await injectFormScan(tab.id);
   if (!injected) return { error: 'Could not access this page for form filling.' };
@@ -2132,6 +2139,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse(await fillApplicationFormOnTab(tabId, msg.fields || [], {
         mode: msg.mode,
         allowUserApprovedFill: msg.allowUserApprovedFill,
+        managerScannerConfirmed: msg.managerScannerConfirmed === true,
       }));
     })().catch((e) => sendResponse({ error: e.message || 'Form fill failed.' }));
     return true;

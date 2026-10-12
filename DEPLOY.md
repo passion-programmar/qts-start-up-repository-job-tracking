@@ -9,8 +9,10 @@ Browser ──► Vercel web app ──► Vercel API functions ──► Neon
 ```
 
 The web app proxies API requests to the API deployment. The deployed system
-uses the new-schema tables only; the older extension, candidates, auto-apply,
-and legacy account workflows are not part of this deployment.
+uses the new-schema tables only. The Scanner extension is a separate
+deliverable; it supports Manager-reviewed application assistance on supported
+sites, including Workable, and never advances or submits. Legacy hands-off
+auto-apply remains disabled.
 
 ## 1. Create a Neon database
 

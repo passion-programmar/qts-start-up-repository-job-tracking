@@ -140,7 +140,7 @@ async function loadTask(taskId: string): Promise<TaskRow | null> {
             task.resume_text_expires_at
      FROM gpt_application_tasks task
      JOIN job_list job ON job.j_id = task.job_id
-     WHERE task.task_id = $1 AND job.application_type <> 'workable'`,
+     WHERE task.task_id = $1`,
     [taskId]
   );
 }
@@ -203,8 +203,7 @@ router.post('/jobs/:jobId', requireNewSchemaAuth, async (req: NewSchemaAuthReque
      LEFT JOIN account_application_profiles profile ON profile.account_user_id = account.u_id
      JOIN users manager ON manager.u_id = job.u_id AND manager.role = 'manager'
      LEFT JOIN manager_application_profiles manager_profile ON manager_profile.manager_user_id = manager.u_id
-     WHERE job.j_id = $1 AND job.u_id = $2 AND job.status = 'processing'
-       AND job.application_type <> 'workable'`,
+     WHERE job.j_id = $1 AND job.u_id = $2 AND job.status = 'processing'`,
     [jobId, req.newSchemaUser!.id]
   );
   if (!context) {

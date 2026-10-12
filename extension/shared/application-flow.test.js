@@ -145,7 +145,7 @@ test('legacy generic autofill refuses Workable before loading candidate data', a
       candidateId: 7,
       jobUrl: 'https://apply.workable.com/example/j/123',
     }),
-    /Workable applications are disabled/
+    /Automatic application mode is disabled for Workable/
   );
   assert.equal(tabLookups, 1);
 });

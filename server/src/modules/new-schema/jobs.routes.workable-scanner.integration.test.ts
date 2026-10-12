@@ -14,10 +14,9 @@ let managerToken = '';
 let managerId = 0;
 let accountId = 0;
 let jobId = 0;
-const existingTaskId = 'task_00000000-0000-4000-8000-000000000001';
 
 before(async () => {
-  temporaryDatabasePath = await mkdtemp(path.join(tmpdir(), 'qts-workable-disabled-test-'));
+  temporaryDatabasePath = await mkdtemp(path.join(tmpdir(), 'qts-workable-scanner-test-'));
   process.env.EMBEDDED_PG = 'true';
   process.env.PGLITE_DATA_PATH = temporaryDatabasePath;
   process.env.JWT_SECRET = 'isolated-workable-removal-test-secret';
@@ -126,29 +125,8 @@ after(async () => {
   }
 });
 
-it('keeps Workable rows unclaimable and blocks their application context and GPT tasks', async () => {
-  const claimResponse = await fetch(`${serverUrl}/api/v2/jobs/claim-next`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${managerToken}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      accountUserId: accountId,
-      applyRunId: '8b75db44-c7d4-4f57-b8d4-0a2a9c04dc76',
-      supportedTypes: ['workable'],
-    }),
-  });
-  assert.equal(claimResponse.status, 200);
-  assert.deepEqual(await claimResponse.json(), { success: true, claimed: false });
-
+it('allows Manager Scanner to claim Workable rows and load their context and GPT task', async () => {
   const database = await import('../../database/connection');
-  const unclaimed = await database.queryOne<{ status: string }>(
-    'SELECT status FROM job_list WHERE j_id = $1',
-    [jobId]
-  );
-  assert.equal(unclaimed?.status, 'todo');
-
   const supportedJob = await database.queryOne<{ j_id: number }>(
     `INSERT INTO job_list (u_id, url, application_type, company, title)
      VALUES ($1, 'https://boards.greenhouse.io/example/jobs/456', 'greenhouse.io', 'Test Company', 'Supported Role')
@@ -241,12 +219,42 @@ it('keeps Workable rows unclaimable and blocks their application context and GPT
   });
   assert.equal(conflictingRunResponse.status, 409);
 
-  await database.execute('UPDATE job_list SET status = $1 WHERE j_id = $2', ['processing', jobId]);
+  await database.execute(
+    'UPDATE job_list SET status = $1 WHERE j_id = $2',
+    ['todo', supportedJob.j_id]
+  );
+  await database.execute('DELETE FROM account_apply_runs WHERE account_user_id = $1', [accountId]);
+  const workableClaimResponse = await fetch(`${serverUrl}/api/v2/jobs/claim-next`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${managerToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      accountUserId: accountId,
+      applyRunId: 'bcd75512-5b81-4406-9af0-1961bc164e0c',
+      supportedTypes: ['workable'],
+      jobId,
+    }),
+  });
+  const workableClaim = await workableClaimResponse.json() as {
+    success: boolean;
+    claimed: boolean;
+    job?: { id: number; applicationType: string };
+  };
+  assert.equal(workableClaimResponse.status, 200);
+  assert.equal(workableClaim.success, true);
+  assert.equal(workableClaim.claimed, true);
+  assert.equal(workableClaim.job?.id, jobId);
+  assert.equal(workableClaim.job?.applicationType, 'workable');
 
   const contextResponse = await fetch(`${serverUrl}/api/v2/jobs/${jobId}/application-context`, {
     headers: { Authorization: `Bearer ${managerToken}` },
   });
-  assert.equal(contextResponse.status, 404);
+  assert.equal(contextResponse.status, 200);
+  const context = await contextResponse.json() as { success: boolean; job: { application_type: string } };
+  assert.equal(context.success, true);
+  assert.equal(context.job.application_type, 'workable');
 
   const taskResponse = await fetch(`${serverUrl}/api/v2/gpt-application-tasks/jobs/${jobId}`, {
     method: 'POST',
@@ -256,16 +264,14 @@ it('keeps Workable rows unclaimable and blocks their application context and GPT
     },
     body: JSON.stringify({}),
   });
-  assert.equal(taskResponse.status, 404);
+  assert.equal(taskResponse.status, 201);
+  const createdTask = await taskResponse.json() as { success: boolean; taskId: string; status: string };
+  assert.equal(createdTask.success, true);
+  assert.equal(createdTask.status, 'waiting_for_page');
 
-  await database.execute(
-    `INSERT INTO gpt_application_tasks (task_id, job_id)
-     VALUES ($1, $2)`,
-    [existingTaskId, jobId]
-  );
   const existingTaskResponse = await fetch(
-    `${serverUrl}/api/v2/gpt-application-tasks/${existingTaskId}/extension-status`,
+    `${serverUrl}/api/v2/gpt-application-tasks/${createdTask.taskId}/extension-status`,
     { headers: { Authorization: `Bearer ${managerToken}` } }
   );
-  assert.equal(existingTaskResponse.status, 404);
+  assert.equal(existingTaskResponse.status, 200);
 });

@@ -24,7 +24,7 @@ The repository already has the core building blocks for the learning layer:
 - popup review queue for user decisions
 - Manager-shared and Account-specific reusable application-answer stores
 
-The Manager Scanner captures Manager-owned answer strategies separately from structural templates. It can resolve confirmed Profile and Reusable answers, and route Generated Answer fields plus detected resume/cover-letter uploads through the selected job's GPT task. Generated results require Manager review before filling; Scanner uses the description loaded through Get JD and requests one only if still missing. Scanner saves or updates the job, starts the selected Account's exact `todo` row, and operates only on the visible step; it does not advance pages or submit applications. First-time visible-step capture now runs twice automatically and reconciles DOM/field evidence; later scans conditionally repeat verification when evidence indicates change or uncertainty. Remaining work includes broader browser-flow testing, improved confirmation UI, and verification of document/answer handling across real supported sites.
+The Manager Scanner captures Manager-owned answer strategies separately from structural templates. It can resolve confirmed Profile and Reusable answers, and route Generated Answer fields plus detected resume/cover-letter uploads through the selected job's GPT task. Generated results require Manager review before filling; Scanner uses the description loaded through Get JD and requests one only if still missing. Scanner saves or updates the job, starts the selected Account's exact `todo` row, and operates only on the visible step; it does not advance pages or submit applications. First-time visible-step capture now runs twice automatically and reconciles DOM/field evidence; later scans conditionally repeat verification when evidence indicates change or uncertainty. Scanner supports Workable through Manager-confirmed capture and field filling. Legacy automatic application flows remain blocked on Workable. Remaining work includes broader browser-flow testing, improved confirmation UI, and verification of document/answer handling across real supported sites.
 
 ## Non-Goals
 
@@ -359,7 +359,7 @@ Semantic groups may be shared while context remains recorded separately. For exa
     - Run the learning/assist gate before every fill; blocked, missing, low-confidence, incompatible, or failed answers remain unresolved.
     - Never overwrite a non-empty live value without explicit Manager approval.
     - Require Manager review before advancing and keep final Submit/Apply/Finish manual.
-    - Keep unsupported platforms and disabled Workable application automation blocked.
+    - Keep unsupported platforms and legacy automatic application flows blocked; allow Workable only through Manager-confirmed Scanner captures and field fills. Never advance or submit.
 
 12. **Add observability and rollback**
     - Record who confirmed a strategy/change, when, before/after field metadata, template revision, answer strategy, and outcome.

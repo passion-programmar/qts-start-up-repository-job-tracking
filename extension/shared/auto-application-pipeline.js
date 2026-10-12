@@ -138,7 +138,7 @@
     const jobUrl = normalizePipelineUrl(options.jobUrl || tab.url);
     const jobHost = new URL(jobUrl).hostname.toLowerCase();
     if (jobHost === 'workable.com' || jobHost.endsWith('.workable.com')) {
-      throw new Error('Workable applications are disabled. Use read-only site discovery; QTS will not fill or submit this form.');
+      throw new Error('Automatic application mode is disabled for Workable. Use Manager-confirmed Scanner; it will not advance or submit.');
     }
 
     const applyCheck = await isDefaultCandidateAlreadyApplied(jobUrl, candidateId);
