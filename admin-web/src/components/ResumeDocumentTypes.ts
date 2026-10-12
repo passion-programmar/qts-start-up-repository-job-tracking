@@ -21,6 +21,14 @@ export type QtsResumeDocument = {
   };
   targetRole: string;
   targetCompany?: string;
+  targetJobsite?: string;
   summary?: string;
   sections: QtsResumeSection[];
+};
+
+export type QtsCoverLetterDocument = {
+  date?: string;
+  salutation?: string;
+  bodyParagraphs: string[];
+  closing?: string;
 };

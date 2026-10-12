@@ -3,13 +3,20 @@
 import { useEffect, useRef, useState } from 'react';
 import { requestPdf } from '@/lib/api';
 import { ManagerPdfCanvasPreview } from '@/components/ManagerPdfCanvasPreview';
+import { createQtsCoverLetterHtml, QtsCoverLetterPreview } from '@/components/QtsCoverLetterPreview';
 import { QtsResumePreview, type QtsResumeDocument } from '@/components/QtsResumePreview';
 import { QtsResume2Preview } from '@/components/QtsResume2Preview';
 import { QtsResume3Preview } from '@/components/QtsResume3Preview';
+import type { QtsCoverLetterDocument } from '@/components/ResumeDocumentTypes';
 
 type ResumeTemplate = 'qts_resume_1' | 'qts_resume_2' | 'qts_resume_3' | 'classic' | 'compact';
+type PreviewDocument = 'resume' | 'cover-letter';
 
-type PermissionedDirectoryHandle = FileSystemDirectoryHandle & {
+type IterableDirectoryHandle = FileSystemDirectoryHandle & {
+  entries(): AsyncIterableIterator<[string, FileSystemHandle]>;
+};
+
+type PermissionedDirectoryHandle = IterableDirectoryHandle & {
   queryPermission(options: { mode: 'readwrite' }): Promise<PermissionState>;
   requestPermission(options: { mode: 'readwrite' }): Promise<PermissionState>;
 };
@@ -25,6 +32,11 @@ type DirectoryPickerWindow = Window & {
 const directoryDatabaseName = 'qts-resume-pdf-settings';
 const directoryStoreName = 'settings';
 const directoryStorageKey = 'download-directory';
+const resumeOutputFolderName = '$_QTS_Resume_$';
+
+function isDirectoryNotFound(error: unknown): boolean {
+  return error instanceof DOMException && error.name === 'NotFoundError';
+}
 
 function openDirectoryDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -69,6 +81,25 @@ async function saveDirectory(directory: PermissionedDirectoryHandle): Promise<vo
   }
 }
 
+async function removeSavedDirectory(): Promise<void> {
+  const database = await openDirectoryDatabase();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction(directoryStoreName, 'readwrite');
+      transaction.objectStore(directoryStoreName).delete(directoryStorageKey);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error || new Error('Could not remove the unavailable download folder.'));
+      transaction.onabort = () => reject(transaction.error || new Error('Removing the unavailable download folder was cancelled.'));
+    });
+  } finally {
+    database.close();
+  }
+}
+
+async function verifyDirectoryHandle(directory: PermissionedDirectoryHandle): Promise<void> {
+  await directory.entries().next();
+}
+
 async function requestPersistentStorage(): Promise<{ granted: boolean; message: string }> {
   if (!navigator.storage?.persist) {
     return { granted: false, message: 'Persistent storage is not supported by this browser.' };
@@ -105,6 +136,8 @@ const sampleResume: QtsResumeDocument = {
     headline: 'Software Engineer | Example Resume',
   },
   targetRole: 'Software Engineer',
+  targetCompany: 'Example Company',
+  targetJobsite: 'Example Jobsite',
   summary: 'Example resume content for previewing the QTS templates. Replace this fictional sample with your own resume information before downloading.',
   sections: [
     {
@@ -160,7 +193,18 @@ const sampleResume: QtsResumeDocument = {
   ],
 };
 
-const defaultJson = JSON.stringify(sampleResume, null, 2);
+const defaultJson = JSON.stringify({
+  ...sampleResume,
+  coverLetter: {
+    salutation: 'Dear Hiring Manager,',
+    bodyParagraphs: [
+      'I am excited to apply for the Software Engineer role at Example Company. My background building dependable web applications and collaborating across product and engineering teams aligns well with this opportunity.',
+      'In my recent work, I have delivered user-facing features, improved application quality through testing, and communicated technical decisions clearly. I would bring that same practical, team-focused approach to your engineering group.',
+      'Thank you for considering my application. I would welcome the opportunity to discuss how my experience can support Example Company.',
+    ],
+    closing: 'Sincerely,',
+  },
+}, null, 2);
 
 const sampleResume3: QtsResumeDocument = {
   candidate: {
@@ -172,6 +216,8 @@ const sampleResume3: QtsResumeDocument = {
     headline: 'Data Scientist | Applied Machine Learning | Product Analytics',
   },
   targetRole: 'Data Scientist',
+  targetCompany: 'Northstar Analytics',
+  targetJobsite: 'Example Jobsite',
   summary: 'Data scientist with experience turning complex product data into reliable models, experiments, and clear decisions. Enjoys partnering with engineers and product teams to deliver measurable improvements.',
   sections: [
     {
@@ -229,13 +275,29 @@ const sampleResume3: QtsResumeDocument = {
   ],
 };
 
-const defaultJson3 = JSON.stringify(sampleResume3, null, 2);
+const defaultJson3 = JSON.stringify({
+  ...sampleResume3,
+  coverLetter: {
+    salutation: 'Dear Hiring Manager,',
+    bodyParagraphs: [
+      'I am writing to apply for the Data Scientist role at Northstar Analytics. My experience translating product data into reliable models and clear recommendations fits the role’s focus on measurable, collaborative work.',
+      'I have built forecasting and classification models, designed experiments, and partnered with engineering teams to improve data quality. I would be glad to bring this blend of analytical and practical experience to your team.',
+      'Thank you for your time and consideration. I look forward to the possibility of discussing the role with you.',
+    ],
+    closing: 'Sincerely,',
+  },
+}, null, 2);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function parseResumeJson(value: string): { resume?: QtsResumeDocument; error?: string } {
+function parseResumeJson(value: string): {
+  resume?: QtsResumeDocument;
+  coverLetter?: QtsCoverLetterDocument;
+  error?: string;
+  coverLetterError?: string;
+} {
   let parsed: unknown;
   try {
     parsed = JSON.parse(value);
@@ -297,6 +359,44 @@ function parseResumeJson(value: string): { resume?: QtsResumeDocument; error?: s
   if (parsed.targetCompany !== undefined && typeof parsed.targetCompany !== 'string') {
     return { error: 'Target company must be text.' };
   }
+  if (parsed.targetJobsite !== undefined && typeof parsed.targetJobsite !== 'string') {
+    return { error: 'Target jobsite must be text.' };
+  }
+
+  let coverLetter: QtsCoverLetterDocument | undefined;
+  let coverLetterError: string | undefined;
+  const rawCoverLetter = parsed.coverLetter;
+  if (!isRecord(rawCoverLetter)) {
+    coverLetterError = 'Add a coverLetter object with a bodyParagraphs array to generate both PDFs.';
+  } else {
+    const bodyParagraphs = rawCoverLetter.bodyParagraphs;
+    const validBodyParagraphs = Array.isArray(bodyParagraphs)
+      ? bodyParagraphs.filter((paragraph): paragraph is string =>
+        typeof paragraph === 'string' && Boolean(paragraph.trim()) && paragraph.length <= 900
+      )
+      : [];
+    if (
+      validBodyParagraphs.length < 1
+      || validBodyParagraphs.length > 6
+      || !Array.isArray(bodyParagraphs)
+      || validBodyParagraphs.length !== bodyParagraphs.length
+    ) {
+      coverLetterError = 'coverLetter.bodyParagraphs must contain 1–6 non-empty text paragraphs of at most 900 characters each.';
+    } else if (
+      ['date', 'salutation', 'closing'].some((field) =>
+        rawCoverLetter[field] !== undefined && typeof rawCoverLetter[field] !== 'string'
+      )
+    ) {
+      coverLetterError = 'Cover letter date, salutation, and closing values must be text.';
+    } else {
+      coverLetter = {
+        date: typeof rawCoverLetter.date === 'string' ? rawCoverLetter.date : undefined,
+        salutation: typeof rawCoverLetter.salutation === 'string' ? rawCoverLetter.salutation : undefined,
+        bodyParagraphs: validBodyParagraphs,
+        closing: typeof rawCoverLetter.closing === 'string' ? rawCoverLetter.closing : undefined,
+      };
+    }
+  }
 
   return {
     resume: {
@@ -310,9 +410,12 @@ function parseResumeJson(value: string): { resume?: QtsResumeDocument; error?: s
       },
       targetRole: (parsed.targetRole as string | undefined) || '',
       targetCompany: parsed.targetCompany as string | undefined,
+      targetJobsite: parsed.targetJobsite as string | undefined,
       summary: parsed.summary as string | undefined,
       sections,
     },
+    coverLetter,
+    coverLetterError,
   };
 }
 
@@ -326,29 +429,65 @@ function safePathSegment(value: string | undefined, fallback: string): string {
     .slice(0, 100) || fallback;
 }
 
-function getSuggestedPath(value: unknown): { directories: string[]; fileName: string; relativePath: string } {
+function getSuggestedPath(value: unknown): {
+  directories: string[];
+  fileName: string;
+  coverLetterFileName: string;
+  relativePath: string;
+  titleCompanyKey: string;
+} {
   const resume = isRecord(value) ? value : {};
   const candidate = isRecord(resume.candidate) ? resume.candidate : {};
   const account = safePathSegment(typeof candidate.fullName === 'string' ? candidate.fullName : '', 'Account');
   const role = safePathSegment(typeof resume.targetRole === 'string' ? resume.targetRole : '', 'Job');
   const company = safePathSegment(typeof resume.targetCompany === 'string' ? resume.targetCompany : '', 'Company');
+  const jobsite = safePathSegment(typeof resume.targetJobsite === 'string' ? resume.targetJobsite : '', 'Unknown');
   const now = new Date();
   const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   const time = `${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}-${String(now.getSeconds()).padStart(2, '0')}`;
-  const directories = [
-    'Custom',
-    account,
-    `${date}_${time}_${role}_${company}`,
-  ];
+  const directories = [resumeOutputFolderName, account, `${date}_${time}_${role}_${company}_${jobsite}`];
   return {
     directories,
     fileName: `${account}.pdf`,
+    coverLetterFileName: `${account}_Cover_Letter.pdf`,
     relativePath: [...directories, `${account}.pdf`].join('/'),
+    titleCompanyKey: `${role}_${company}`,
   };
+}
+
+async function findExistingTitleCompanyFolder(
+  selectedFolder: PermissionedDirectoryHandle,
+  accountName: string,
+  titleCompanyKey: string
+): Promise<string | undefined> {
+  let resumeFolder: FileSystemDirectoryHandle;
+  try {
+    resumeFolder = await selectedFolder.getDirectoryHandle(resumeOutputFolderName);
+  } catch (error) {
+    if (isDirectoryNotFound(error)) return undefined;
+    throw error;
+  }
+
+  let accountFolder: FileSystemDirectoryHandle;
+  try {
+    accountFolder = await resumeFolder.getDirectoryHandle(accountName);
+  } catch (error) {
+    if (isDirectoryNotFound(error)) return undefined;
+    throw error;
+  }
+
+  const expectedPrefix = `${titleCompanyKey}_`.toLocaleLowerCase();
+  for await (const [name, handle] of (accountFolder as IterableDirectoryHandle).entries()) {
+    if (handle.kind !== 'directory') continue;
+    const datedFolder = name.match(/^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}_(.+)$/);
+    if (datedFolder?.[1].toLocaleLowerCase().startsWith(expectedPrefix)) return name;
+  }
+  return undefined;
 }
 
 export function ManagerPdfsView() {
   const [template, setTemplate] = useState<ResumeTemplate>('qts_resume_2');
+  const [previewDocument, setPreviewDocument] = useState<PreviewDocument>('resume');
   const [resumeJson, setResumeJson] = useState<Record<ResumeTemplate, string>>({
     qts_resume_1: defaultJson,
     qts_resume_2: defaultJson,
@@ -367,17 +506,18 @@ export function ManagerPdfsView() {
   const [isLivePreviewReady, setIsLivePreviewReady] = useState(false);
   const [renderedHtml, setRenderedHtml] = useState('');
   const [liveResume, setLiveResume] = useState<QtsResumeDocument>(sampleResume);
-  const [downloadUrl, setDownloadUrl] = useState('');
   const [suggestedPath, setSuggestedPath] = useState('');
   const [downloadDirectory, setDownloadDirectory] = useState<PermissionedDirectoryHandle | null>(null);
   const [savedDownloadDirectory, setSavedDownloadDirectory] = useState<PermissionedDirectoryHandle | null>(null);
   const [isRestoringDownloadDirectory, setIsRestoringDownloadDirectory] = useState(true);
   const previewUrlRef = useRef<string | null>(null);
-  const downloadUrlRef = useRef<string | null>(null);
   const livePreviewFrameRef = useRef<HTMLIFrameElement>(null);
   const json = resumeJson[template];
   const isLiveTemplate = template === 'qts_resume_1' || template === 'qts_resume_2' || template === 'qts_resume_3';
   const parsedResume = parseResumeJson(json);
+  const coverLetterHtml = parsedResume.resume && parsedResume.coverLetter
+    ? createQtsCoverLetterHtml(parsedResume.resume, parsedResume.coverLetter)
+    : '';
 
   useEffect(() => {
     let cancelled = false;
@@ -388,6 +528,16 @@ export function ManagerPdfsView() {
         const permission = await directory.queryPermission({ mode: 'readwrite' });
         if (cancelled) return;
         if (permission === 'granted') {
+          try {
+            await verifyDirectoryHandle(directory);
+          } catch (error) {
+            if (!isDirectoryNotFound(error)) throw error;
+            await removeSavedDirectory();
+            if (cancelled) return;
+            setSavedDownloadDirectory(null);
+            setDownloadStatus('The saved folder is no longer available. Choose a folder to continue.');
+            return;
+          }
           setDownloadDirectory(directory);
           setDownloadStatus(`Saved folder restored: ${directory.name}.`);
         } else {
@@ -436,7 +586,6 @@ export function ManagerPdfsView() {
       setPreviewUrl(nextUrl);
       setPreviewPdf(result.pdf);
       setPreviewError('');
-      setDownloadUrl('');
       setSuggestedPath('');
     }, 450);
 
@@ -449,14 +598,13 @@ export function ManagerPdfsView() {
 
   useEffect(() => () => {
     if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
-    if (downloadUrlRef.current) URL.revokeObjectURL(downloadUrlRef.current);
   }, []);
 
   async function chooseDownloadFolder() {
     setDownloadError('');
     const picker = (window as DirectoryPickerWindow).showDirectoryPicker;
     if (!picker) {
-      setDownloadError('Your browser does not support choosing a download folder. Use the browser Downloads folder instead.');
+      setDownloadError('Your browser does not support choosing a folder. Use a browser that supports the File System Access API to save the paired PDFs.');
       return;
     }
 
@@ -493,6 +641,15 @@ export function ManagerPdfsView() {
         setDownloadError('Folder access was not granted. Allow access in your browser, then reconnect the saved folder.');
         return;
       }
+      try {
+        await verifyDirectoryHandle(savedDownloadDirectory);
+      } catch (error) {
+        if (!isDirectoryNotFound(error)) throw error;
+        await removeSavedDirectory();
+        setSavedDownloadDirectory(null);
+        setDownloadStatus('The saved folder is no longer available. Choose a folder to continue.');
+        return;
+      }
       setDownloadDirectory(savedDownloadDirectory);
       setDownloadStatus(`PDFs will be saved in ${savedDownloadDirectory.name}.`);
     } catch (error) {
@@ -506,8 +663,16 @@ export function ManagerPdfsView() {
       setPreviewError(parsed.error || 'Enter valid resume JSON before downloading.');
       return;
     }
+    if (!parsed.coverLetter) {
+      setDownloadError(parsed.coverLetterError || 'Enter valid cover letter content before downloading.');
+      return;
+    }
     if (savedDownloadDirectory && !downloadDirectory) {
-      setDownloadError('Reconnect the saved download folder before downloading, or choose a different folder.');
+      setDownloadError('Reconnect the saved download folder before downloading.');
+      return;
+    }
+    if (!downloadDirectory) {
+      setDownloadError('Choose a folder before downloading so both PDFs can be saved together and checked for duplicates.');
       return;
     }
     if ((!isLiveTemplate && (!previewUrl || !previewPdf || isLoading)) || isDownloading) return;
@@ -518,8 +683,21 @@ export function ManagerPdfsView() {
     setSuggestedPath(destination.relativePath);
 
     setIsDownloading(true);
+    const savedFiles: string[] = [];
     try {
-      let pdf = previewPdf;
+      const existingFolder = await findExistingTitleCompanyFolder(
+        downloadDirectory,
+        account,
+        destination.titleCompanyKey
+      );
+      if (existingFolder) {
+        setDownloadError(
+          `Download stopped. A folder for this title and company already exists for ${account}: ${existingFolder}.`
+        );
+        return;
+      }
+
+      let resumePdf = previewPdf;
       if (isLiveTemplate) {
         if (!isLivePreviewReady || !renderedHtml) {
           setDownloadError('The live resume preview is not ready to download yet.');
@@ -534,54 +712,58 @@ export function ManagerPdfsView() {
           setDownloadError(result.message || 'Could not generate the matching PDF.');
           return;
         }
-        pdf = result.pdf;
+        resumePdf = result.pdf;
       }
-      if (!pdf) {
+      if (!resumePdf) {
         setDownloadError('The PDF preview is not ready to download yet.');
         return;
       }
 
-      if (downloadDirectory) {
-        let directory: FileSystemDirectoryHandle = downloadDirectory;
-        for (const segment of destination.directories) {
-          directory = await directory.getDirectoryHandle(segment, { create: true });
-        }
-        const file = await directory.getFileHandle(destination.fileName, { create: true });
+      if (!coverLetterHtml) {
+        setDownloadError('The QTS cover letter preview is not ready to download.');
+        return;
+      }
+
+      const coverLetterResult = await requestPdf('/api/v2/resume-pdfs/preview', {
+        template: 'qts_cover_letter',
+        resume: parsed.resume,
+        renderedHtml: coverLetterHtml,
+      });
+      if (!coverLetterResult.success || !coverLetterResult.pdf) {
+        setDownloadError(coverLetterResult.message || 'Could not generate the cover letter PDF.');
+        return;
+      }
+
+      let outputDirectory: FileSystemDirectoryHandle = downloadDirectory;
+      for (const segment of destination.directories) {
+        outputDirectory = await outputDirectory.getDirectoryHandle(segment, { create: true });
+      }
+
+      for (const [fileName, pdf] of [
+        [destination.fileName, resumePdf],
+        [destination.coverLetterFileName, coverLetterResult.pdf],
+      ] as const) {
+        const file = await outputDirectory.getFileHandle(fileName, { create: true });
         const writable = await file.createWritable();
         try {
           await writable.write(pdf);
           await writable.close();
+          savedFiles.push(fileName);
         } catch (error) {
           await writable.abort().catch((abortError: unknown) => {
             console.error('Could not clean up a failed PDF download', abortError);
           });
           throw error;
         }
-        setDownloadUrl('');
-        setDownloadStatus(`PDF saved to ${downloadDirectory.name}/${destination.relativePath}`);
-        return;
       }
 
-      let fileUrl = previewUrl;
-      if (isLiveTemplate) {
-        if (downloadUrlRef.current) URL.revokeObjectURL(downloadUrlRef.current);
-        fileUrl = URL.createObjectURL(pdf);
-        downloadUrlRef.current = fileUrl;
-      }
-      if (!fileUrl) {
-        setDownloadError('The generated PDF is not available to download.');
-        return;
-      }
-      const link = document.createElement('a');
-      link.href = fileUrl;
-      link.download = `${account}.pdf`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      setDownloadUrl(fileUrl);
-      setDownloadStatus('PDF download started. Check your browser downloads.');
+      const savedFolder = `${downloadDirectory.name}/${destination.directories.join('/')}`;
+      setDownloadStatus(`Saved both PDFs to ${savedFolder}: ${destination.fileName} and ${destination.coverLetterFileName}.`);
     } catch (error) {
-      setDownloadError(error instanceof Error ? error.message : 'Could not save the generated PDF.');
+      const message = error instanceof Error ? error.message : 'Could not save the generated PDFs.';
+      setDownloadError(savedFiles.length
+        ? `Only ${savedFiles.join(', ')} was saved. Could not save the second PDF: ${message}`
+        : message);
     } finally {
       setIsDownloading(false);
     }
@@ -614,7 +796,6 @@ export function ManagerPdfsView() {
                     setIsLoading(true);
                     setIsLivePreviewReady(false);
                   }
-                  setDownloadUrl('');
                   setSuggestedPath('');
                   setDownloadError('');
                   setDownloadStatus('');
@@ -634,7 +815,6 @@ export function ManagerPdfsView() {
               onChange={(event) => {
                 const nextJson = event.target.value;
                 setResumeJson((current) => ({ ...current, [template]: nextJson }));
-                setDownloadUrl('');
                 setSuggestedPath('');
                 setDownloadError('');
                 setDownloadStatus('');
@@ -658,9 +838,14 @@ export function ManagerPdfsView() {
             </p>
           </div>
           {previewError && <div className="alert alert-error" role="alert">{previewError}</div>}
+          {parsedResume.coverLetterError && (
+            <div className="alert alert-error" role="alert">{parsedResume.coverLetterError}</div>
+          )}
           <button className="btn btn-primary" type="button" onClick={download}
-            disabled={!parsedResume.resume || (isLiveTemplate ? (!isLivePreviewReady || !renderedHtml) : !previewUrl) || isLoading || isDownloading || Boolean(previewError)}>
-            {isDownloading ? 'Generating PDF…' : isLoading ? 'Preparing preview…' : 'Download PDF'}
+            disabled={!parsedResume.resume || !parsedResume.coverLetter || !downloadDirectory
+              || (isLiveTemplate ? (!isLivePreviewReady || !renderedHtml) : !previewUrl)
+              || isLoading || isDownloading || Boolean(previewError) || Boolean(parsedResume.coverLetterError)}>
+            {isDownloading ? 'Generating PDFs…' : isLoading ? 'Preparing preview…' : 'Download Resume + Cover Letter PDFs'}
           </button>
           {!isRestoringDownloadDirectory && savedDownloadDirectory && !downloadDirectory && (
             <button className="btn" type="button" onClick={reconnectDownloadFolder}>Reconnect saved folder</button>
@@ -669,30 +854,46 @@ export function ManagerPdfsView() {
             <button className="btn" type="button" onClick={chooseDownloadFolder}>Choose a folder</button>
           )}
           {downloadError && <div className="alert alert-error" role="alert">{downloadError}</div>}
-          {isLiveTemplate && <p className="text-muted"></p>}
           <p className="manager-pdfs__path-note">
             {downloadDirectory ? `Path inside ${downloadDirectory.name}:` : 'Suggested folder structure:'}{' '}
-            <code>{suggestedPath || 'Selected folder/Custom/…'}</code>
+            <code>{suggestedPath || '$_QTS_Resume_$/Account/date_time_title_company_jobsite/Account.pdf and Account_Cover_Letter.pdf'}</code>
           </p>
-          {!downloadDirectory && <p className="text-muted">Choose any folder on your computer; PDFs will be saved there in organized subfolders. The picker starts in Music for convenience, and your selected folder is remembered in this browser when supported.</p>}
+          <p className="text-muted">Every resume template, including QTS Resume 1–3, uses this same paired-PDF folder and duplicate-check rule.</p>
+          {!downloadDirectory && <p className="text-muted">Choose any folder on your computer; both PDFs are saved under $_QTS_Resume_$/account/date_time_title_company_jobsite. Add targetJobsite to the resume JSON; if blank, the folder uses Unknown. An existing folder for the same title and company under that account stops the download. The picker starts in Music, and your selected folder is remembered in this browser when supported.</p>}
           {downloadStatus && <p role="status" className="manager-pdfs__path-note">{downloadStatus}</p>}
-
-          {downloadUrl && (
-            <p className="manager-pdfs__download-url">
-              Download URL (temporary; available while this page is open):{' '}
-              <a href={downloadUrl} target="_blank" rel="noreferrer">Open generated PDF</a>
-              <br />
-              <code>{downloadUrl}</code>
-            </p>
-          )}
         </section>
         <section className="manager-pdfs__preview card" aria-labelledby="resume-pdf-preview-title">
           <div className="manager-pdfs__preview-header">
-            <h3 id="resume-pdf-preview-title">{isLiveTemplate ? 'Live resume preview' : 'PDF preview'}</h3>
-            {isLoading && <span className="text-muted" role="status">Generating PDF…</span>}
-            {isLiveTemplate && !isLivePreviewReady && <span className="text-muted" role="status">Preparing live preview…</span>}
+            <h3 id="resume-pdf-preview-title">{previewDocument === 'resume' && isLiveTemplate ? 'Live resume preview' : `${previewDocument === 'resume' ? 'Resume' : 'Cover letter'} preview`}</h3>
+            {previewDocument === 'resume' && isLoading && <span className="text-muted" role="status">Generating PDF…</span>}
+            {previewDocument === 'resume' && isLiveTemplate && !isLivePreviewReady && <span className="text-muted" role="status">Preparing live preview…</span>}
           </div>
-          {isLiveTemplate ? (
+          <div className="manager-pdfs__preview-tabs" role="tablist" aria-label="PDF preview">
+            <button
+              className={`manager-pdfs__preview-tab${previewDocument === 'resume' ? ' is-active' : ''}`}
+              type="button"
+              role="tab"
+              aria-selected={previewDocument === 'resume'}
+              onClick={() => setPreviewDocument('resume')}
+            >
+              Resume
+            </button>
+            <button
+              className={`manager-pdfs__preview-tab${previewDocument === 'cover-letter' ? ' is-active' : ''}`}
+              type="button"
+              role="tab"
+              aria-selected={previewDocument === 'cover-letter'}
+              disabled={!parsedResume.resume || !parsedResume.coverLetter}
+              onClick={() => setPreviewDocument('cover-letter')}
+            >
+              Cover letter
+            </button>
+          </div>
+          {previewDocument === 'cover-letter' && parsedResume.resume && parsedResume.coverLetter ? (
+            <div className="manager-pdfs__live-resume manager-pdfs__cover-letter">
+              <QtsCoverLetterPreview resume={parsedResume.resume} coverLetter={parsedResume.coverLetter} />
+            </div>
+          ) : isLiveTemplate ? (
             <>
               {livePreviewError && <div className="alert alert-error" role="alert">{livePreviewError}</div>}
               <div className="manager-pdfs__live-resume">

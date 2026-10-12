@@ -26,6 +26,7 @@ export const ResumeDocumentSchema = z.object({
   candidate: CandidateContactSchema,
   targetRole: z.string().min(1).max(300),
   targetCompany: z.string().max(300).optional(),
+  targetJobsite: z.string().max(300).optional(),
   summary: z.string().max(1200).optional(),
   sections: z.array(ResumeSectionSchema).min(1),
 });

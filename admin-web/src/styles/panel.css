@@ -498,6 +498,31 @@
   justify-content: space-between;
   gap: 12px;
 }
+.manager-pdfs__preview-tabs {
+  display: flex;
+  gap: 8px;
+  margin: 0 0 14px;
+  border-bottom: 1px solid var(--border);
+}
+.manager-pdfs__preview-tab {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 9px 12px;
+  font: inherit;
+  font-size: 13px;
+}
+.manager-pdfs__preview-tab.is-active {
+  border-bottom-color: var(--primary);
+  color: var(--primary-dark);
+  font-weight: 700;
+}
+.manager-pdfs__preview-tab:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
 .manager-pdfs__live-resume {
   display: flex;
   width: 100%;
@@ -508,6 +533,24 @@
   border: 0;
   background: transparent;
   padding: 0;
+}
+.manager-pdfs__cover-letter {
+  align-items: flex-start;
+}
+.qts-cover-letter-preview {
+  position: relative;
+  flex: 0 0 auto;
+  margin: 0 auto;
+}
+.qts-cover-letter-preview iframe {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: block;
+  transform-origin: top left;
+  border: 0;
+  background: #fff;
+  box-shadow: 0 2px 12px rgb(25 30 40 / 18%);
 }
 .qts-flowcv-preview {
   position: relative;

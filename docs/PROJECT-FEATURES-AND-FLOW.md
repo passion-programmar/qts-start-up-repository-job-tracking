@@ -418,18 +418,50 @@ new resume template PDF.
 
 ### Manager PDF workbench
 
-The Manager PDFs page accepts resume JSON, previews templates, and can create
-PDF output. Current template names present in the code include QTS Resume 1,
-QTS Resume 2, QTS Resume 3, Classic ATS, and Compact.
+The Manager PDFs page accepts one JSON document containing resume data and a
+cover letter, previews either document, and creates both PDFs together. Resume
+templates include QTS Resume 1, QTS Resume 2, QTS Resume 3, Classic ATS, and
+Compact. The cover letter uses a separate QTS-branded page design.
 
 - The QTS designs have live HTML previews. The matching rendered HTML can be
   sent to the API's headless browser renderer for a PDF.
 - Other templates can use the server renderer.
-- The web UI can display generated PDF pages on a canvas and download locally.
+- The web UI can display generated resume PDF pages on a canvas and preview the
+  QTS cover letter before generation.
+- A selected/reconnected folder is required so the Manager can save both files
+  and check for duplicates. Output is saved under
+  `$_QTS_Resume_$/<account>/<date_time_title_company_jobsite>/` as
+  `<account>.pdf` and `<account>_Cover_Letter.pdf`. The optional
+  `targetJobsite` resume field defaults to `Unknown`.
+- The same paired-output path and duplicate check apply to every resume
+  template, including QTS Resume 1, QTS Resume 2, and QTS Resume 3.
+- An existing dated folder for the same account, title, and company blocks the
+  paired download, regardless of its jobsite or date. The UI reports if saving
+  is only partially complete.
+- The single JSON document includes the cover-letter body as an array:
+
+  ```json
+  {
+    "targetRole": "Software Engineer",
+    "targetCompany": "Example Company",
+    "targetJobsite": "Example Jobsite",
+    "coverLetter": {
+      "salutation": "Dear Hiring Manager,",
+      "bodyParagraphs": [
+        "Opening paragraph.",
+        "Relevant experience and fit.",
+        "Closing paragraph."
+      ],
+      "closing": "Sincerely,"
+    }
+  }
+  ```
+
+  This fragment is added alongside the required `candidate` and `sections`
+  fields for the resume. The cover letter accepts 1–6 non-empty paragraphs of
+  at most 900 characters each.
 - The project describes generated PDFs as in-memory output; it does not save a
   generated document as an Account profile resume automatically.
-- QTS Resume 1 also supports the browser print/save-to-PDF workflow described
-  in the current-system guide.
 
 The API validates Manager role and request shape, renders the document, and
 returns PDF bytes with a no-store response. The uploaded Account resume and the
