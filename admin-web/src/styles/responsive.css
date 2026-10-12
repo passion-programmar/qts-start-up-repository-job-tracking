@@ -22,9 +22,23 @@
   inset: 0;
   z-index: 200;
   min-height: 0;
+  gap: 16px;
   background: rgba(245, 247, 250, 0.88);
   backdrop-filter: blur(3px);
+  font-size: 18px;
   cursor: wait;
+}
+
+.loading-state--page .loading-state__spinner {
+  width: 56px;
+  height: 56px;
+  flex-basis: 56px;
+  border-width: 4px;
+}
+
+.loading-state--page .loading-state__spinner::after {
+  inset: 9px;
+  border-width: 3px;
 }
 
 .loading-state__spinner {
