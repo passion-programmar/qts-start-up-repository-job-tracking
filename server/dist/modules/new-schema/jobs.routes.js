@@ -239,7 +239,6 @@ router.post('/claim-next', async (req, res) => {
          WHERE job.j_id = $3 AND job.u_id = $1
            AND assignment.account_user_id = $4
            AND job.status = 'processing'
-           AND job.application_type <> 'workable'
            AND job.application_type = ANY($2::text[])
          LIMIT 1
          FOR UPDATE OF job`, [user.id, supportedTypes, parsedBody.data.jobId, accountId]);
@@ -291,7 +290,6 @@ router.post('/claim-next', async (req, res) => {
        WHERE job.u_id = $1 AND job.status = 'todo'
          AND ($5::int IS NULL OR job.j_id = $5)
          AND assignment.account_user_id = $4
-         AND job.application_type <> 'workable'
          AND job.application_type = ANY($2::text[])
          AND ($3::text IS NULL OR job.url = $3)
        ORDER BY CASE WHEN $3::text IS NOT NULL AND job.url = $3 THEN 0 ELSE 1 END,
@@ -376,7 +374,6 @@ router.get('/apply-accounts', async (req, res) => {
             COUNT(job.j_id) FILTER (WHERE job.status = 'processing')::int AS processing_count,
             COUNT(job.j_id) FILTER (
               WHERE job.status = 'todo'
-                AND job.application_type <> 'workable'
                 AND job.application_type = ANY($2::text[])
             )::int AS available_count,
             (
@@ -454,8 +451,7 @@ router.get('/:id/application-context', async (req, res) => {
               assignment.account_user_id
        FROM job_list job
        JOIN job_account_assignments assignment ON assignment.j_id = job.j_id
-       WHERE job.j_id = $1 AND job.u_id = $2 AND job.status = 'processing'
-         AND job.application_type <> 'workable'`, [jobId, managerId]),
+       WHERE job.j_id = $1 AND job.u_id = $2 AND job.status = 'processing'`, [jobId, managerId]),
         (0, connection_1.queryOne)(`SELECT account.u_id AS account_user_id, account.name,
               account.email, account.phone, account.address, account.city,
               account.country, account.sex, account.birthday,

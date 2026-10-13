@@ -408,7 +408,7 @@ docker build -t qts-startup-server ./server
 
 LinkedIn, Indeed, Glassdoor, Greenhouse, Lever, Workable, SmartRecruiters,
 Ashby, and generic career pages (JSON-LD heuristics). This refers to job-posting
-capture, not application-form automation. Workable applications are disabled;
+capture, not application-form automation. Workable applications are supported through the standard ATS workflow;
 read-only discovery and manual job tracking remain available.
 
 ---

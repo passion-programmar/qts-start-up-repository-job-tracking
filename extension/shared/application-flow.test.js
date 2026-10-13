@@ -130,14 +130,36 @@ test('discovery graph stays bounded as additional steps are observed', () => {
   assert.ok(checkpoint.steps.reduce((total, step) => total + step.fields.length, 0) <= 300);
 });
 
-test('legacy generic autofill refuses Workable before loading candidate data', async () => {
+test('legacy generic autofill allows Workable through the normal discovery flow before field validation', async () => {
   const pipeline = globalThis.__qtsAutoApplicationPipeline;
   let tabLookups = 0;
+  const discoveredFields = [];
+  globalThis.chrome = {
+    runtime: {
+      sendMessage: async () => ({ ok: true }),
+    },
+  };
+  globalThis.__qtsApplicationFlow = {
+    normalizeApplicationMode: () => 'DISCOVERY',
+  };
+  globalThis.__qtsApiWorker = {
+    workerCheckDefaultCandidateApplied: async () => ({ applied: false }),
+    workerApiRequest: async () => ({ success: true, candidate: { id: 7 } }),
+  };
   pipeline.registerDeps({
     getTab: async () => {
       tabLookups += 1;
       return { id: 1, url: 'https://apply.workable.com/example/j/123' };
     },
+    setJobSourceTab: async () => {},
+    detectApplyTemplateOnTab: async () => {},
+    discoverApplicationFormOnTab: async () => ({
+      success: true,
+      discovery: { fields: discoveredFields },
+      scan: { fields: discoveredFields },
+    }),
+    preloadCustomGptTab: async () => {},
+    showPageDetectAlert: async () => {},
   });
 
   await assert.rejects(
@@ -145,7 +167,7 @@ test('legacy generic autofill refuses Workable before loading candidate data', a
       candidateId: 7,
       jobUrl: 'https://apply.workable.com/example/j/123',
     }),
-    /Workable applications are disabled/
+    /No application fields detected on this page\./
   );
   assert.equal(tabLookups, 1);
 });

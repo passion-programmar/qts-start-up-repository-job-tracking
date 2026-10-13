@@ -147,9 +147,6 @@ async function applyGptPackageToJobTab(applicationId, jobTabId) {
   if (!tab?.id) {
     throw new Error('No job tab found for GPT apply.');
   }
-  if (isWorkableApplicationUrl(tab.url)) {
-    throw new Error('Workable applications are disabled. QTS will not fill or submit this form.');
-  }
 
   const api = self.__qtsApiWorker;
   if (!api?.workerApiRequest) {
@@ -1012,13 +1009,6 @@ async function fillApplicationFormOnTab(tabId, fields, options = {}) {
   if (!tab?.id) return { error: 'No active tab' };
   if (!tab.url) {
     return { error: 'The active tab does not have a valid page URL.' };
-  }
-  if (isWorkableApplicationUrl(tab.url)) {
-    return {
-      success: false,
-      blocked: true,
-      error: 'Workable applications are disabled. QTS will not fill fields on this site.',
-    };
   }
   const injected = await injectFormScan(tab.id);
   if (!injected) return { error: 'Could not access this page for form filling.' };
