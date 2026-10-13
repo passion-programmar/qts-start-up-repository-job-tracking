@@ -204,6 +204,18 @@
   min-width: 52rem;
 }
 
+.table-scroll--database > table {
+  min-width: 76rem;
+}
+
+.table-scroll--database > table th {
+  white-space: nowrap;
+}
+
+.database-records-scroll-hint {
+  display: none;
+}
+
 .table-scroll > table th,
 .table-scroll > table td {
   overflow-wrap: anywhere;

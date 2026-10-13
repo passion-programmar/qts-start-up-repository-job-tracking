@@ -202,6 +202,13 @@
 }
 
 @media (max-width: 900px) {
+  .database-records-scroll-hint {
+    display: block;
+    margin: 0 0 8px;
+    color: var(--text-soft);
+    font-size: 12px;
+  }
+
   .database-records-layout {
     grid-template-columns: 1fr;
   }
