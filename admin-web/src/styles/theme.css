@@ -546,7 +546,7 @@ tr:hover td { background: #fafafa; }
 .status-toggle.none { background: #e2e8f0; color: #475569; }
 .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; z-index: 400; }
 .modal { background: #fff; border-radius: var(--radius-md); padding: 28px; width: 520px; max-width: 95vw; max-height: 90vh; overflow-y: auto; box-shadow: 0 6px 16px rgba(0,0,0,.08), 0 3px 6px -4px rgba(0,0,0,.12), 0 9px 28px 8px rgba(0,0,0,.05); }
-.modal h3 { font-size: 18px; font-weight: 600; margin-bottom: 20px; }
+.modal__title { font-size: 18px; font-weight: 600; margin-bottom: 20px; }
 .modal-footer { display: flex; justify-content: flex-end; gap: var(--space-inline); margin-top: 20px; }
 .confirm-text { color: var(--text-muted); font-size: 14px; line-height: 1.6; }
 .settings-page {

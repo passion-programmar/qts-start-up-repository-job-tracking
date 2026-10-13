@@ -98,7 +98,7 @@
   overscroll-behavior: contain;
 }
 
-.modal h3 {
+.modal__title {
   position: sticky;
   top: -20px;
   z-index: 1;
@@ -122,10 +122,64 @@
     max-height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 48px);
   }
 
-  .modal h3 {
+  .modal__title {
     top: -28px;
     padding-top: 26px;
     margin-top: -28px;
+  }
+
+  .modal--account-profile {
+    width: min(900px, calc(100vw - 48px));
+    max-width: 95vw;
+  }
+}
+
+.account-profile-form {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.account-profile-form__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 20px;
+}
+
+.account-profile-form__field--wide {
+  grid-column: 1 / -1;
+}
+
+.account-profile-form__section-title {
+  padding-top: 18px;
+  margin: 10px 0 12px;
+  border-top: 1px solid var(--border);
+}
+
+.account-profile-form__card {
+  min-width: 0;
+  margin: 0 0 12px;
+  border: 1px solid var(--border);
+}
+
+.account-profile-form__card legend {
+  padding: 0 6px;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.account-profile-form__checkbox input {
+  width: auto;
+}
+
+@media (max-width: 639px) {
+  .account-profile-form__grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .account-profile-form__field--wide {
+    grid-column: auto;
   }
 }
 

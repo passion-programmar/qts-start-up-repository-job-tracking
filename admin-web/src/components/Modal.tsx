@@ -9,12 +9,14 @@ export function Modal({
   children,
   footer,
   onClose,
+  className,
 }: {
   open: boolean;
   title: string;
   children: React.ReactNode;
   footer?: React.ReactNode;
   onClose: () => void;
+  className?: string;
 }) {
   const [mounted, setMounted] = useState(false);
 
@@ -50,8 +52,8 @@ export function Modal({
       }}
       role="presentation"
     >
-      <div className="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
-        <h3 id="modal-title">{title}</h3>
+      <div className={`modal${className ? ` ${className}` : ''}`} role="dialog" aria-modal="true" aria-labelledby="modal-title">
+        <h3 className="modal__title" id="modal-title">{title}</h3>
         <div>{children}</div>
         {footer && <div className="modal-footer">{footer}</div>}
       </div>
