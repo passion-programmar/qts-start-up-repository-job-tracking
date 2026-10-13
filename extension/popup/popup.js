@@ -505,10 +505,6 @@ async function saveJobAndStartScanner() {
     if (!assignedRow?.job_id) {
       throw new Error('The saved job response did not include the selected Account’s job row.');
     }
-    if (saveResult.job.application_type === 'workable') {
-      throw new Error('Workable applications are read-only and cannot be started by Scanner.');
-    }
-
     const account = managerJobAccounts.find((item) => item.id === scannerSelectedAccountId);
     if (!account) throw new Error('The selected Account is no longer active for this Manager.');
     let jobId = Number(assignedRow.job_id);

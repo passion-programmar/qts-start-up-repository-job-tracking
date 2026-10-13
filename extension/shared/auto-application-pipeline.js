@@ -136,10 +136,6 @@
     if (!tab?.id || !tab.url) throw new Error('Job tab not found.');
 
     const jobUrl = normalizePipelineUrl(options.jobUrl || tab.url);
-    const jobHost = new URL(jobUrl).hostname.toLowerCase();
-    if (jobHost === 'workable.com' || jobHost.endsWith('.workable.com')) {
-      throw new Error('Workable applications are disabled. Use read-only site discovery; QTS will not fill or submit this form.');
-    }
 
     const applyCheck = await isDefaultCandidateAlreadyApplied(jobUrl, candidateId);
     if (applyCheck.applied) {

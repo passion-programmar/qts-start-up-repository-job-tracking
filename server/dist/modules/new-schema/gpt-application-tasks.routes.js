@@ -104,7 +104,7 @@ async function loadTask(taskId) {
             task.resume_text_expires_at
      FROM gpt_application_tasks task
      JOIN job_list job ON job.j_id = task.job_id
-     WHERE task.task_id = $1 AND job.application_type <> 'workable'`, [taskId]);
+     WHERE task.task_id = $1`, [taskId]);
 }
 async function loadManagerTask(req, res, taskId) {
     if (!taskIdSchema.safeParse(taskId).success) {
@@ -159,7 +159,7 @@ router.post('/jobs/:jobId', new_schema_auth_1.requireNewSchemaAuth, async (req, 
      JOIN users manager ON manager.u_id = job.u_id AND manager.role = 'manager'
      LEFT JOIN manager_application_profiles manager_profile ON manager_profile.manager_user_id = manager.u_id
      WHERE job.j_id = $1 AND job.u_id = $2 AND job.status = 'processing'
-       AND job.application_type <> 'workable'`, [jobId, req.newSchemaUser.id]);
+       `, [jobId, req.newSchemaUser.id]);
     if (!context) {
         res.status(404).json({ success: false, message: 'Processing Account-specific job row not found.' });
         return;
