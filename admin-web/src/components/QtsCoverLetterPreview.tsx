@@ -77,19 +77,19 @@ export function createQtsCoverLetterHtml(
     margin: 0 0 6px;
     color: #12364a;
     font-family: Georgia, 'Times New Roman', serif;
-    font-size: 32px;
+    font-size: 34px;
     font-weight: 700;
     line-height: 1.15;
   }
   .letter-headline {
     margin: 0 0 8px;
     color: #536775;
-    font-size: 12px;
+    font-size: 14px;
     line-height: 1.5;
   }
   .letter-contact {
     color: #536775;
-    font-size: 11px;
+    font-size: 13px;
       line-height: 1.7;
       overflow-wrap: anywhere;
     }
@@ -99,7 +99,7 @@ export function createQtsCoverLetterHtml(
       gap: 24px;
       margin-bottom: 35px;
       color: #536775;
-      font-size: 12px;
+      font-size: 14px;
       line-height: 1.7;
     }
     .letter-recipient { color: #12364a; font-weight: 700; overflow-wrap: anywhere; }
@@ -108,7 +108,7 @@ export function createQtsCoverLetterHtml(
       margin: 0 0 24px;
       color: #0e5265;
       font-family: Georgia, 'Times New Roman', serif;
-      font-size: 17px;
+      font-size: 19px;
       font-weight: 700;
       line-height: 1.4;
       overflow-wrap: anywhere;
@@ -116,14 +116,14 @@ export function createQtsCoverLetterHtml(
     .letter-salutation {
       margin: 0 0 18px;
       color: #172b3a;
-      font-size: 13px;
+      font-size: 15px;
       font-weight: 700;
       line-height: 1.6;
     }
     .letter-body {
       color: #283c49;
       font-family: Georgia, 'Times New Roman', serif;
-      font-size: 13px;
+      font-size: 15px;
       line-height: 1.85;
       overflow-wrap: anywhere;
     }
@@ -132,14 +132,14 @@ export function createQtsCoverLetterHtml(
       margin-top: 27px;
       color: #283c49;
       font-family: Georgia, 'Times New Roman', serif;
-      font-size: 13px;
+      font-size: 15px;
       line-height: 1.7;
     }
     .letter-signature {
       margin-top: 8px;
       color: #12364a;
       font-family: Georgia, 'Times New Roman', serif;
-      font-size: 17px;
+      font-size: 19px;
       font-weight: 700;
     }
     .letter-footer { height: 3px; margin-top: 42px; background: #8bb8c0; }
@@ -152,7 +152,7 @@ export function createQtsCoverLetterHtml(
     }
     .resumePage[data-template="qts_resume_2"] .letter-sender-name {
       color: #355c7d;
-      font-size: 34px;
+      font-size: 36px;
     }
     .resumePage[data-template="qts_resume_2"] .letter-meta { margin-bottom: 32px; }
     .resumePage[data-template="qts_resume_2"] .letter-subject {
