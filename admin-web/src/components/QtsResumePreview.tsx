@@ -349,6 +349,15 @@ function makeDocument(
           .resumePage {
             margin-bottom: 32px !important;
           }
+          .resumePage *:not(#resumeHeaderId):not(#resumeHeaderId *) {
+            font-size: 11.6pt !important;
+          }
+          #resumeHeaderId .js-fullName {
+            font-size: 28.6pt !important;
+          }
+          .resumePage [id$="-section-heading"] {
+            font-size: 14.6pt !important;
+          }
           @page { size: letter portrait; margin: 0; }
           @media print {
             *, *::before, *::after {

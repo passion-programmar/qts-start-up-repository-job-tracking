@@ -120,7 +120,7 @@ export function buildQtsResume3Document(resume: QtsResumeDocument): string {
     <style>
       * { box-sizing: border-box; }
       html, body { margin: 0; padding: 0; width: 215.9mm; }
-      body { color: #263445; background: #fff; font-family: Arial, Helvetica, sans-serif; font-size: 10.5pt; line-height: 1.45; }
+      body { color: #263445; background: #fff; font-family: Arial, Helvetica, sans-serif; font-size: 11.6pt; line-height: 1.45; }
       #resumePages { width: 215.9mm; }
       .resumePage {
         position: relative; width: 215.9mm; height: 279.4mm; min-height: 279.4mm;
@@ -134,7 +134,7 @@ export function buildQtsResume3Document(resume: QtsResumeDocument): string {
         background: #14283f; color: #fff;
       }
       .resume-name { max-width: 100%; margin: 0; color: #fff; font-size: 30pt; font-weight: 700; line-height: 1.12; letter-spacing: -.5px; overflow-wrap: anywhere; }
-      .resume-headline { max-width: 100%; margin: 7px 0 14px; color: #79d3c4; font-size: 13pt; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
+      .resume-headline { max-width: 100%; margin: 7px 0 14px; color: #79d3c4; font-size: 13.6pt; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
       .contact-list { display: flex; flex-wrap: wrap; align-items: baseline; gap: 5px 0; margin: 0; color: #e6edf4; font-size: 9pt; line-height: 1.4; }
       .contact-item { display: inline-flex; align-items: baseline; min-width: 0; overflow-wrap: anywhere; }
       .contact-item + .contact-item::before { content: "|"; flex: 0 0 auto; margin: 0 10px; color: #79d3c4; }
@@ -144,7 +144,7 @@ export function buildQtsResume3Document(resume: QtsResumeDocument): string {
         display: flex; align-items: center; min-height: 29px;
         margin: 0 0 10px; padding: 5px 10px; border-left: 4px solid #168b80;
         background: #edf4f5; color: #14283f;
-        font-size: 11pt; font-weight: 700; letter-spacing: .7px; line-height: 1.3;
+        font-size: 14.6pt; font-weight: 700; letter-spacing: .7px; line-height: 1.3;
         text-align: left; text-transform: uppercase;
       }
       .resume-block { margin: 0 0 11px; }
@@ -152,8 +152,8 @@ export function buildQtsResume3Document(resume: QtsResumeDocument): string {
       .resume-entry { break-inside: avoid; page-break-inside: avoid; }
       .entry-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
       .entry-heading strong { min-width: 0; color: #14283f; font-weight: 700; }
-      .entry-date { flex: 0 0 auto; color: #14796f; font-size: 9pt; font-weight: 700; text-align: right; }
-      .entry-location { margin: 2px 0 3px; color: #526273; font-size: 9.5pt; }
+      .entry-date { flex: 0 0 auto; color: #14796f; font-size: 11.6pt; font-weight: 700; text-align: right; }
+      .entry-location { margin: 2px 0 3px; color: #526273; font-size: 11.6pt; }
       .resume-entry ul { margin: 4px 0 0; padding-left: 18px; list-style: disc; }
       .resume-entry li { padding-left: 2px; }
       .skill-row { display: grid; grid-template-columns: minmax(115px, 30%) 1fr; gap: 10px; }
@@ -163,8 +163,8 @@ export function buildQtsResume3Document(resume: QtsResumeDocument): string {
         margin: -44px -56px 22px; padding: 13px 56px;
         background: #14283f; color: #fff;
       }
-      .resume-running-header .resume-name { font-size: 13pt; letter-spacing: 0; }
-      .resume-running-header .resume-headline { margin: 0; color: #79d3c4; font-size: 9pt; text-align: right; }
+      .resume-running-header .resume-name { font-size: 28.6pt; letter-spacing: 0; }
+      .resume-running-header .resume-headline { margin: 0; color: #79d3c4; font-size: 13.6pt; text-align: right; }
       @page { size: letter portrait; margin: 0; }
       @media print {
         html, body, #resumePages { width: 215.9mm; }
