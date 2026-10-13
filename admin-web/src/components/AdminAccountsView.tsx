@@ -73,42 +73,44 @@ export function AdminAccountsView() {
       {loading ? (
         <div className="card"><LoadingState label="Loading…" /></div>
       ) : (
-        <div className="card" style={{ overflowX: 'auto' }}>
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Account</th>
-                <th>Manager</th>
-                <th>Custom GPT URL</th>
-                <th>Status</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {accounts.map((account) => (
-                <tr key={account.id}>
-                  <td>{account.name}</td>
-                  <td>{account.manager_name || '—'}</td>
-                  <td style={{ maxWidth: 420, wordBreak: 'break-all' }}>
-                    {account.custom_gpt_url || (
-                      <span className="text-muted">Default system GPT</span>
-                    )}
-                  </td>
-                  <td>{account.is_active ? 'Active' : 'Inactive'}</td>
-                  <td>
-                    <button className="btn btn-ghost" type="button" onClick={() => openEdit(account)}>
-                      Assign GPT URL
-                    </button>
-                  </td>
-                </tr>
-              ))}
-              {!accounts.length && (
+        <div className="card">
+          <div className="table-scroll">
+            <table className="data-table">
+              <thead>
                 <tr>
-                  <td colSpan={5} className="text-muted">No accounts found.</td>
+                  <th>Account</th>
+                  <th>Manager</th>
+                  <th>Custom GPT URL</th>
+                  <th>Status</th>
+                  <th />
                 </tr>
-              )}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {accounts.map((account) => (
+                  <tr key={account.id}>
+                    <td>{account.name}</td>
+                    <td>{account.manager_name || '—'}</td>
+                    <td style={{ maxWidth: 420, wordBreak: 'break-all' }}>
+                      {account.custom_gpt_url || (
+                        <span className="text-muted">Default system GPT</span>
+                      )}
+                    </td>
+                    <td>{account.is_active ? 'Active' : 'Inactive'}</td>
+                    <td>
+                      <button className="btn btn-ghost" type="button" onClick={() => openEdit(account)}>
+                        Assign GPT URL
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {!accounts.length && (
+                  <tr>
+                    <td colSpan={5} className="text-muted">No accounts found.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
