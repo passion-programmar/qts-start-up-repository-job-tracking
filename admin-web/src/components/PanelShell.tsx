@@ -6,7 +6,7 @@ import { usePathname } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth, roleLabel } from '@/components/AuthProvider';
 import { api } from '@/lib/api';
-import { APP_NAME, panelLogoUrl } from '@/lib/branding';
+import { panelLogoUrl } from '@/lib/branding';
 import type { PanelMode, UserRole } from '@/lib/types';
 
 type NavItem = {
@@ -193,8 +193,6 @@ export function PanelShell({
     ...(mode !== 'account' ? [{ key: 'profile', label: <Link href={basePath + '/settings'}>My Profile</Link> }, { type: 'divider' as const }] : []),
     { key: 'logout', label: 'Log Out', danger: true },
   ];
-  const roleCls =
-    mode === 'admin' ? 'role-admin' : mode === 'manager' ? 'role-admin' : mode === 'caller' ? 'role-user' : 'role-user';
 
   return (
     <div id="app" className={sidebarCollapsed ? 'sidebar-collapsed' : undefined}>
@@ -237,15 +235,6 @@ export function PanelShell({
             );
           })}
         </nav>
-        <div className="sidebar-footer">
-          <div className="text-muted" id="sidebar-user">
-            👤 {user?.username}{' '}
-            <span className={`role-badge ${roleCls}`}>{roleLabel(user?.role || mode)}</span>
-          </div>
-          <button className="logout-btn" type="button" onClick={() => { void logout(); }}>
-            Log Out
-          </button>
-        </div>
       </aside>
       <main className="main">
         {!canWrite && mode === 'manager' && (
@@ -276,10 +265,6 @@ export function PanelShell({
                 <path d="M4 6h16M4 12h16M4 18h16" />
               </svg>
             </button>
-            <Link className="topbar-brand" href={basePath} aria-label={APP_NAME + ' home'}>
-              {APP_NAME}
-            </Link>
-            <span className="topbar-divider" aria-hidden="true" />
             <h1 className="topbar-title">{title}</h1>
           </div>
           <div className="topbar-right">

@@ -39,9 +39,6 @@
 .topbar .menu-btn { border-color: rgba(255, 255, 255, 0.18); background: rgba(255, 255, 255, 0.06); color: #f8f9fa; }
 .topbar .menu-btn:hover { background: rgba(255, 255, 255, 0.14); }
 .topbar .menu-btn svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-width: 2; }
-.topbar-brand { flex: 0 0 auto; color: #f8f9fa; font-size: 15px; font-weight: 700; letter-spacing: 0.01em; white-space: nowrap; }
-.topbar-brand:hover { color: #fff; text-decoration: none; }
-.topbar-divider { width: 1px; height: 28px; flex: 0 0 1px; background: rgba(255, 255, 255, 0.2); }
 .topbar-title { min-width: 0; margin: 0; overflow: hidden; color: #f8f9fa; font-size: 18px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .topbar-status { display: flex; align-items: center; gap: 8px; color: #dee2e6; font-size: 13px; white-space: nowrap; }
 .topbar-account { display: inline-flex; align-items: center; gap: 9px; max-width: 270px; min-height: 40px; padding: 6px 10px; border: 1px solid rgba(255, 255, 255, 0.16); border-radius: var(--radius-sm); background: rgba(255, 255, 255, 0.06); color: #f8f9fa; cursor: pointer; font: inherit; }

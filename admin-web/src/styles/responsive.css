@@ -856,11 +856,6 @@ td.text-right {
     justify-content: space-between;
   }
 
-  .topbar-brand,
-  .topbar-divider {
-    display: none;
-  }
-
   .topbar-account {
     max-width: min(270px, 60vw);
   }
