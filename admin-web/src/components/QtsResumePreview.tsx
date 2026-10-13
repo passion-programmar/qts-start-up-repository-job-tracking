@@ -350,13 +350,20 @@ function makeDocument(
             margin-bottom: 32px !important;
           }
           .resumePage *:not(#resumeHeaderId):not(#resumeHeaderId *) {
-            font-size: 11.6pt !important;
+            font-size: 13.1pt !important;
           }
           #resumeHeaderId .js-fullName {
-            font-size: 28.6pt !important;
+            font-size: 30.1pt !important;
+          }
+          #resumeHeaderId .js-jobTitle {
+            font-size: 18.5pt !important;
+          }
+          #resumeHeaderId [id^="detailItem-"],
+          #resumeHeaderId [id^="detailItem-"] * {
+            font-size: 12pt !important;
           }
           .resumePage [id$="-section-heading"] {
-            font-size: 14.6pt !important;
+            font-size: 16.1pt !important;
           }
           @page { size: letter portrait; margin: 0; }
           @media print {

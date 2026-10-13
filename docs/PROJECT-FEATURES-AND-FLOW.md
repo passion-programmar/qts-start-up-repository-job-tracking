@@ -425,8 +425,10 @@ Compact. The cover letter uses a separate QTS-branded page design.
 
 - The QTS designs have live HTML previews. The matching rendered HTML can be
   sent to the API's headless browser renderer for a PDF.
-- QTS Resume 1 and QTS Resume 3 keep non-contact text within 2 CSS pixels of
-  QTS Resume 2 typography; each template's contact text retains its own size.
+- QTS Resume 1 and QTS Resume 3 use typography scaled 2 CSS pixels above their
+  prior sizes, including 2-pixel increases for contact text.
+- All three QTS cover-letter templates use typography scaled 2 CSS pixels
+  above their prior sizes.
 - Other templates can use the server renderer.
 - The web UI can display generated resume PDF pages on a canvas and preview the
   QTS cover letter before generation.
