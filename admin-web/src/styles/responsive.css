@@ -238,13 +238,12 @@
 }
 
 .topbar {
-  padding: 12px 16px;
+  padding: 10px 16px;
   gap: 10px;
 }
 
-.topbar h1 {
+.topbar-title {
   font-size: 18px;
-  min-width: 0;
 }
 
 .topbar-left {
@@ -255,10 +254,17 @@
   flex: 1;
 }
 
+.topbar-right {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
 .topbar-status {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
   flex-shrink: 0;
@@ -830,5 +836,49 @@ td.text-right {
   .topbar {
     padding-right: clamp(28px, 2.2vw, 40px);
     padding-left: clamp(28px, 2.2vw, 40px);
+  }
+}
+
+
+@media (max-width: 767px) {
+  .topbar {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    padding-top: max(10px, env(safe-area-inset-top));
+  }
+
+  .topbar-left {
+    flex: 1 1 100%;
+  }
+
+  .topbar-right {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .topbar-brand,
+  .topbar-divider {
+    display: none;
+  }
+
+  .topbar-account {
+    max-width: min(270px, 60vw);
+  }
+}
+
+@media (max-width: 380px) {
+  .topbar-account__name,
+  .topbar-account__role {
+    display: none;
+  }
+
+  .topbar-account {
+    width: 40px;
+    justify-content: center;
+    padding: 6px;
+  }
+
+  .topbar-account__chevron {
+    display: none;
   }
 }
