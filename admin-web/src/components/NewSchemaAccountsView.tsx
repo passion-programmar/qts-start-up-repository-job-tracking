@@ -1,8 +1,7 @@
 'use client';
 
-import { LoadingState } from '@/components/LoadingState';
-
 import { useCallback, useEffect, useState } from 'react';
+import { Alert, Button, Card, Empty, Input, Popconfirm, Space, Table, Tag, Typography, type TableColumnsType } from 'antd';
 import { Modal } from '@/components/Modal';
 import { api, uploadPdf } from '@/lib/api';
 import type { NewSchemaAccountProfile, NewSchemaCategory } from '@/lib/types';
@@ -79,7 +78,9 @@ export function NewSchemaAccountsView() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
   const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -223,33 +224,139 @@ export function NewSchemaAccountsView() {
   }
 
   async function remove(profile: Profile) {
-    if (!window.confirm(`Delete Account profile "${profile.name}"?`)) return;
-    const result = await api<{ success: boolean; message?: string }>('DELETE', `/api/v2/users/${profile.u_id}`);
-    if (!result.success) {
-      setError(result.message || 'Could not delete Account profile.');
-      return;
+    setDeletingId(profile.u_id);
+    setError(null);
+    try {
+      const result = await api<{ success: boolean; message?: string }>('DELETE', `/api/v2/users/${profile.u_id}`);
+      if (!result.success) {
+        setError(result.message || 'Could not delete Account profile.');
+        return;
+      }
+      await load();
+    } finally {
+      setDeletingId(null);
     }
-    await load();
   }
+
+  const normalizedSearch = search.trim().toLocaleLowerCase();
+  const filteredProfiles = profiles.filter((profile) => {
+    const category = categories.find((item) => item.category_id === profile.category_id)?.category_title || '';
+    return [
+      profile.name,
+      profile.email,
+      profile.phone,
+      profile.city,
+      category,
+    ].some((value) => value.toLocaleLowerCase().includes(normalizedSearch));
+  });
+  const columns: TableColumnsType<Profile> = [
+    {
+      title: 'Name',
+      dataIndex: 'name',
+      key: 'name',
+      render: (name: string) => <Typography.Text strong>{name}</Typography.Text>,
+    },
+    { title: 'Email', dataIndex: 'email', key: 'email' },
+    {
+      title: 'Phone',
+      dataIndex: 'phone',
+      key: 'phone',
+      render: (phone: string) => phone || <Typography.Text type="secondary">Not provided</Typography.Text>,
+    },
+    {
+      title: 'City',
+      dataIndex: 'city',
+      key: 'city',
+      render: (city: string) => city || <Typography.Text type="secondary">Not provided</Typography.Text>,
+    },
+    {
+      title: 'Category',
+      dataIndex: 'category_id',
+      key: 'category',
+      render: (categoryId: number) => {
+        const category = categories.find((item) => item.category_id === categoryId)?.category_title;
+        return category ? <Tag color="blue">{category}</Tag> : <Typography.Text type="secondary">Unassigned</Typography.Text>;
+      },
+    },
+    {
+      title: 'Actions',
+      key: 'actions',
+      align: 'right',
+      render: (_value, profile) => (
+        <Space size="small">
+          <Button onClick={() => startEdit(profile)}>Edit</Button>
+          <Popconfirm
+            title="Delete this profile?"
+            description={`"${profile.name}" will be permanently removed.`}
+            okText="Delete profile"
+            okButtonProps={{ danger: true, loading: deletingId === profile.u_id }}
+            cancelText="Keep profile"
+            onConfirm={() => remove(profile)}
+          >
+            <Button danger loading={deletingId === profile.u_id}>Delete</Button>
+          </Popconfirm>
+        </Space>
+      ),
+    },
+  ];
 
   return (
     <>
-      {error && <div className="alert alert-error">{error}</div>}
-      <div className="search-row"><button className="btn btn-primary" type="button" onClick={startCreate}>+ Add Account Profile</button></div>
-      <div className="card">
-        {loading ? <LoadingState label="Loading…" /> : (
-          <div className="table-scroll"><table>
-            <thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>City</th><th>Category</th><th /></tr></thead>
-            <tbody>{profiles.map((profile) => (
-              <tr key={profile.u_id}>
-                <td>{profile.name}</td><td>{profile.email}</td><td>{profile.phone}</td><td>{profile.city}</td>
-                <td>{categories.find((item) => item.category_id === profile.category_id)?.category_title || profile.category_id}</td>
-                <td className="text-right"><button className="btn btn-ghost btn-sm" type="button" onClick={() => startEdit(profile)}>Edit</button><button className="btn btn-danger btn-sm" type="button" onClick={() => { void remove(profile); }}>Delete</button></td>
-              </tr>
-            ))}{!profiles.length && <tr><td colSpan={6} className="text-muted">No Account profiles yet.</td></tr>}</tbody>
-          </table></div>
-        )}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap', marginBottom: 24 }}>
+        <div>
+          <Typography.Title level={2} style={{ margin: 0 }}>Account profiles</Typography.Title>
+          <Typography.Text type="secondary">
+            Keep candidate details, resumes, and application information organized.
+          </Typography.Text>
+        </div>
+        <Button type="primary" size="large" onClick={startCreate}>+ Add account profile</Button>
       </div>
+      {error && <Alert type="error" showIcon closable title={error} onClose={() => setError(null)} style={{ marginBottom: 16 }} />}
+      <Card
+        title={(
+          <Space size="small">
+            <span>All profiles</span>
+            <Tag>{normalizedSearch ? `${filteredProfiles.length} of ${profiles.length}` : profiles.length}</Tag>
+          </Space>
+        )}
+        extra={(
+          <Input
+            aria-label="Search account profiles"
+            allowClear
+            placeholder="Search profiles"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            style={{ width: 'min(100%, 320px)' }}
+          />
+        )}
+        styles={{ body: { padding: 0 } }}
+      >
+        <Table<Profile>
+          rowKey="u_id"
+          columns={columns}
+          dataSource={filteredProfiles}
+          loading={loading}
+          size="middle"
+          scroll={{ x: 760 }}
+          pagination={{
+            pageSize: 10,
+            showSizeChanger: true,
+            pageSizeOptions: [10, 20, 50],
+            showTotal: (total, range) => `${range[0]}-${range[1]} of ${total} profiles`,
+          }}
+          locale={{
+            emptyText: (
+              <Empty
+                description={normalizedSearch ? 'No profiles match your search.' : 'No account profiles yet.'}
+              >
+                {!normalizedSearch && (
+                  <Button type="primary" onClick={startCreate}>Add your first profile</Button>
+                )}
+              </Empty>
+            ),
+          }}
+        />
+      </Card>
       <Modal
         open={showForm}
         title={editingId ? 'Edit Account Profile' : 'Add Account Profile'}
