@@ -98,7 +98,7 @@
   overscroll-behavior: contain;
 }
 
-.modal h3 {
+.modal__title {
   position: sticky;
   top: -20px;
   z-index: 1;
@@ -122,10 +122,64 @@
     max-height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 48px);
   }
 
-  .modal h3 {
+  .modal__title {
     top: -28px;
     padding-top: 26px;
     margin-top: -28px;
+  }
+
+  .modal--account-profile {
+    width: min(900px, calc(100vw - 48px));
+    max-width: 95vw;
+  }
+}
+
+.account-profile-form {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.account-profile-form__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 20px;
+}
+
+.account-profile-form__field--wide {
+  grid-column: 1 / -1;
+}
+
+.account-profile-form__section-title {
+  padding-top: 18px;
+  margin: 10px 0 12px;
+  border-top: 1px solid var(--border);
+}
+
+.account-profile-form__card {
+  min-width: 0;
+  margin: 0 0 12px;
+  border: 1px solid var(--border);
+}
+
+.account-profile-form__card legend {
+  padding: 0 6px;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.account-profile-form__checkbox input {
+  width: auto;
+}
+
+@media (max-width: 639px) {
+  .account-profile-form__grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .account-profile-form__field--wide {
+    grid-column: auto;
   }
 }
 
@@ -163,13 +217,12 @@
 }
 
 .topbar {
-  padding: 12px 16px;
+  padding: 10px 16px;
   gap: 10px;
 }
 
-.topbar h1 {
+.topbar-title {
   font-size: 18px;
-  min-width: 0;
 }
 
 .topbar-left {
@@ -180,10 +233,17 @@
   flex: 1;
 }
 
+.topbar-right {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
 .topbar-status {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
   flex-shrink: 0;
@@ -755,5 +815,48 @@ td.text-right {
   .topbar {
     padding-right: clamp(28px, 2.2vw, 40px);
     padding-left: clamp(28px, 2.2vw, 40px);
+  }
+}
+
+@media (max-width: 767px) {
+  .topbar {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    padding-top: max(10px, env(safe-area-inset-top));
+  }
+
+  .topbar-left {
+    flex: 1 1 100%;
+  }
+
+  .topbar-right {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .topbar-brand,
+  .topbar-divider {
+    display: none;
+  }
+
+  .topbar-account {
+    max-width: min(270px, 60vw);
+  }
+}
+
+@media (max-width: 380px) {
+  .topbar-account__name,
+  .topbar-account__role {
+    display: none;
+  }
+
+  .topbar-account {
+    width: 40px;
+    justify-content: center;
+    padding: 6px;
+  }
+
+  .topbar-account__chevron {
+    display: none;
   }
 }

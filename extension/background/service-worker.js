@@ -125,15 +125,6 @@ const HUMAN_REVIEW_SAVED_KEYS = new Set([
   'cover_message',
 ]);
 
-function isWorkableApplicationUrl(url) {
-  try {
-    const hostname = new URL(url || '').hostname.toLowerCase();
-    return hostname === 'workable.com' || hostname.endsWith('.workable.com');
-  } catch {
-    return false;
-  }
-}
-
 async function applyGptPackageToJobTab(applicationId, jobTabId) {
   let tabId = jobTabId;
   if (!tabId) {

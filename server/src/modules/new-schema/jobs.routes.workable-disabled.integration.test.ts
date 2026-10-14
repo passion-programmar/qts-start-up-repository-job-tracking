@@ -61,20 +61,6 @@ before(async () => {
   assert.ok(account);
   accountId = Number(account.u_id);
 
-  const job = await database.queryOne<{ j_id: number }>(
-    `INSERT INTO job_list (u_id, url, application_type, company, title)
-     VALUES ($1, 'https://apply.workable.com/example/j/123', 'workable', 'Test Company', 'Test Role')
-     RETURNING j_id`,
-    [managerId]
-  );
-  assert.ok(job);
-  jobId = Number(job.j_id);
-  await database.execute(
-    `INSERT INTO job_account_assignments (j_id, account_user_id, position)
-     VALUES ($1, $2, 1)`,
-    [jobId, accountId]
-  );
-
   const [
     { default: express },
     { default: jobsRouter },
@@ -126,6 +112,34 @@ after(async () => {
 });
 
 it('allows Workable jobs to be claimed and used for application-context and GPT task flows', async () => {
+  const saveResponse = await fetch(`${serverUrl}/api/v2/jobs`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${managerToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      url: 'https://apply.workable.com/example/j/123',
+      company: 'Test Company',
+      title: 'Test Role',
+      selectedAccountUserIds: [accountId],
+    }),
+  });
+  assert.equal(saveResponse.status, 201);
+  const saved = await saveResponse.json() as {
+    success: boolean;
+    job: {
+      id: number;
+      application_type: string;
+      selected_accounts: Array<{ job_id: number; account_user_id: number }>;
+    };
+  };
+  assert.equal(saved.success, true);
+  assert.equal(saved.job.application_type, 'workable');
+  assert.equal(saved.job.selected_accounts.length, 1);
+  assert.equal(saved.job.selected_accounts[0].account_user_id, accountId);
+  jobId = Number(saved.job.selected_accounts[0].job_id);
+
   const claimResponse = await fetch(`${serverUrl}/api/v2/jobs/claim-next`, {
     method: 'POST',
     headers: {

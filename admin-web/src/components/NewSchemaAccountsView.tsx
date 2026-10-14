@@ -1,8 +1,7 @@
 'use client';
 
-import { LoadingState } from '@/components/LoadingState';
-
 import { useCallback, useEffect, useState } from 'react';
+import { Alert, Button, Card, Empty, Input, Popconfirm, Space, Table, Tag, Typography, type TableColumnsType } from 'antd';
 import { Modal } from '@/components/Modal';
 import { api, uploadPdf } from '@/lib/api';
 import type { NewSchemaAccountProfile, NewSchemaCategory } from '@/lib/types';
@@ -79,7 +78,9 @@ export function NewSchemaAccountsView() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
   const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -223,36 +224,143 @@ export function NewSchemaAccountsView() {
   }
 
   async function remove(profile: Profile) {
-    if (!window.confirm(`Delete Account profile "${profile.name}"?`)) return;
-    const result = await api<{ success: boolean; message?: string }>('DELETE', `/api/v2/users/${profile.u_id}`);
-    if (!result.success) {
-      setError(result.message || 'Could not delete Account profile.');
-      return;
+    setDeletingId(profile.u_id);
+    setError(null);
+    try {
+      const result = await api<{ success: boolean; message?: string }>('DELETE', `/api/v2/users/${profile.u_id}`);
+      if (!result.success) {
+        setError(result.message || 'Could not delete Account profile.');
+        return;
+      }
+      await load();
+    } finally {
+      setDeletingId(null);
     }
-    await load();
   }
+
+  const normalizedSearch = search.trim().toLocaleLowerCase();
+  const filteredProfiles = profiles.filter((profile) => {
+    const category = categories.find((item) => item.category_id === profile.category_id)?.category_title || '';
+    return [
+      profile.name,
+      profile.email,
+      profile.phone,
+      profile.city,
+      category,
+    ].some((value) => value.toLocaleLowerCase().includes(normalizedSearch));
+  });
+  const columns: TableColumnsType<Profile> = [
+    {
+      title: 'Name',
+      dataIndex: 'name',
+      key: 'name',
+      render: (name: string) => <Typography.Text strong>{name}</Typography.Text>,
+    },
+    { title: 'Email', dataIndex: 'email', key: 'email' },
+    {
+      title: 'Phone',
+      dataIndex: 'phone',
+      key: 'phone',
+      render: (phone: string) => phone || <Typography.Text type="secondary">Not provided</Typography.Text>,
+    },
+    {
+      title: 'City',
+      dataIndex: 'city',
+      key: 'city',
+      render: (city: string) => city || <Typography.Text type="secondary">Not provided</Typography.Text>,
+    },
+    {
+      title: 'Category',
+      dataIndex: 'category_id',
+      key: 'category',
+      render: (categoryId: number) => {
+        const category = categories.find((item) => item.category_id === categoryId)?.category_title;
+        return category ? <Tag color="blue">{category}</Tag> : <Typography.Text type="secondary">Unassigned</Typography.Text>;
+      },
+    },
+    {
+      title: 'Actions',
+      key: 'actions',
+      align: 'right',
+      render: (_value, profile) => (
+        <Space size="small">
+          <Button onClick={() => startEdit(profile)}>Edit</Button>
+          <Popconfirm
+            title="Delete this profile?"
+            description={`"${profile.name}" will be permanently removed.`}
+            okText="Delete profile"
+            okButtonProps={{ danger: true, loading: deletingId === profile.u_id }}
+            cancelText="Keep profile"
+            onConfirm={() => remove(profile)}
+          >
+            <Button danger loading={deletingId === profile.u_id}>Delete</Button>
+          </Popconfirm>
+        </Space>
+      ),
+    },
+  ];
 
   return (
     <>
-      {error && <div className="alert alert-error">{error}</div>}
-      <div className="search-row"><button className="btn btn-primary" type="button" onClick={startCreate}>+ Add Account Profile</button></div>
-      <div className="card">
-        {loading ? <LoadingState label="Loading…" /> : (
-          <div className="table-scroll"><table>
-            <thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>City</th><th>Category</th><th /></tr></thead>
-            <tbody>{profiles.map((profile) => (
-              <tr key={profile.u_id}>
-                <td>{profile.name}</td><td>{profile.email}</td><td>{profile.phone}</td><td>{profile.city}</td>
-                <td>{categories.find((item) => item.category_id === profile.category_id)?.category_title || profile.category_id}</td>
-                <td className="text-right"><button className="btn btn-ghost btn-sm" type="button" onClick={() => startEdit(profile)}>Edit</button><button className="btn btn-danger btn-sm" type="button" onClick={() => { void remove(profile); }}>Delete</button></td>
-              </tr>
-            ))}{!profiles.length && <tr><td colSpan={6} className="text-muted">No Account profiles yet.</td></tr>}</tbody>
-          </table></div>
-        )}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap', marginBottom: 24 }}>
+        <div>
+          <Typography.Title level={2} style={{ margin: 0 }}>Account profiles</Typography.Title>
+          <Typography.Text type="secondary">
+            Keep candidate details, resumes, and application information organized.
+          </Typography.Text>
+        </div>
+        <Button type="primary" size="large" onClick={startCreate}>+ Add account profile</Button>
       </div>
+      {error && <Alert type="error" showIcon closable title={error} onClose={() => setError(null)} style={{ marginBottom: 16 }} />}
+      <Card
+        title={(
+          <Space size="small">
+            <span>All profiles</span>
+            <Tag>{normalizedSearch ? `${filteredProfiles.length} of ${profiles.length}` : profiles.length}</Tag>
+          </Space>
+        )}
+        extra={(
+          <Input
+            aria-label="Search account profiles"
+            allowClear
+            placeholder="Search profiles"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            style={{ width: 'min(100%, 320px)' }}
+          />
+        )}
+        styles={{ body: { padding: 0 } }}
+      >
+        <Table<Profile>
+          rowKey="u_id"
+          columns={columns}
+          dataSource={filteredProfiles}
+          loading={loading}
+          size="middle"
+          scroll={{ x: 760 }}
+          pagination={{
+            pageSize: 10,
+            showSizeChanger: true,
+            pageSizeOptions: [10, 20, 50],
+            showTotal: (total, range) => `${range[0]}-${range[1]} of ${total} profiles`,
+          }}
+          locale={{
+            emptyText: (
+              <Empty
+                description={normalizedSearch ? 'No profiles match your search.' : 'No account profiles yet.'}
+              >
+                {!normalizedSearch && (
+                  <Button type="primary" onClick={startCreate}>Add your first profile</Button>
+                )}
+              </Empty>
+            ),
+          }}
+        />
+      </Card>
       <Modal
         open={showForm}
         title={editingId ? 'Edit Account Profile' : 'Add Account Profile'}
+        className="modal--account-profile"
         onClose={() => {
           if (!saving) setShowForm(false);
         }}
@@ -265,34 +373,36 @@ export function NewSchemaAccountsView() {
           </>
         )}
       >
-        <form id="account-profile-form" onSubmit={(event) => { void save(event); }}>
-          {([
-            ['firstName', 'First name'], ['lastName', 'Last name'], ['email', 'Email'],
-            ['address', 'Address'], ['sex', 'Sex'],
-            ['birthday', 'Birthday'], ['phone', 'Phone'], ['country', 'Country'], ['city', 'City'],
-          ] as const).map(([key, label]) => (
-            <div className="form-group" key={key}>
-              <label htmlFor={`account-${key}`}>
-                {label}{key === 'lastName' ? ' (if applicable)' : ''}
-              </label>
-              <input
-                id={`account-${key}`}
-                type={key === 'email' ? 'email' : key === 'birthday' ? 'date' : 'text'}
-                required={key !== 'lastName'}
-                maxLength={key === 'firstName' || key === 'lastName' ? 100 : key === 'address' ? 500 : key === 'country' || key === 'city' ? 100 : key === 'sex' ? 50 : undefined}
-                value={form[key]}
-                onChange={(event) => setForm({ ...form, [key]: event.target.value })}
-              />
+        <form className="account-profile-form" id="account-profile-form" onSubmit={(event) => { void save(event); }}>
+          <div className="account-profile-form__grid">
+            {([
+              ['firstName', 'First name'], ['lastName', 'Last name'], ['email', 'Email'],
+              ['address', 'Address'], ['sex', 'Sex'],
+              ['birthday', 'Birthday'], ['phone', 'Phone'], ['country', 'Country'], ['city', 'City'],
+            ] as const).map(([key, label]) => (
+              <div className={`form-group${key === 'email' || key === 'address' ? ' account-profile-form__field--wide' : ''}`} key={key}>
+                <label htmlFor={`account-${key}`}>
+                  {label}{key === 'lastName' ? ' (if applicable)' : ''}
+                </label>
+                <input
+                  id={`account-${key}`}
+                  type={key === 'email' ? 'email' : key === 'birthday' ? 'date' : 'text'}
+                  required={key !== 'lastName'}
+                  maxLength={key === 'firstName' || key === 'lastName' ? 100 : key === 'address' ? 500 : key === 'country' || key === 'city' ? 100 : key === 'sex' ? 50 : undefined}
+                  value={form[key]}
+                  onChange={(event) => setForm({ ...form, [key]: event.target.value })}
+                />
+              </div>
+            ))}
+            <div className="form-group account-profile-form__field--wide">
+              <label htmlFor="account-category">Category</label>
+              <select id="account-category" required value={form.categoryId} onChange={(event) => setForm({ ...form, categoryId: event.target.value })}>
+                <option value="">Select category</option>
+                {categories.map((category) => <option key={category.category_id} value={category.category_id}>{category.category_title}</option>)}
+              </select>
             </div>
-          ))}
-          <div className="form-group">
-            <label htmlFor="account-category">Category</label>
-            <select id="account-category" required value={form.categoryId} onChange={(event) => setForm({ ...form, categoryId: event.target.value })}>
-              <option value="">Select category</option>
-              {categories.map((category) => <option key={category.category_id} value={category.category_id}>{category.category_title}</option>)}
-            </select>
           </div>
-          <h3>Resume</h3>
+          <h3 className="account-profile-form__section-title">Resume</h3>
           {editingId && profiles.find((profile) => profile.u_id === editingId)?.has_resume && (
             <p className="text-muted">
               Current PDF: {profiles.find((profile) => profile.u_id === editingId)?.resume_file_name || 'resume.pdf'}
@@ -303,37 +413,39 @@ export function NewSchemaAccountsView() {
             <input id="account-resume" type="file" accept="application/pdf,.pdf"
               onChange={(event) => setResumeFile(event.target.files?.[0] || null)} />
           </div>
-          <h3>Education</h3>
+          <h3 className="account-profile-form__section-title">Education</h3>
           {form.education.map((item, index) => (
-            <fieldset className="card" key={index}>
+            <fieldset className="card account-profile-form__card" key={index}>
               <legend>Education {index + 1}</legend>
-              {([
-                ['school', 'School'], ['qualification', 'Degree or qualification'],
-                ['fieldOfStudy', 'Field of study'], ['startDate', 'Start date'],
-                ['endDate', 'End date'], ['description', 'Description'],
-              ] as const).map(([key, label]) => (
-                <div className="form-group" key={key}>
-                  <label htmlFor={`education-${index}-${key}`}>{label}</label>
-                  {key === 'description' ? (
-                    <textarea id={`education-${index}-${key}`} maxLength={2000} value={item[key]}
-                      onChange={(event) => {
-                        const education = [...form.education];
-                        education[index] = { ...item, [key]: event.target.value };
-                        setForm({ ...form, education });
-                      }} />
-                  ) : (
-                    <input id={`education-${index}-${key}`}
-                      type={key === 'startDate' || key === 'endDate' ? 'date' : 'text'}
-                      required={key === 'school' || key === 'qualification'}
-                      maxLength={key === 'school' ? 300 : 200} value={item[key]}
-                      onChange={(event) => {
-                        const education = [...form.education];
-                        education[index] = { ...item, [key]: event.target.value };
-                        setForm({ ...form, education });
-                      }} />
-                  )}
-                </div>
-              ))}
+              <div className="account-profile-form__grid">
+                {([
+                  ['school', 'School'], ['qualification', 'Degree or qualification'],
+                  ['fieldOfStudy', 'Field of study'], ['startDate', 'Start date'],
+                  ['endDate', 'End date'], ['description', 'Description'],
+                ] as const).map(([key, label]) => (
+                  <div className={`form-group${key === 'description' ? ' account-profile-form__field--wide' : ''}`} key={key}>
+                    <label htmlFor={`education-${index}-${key}`}>{label}</label>
+                    {key === 'description' ? (
+                      <textarea id={`education-${index}-${key}`} maxLength={2000} value={item[key]}
+                        onChange={(event) => {
+                          const education = [...form.education];
+                          education[index] = { ...item, [key]: event.target.value };
+                          setForm({ ...form, education });
+                        }} />
+                    ) : (
+                      <input id={`education-${index}-${key}`}
+                        type={key === 'startDate' || key === 'endDate' ? 'date' : 'text'}
+                        required={key === 'school' || key === 'qualification'}
+                        maxLength={key === 'school' ? 300 : 200} value={item[key]}
+                        onChange={(event) => {
+                          const education = [...form.education];
+                          education[index] = { ...item, [key]: event.target.value };
+                          setForm({ ...form, education });
+                        }} />
+                    )}
+                  </div>
+                ))}
+              </div>
               <button className="btn btn-ghost" type="button"
                 onClick={() => setForm({ ...form, education: form.education.filter((_, row) => row !== index) })}>
                 Remove education
@@ -347,39 +459,41 @@ export function NewSchemaAccountsView() {
             }],
           })}>Add education</button>
 
-          <h3>Work experience</h3>
+          <h3 className="account-profile-form__section-title">Work experience</h3>
           {form.workExperience.map((item, index) => (
-            <fieldset className="card" key={index}>
+            <fieldset className="card account-profile-form__card" key={index}>
               <legend>Experience {index + 1}</legend>
-              {([
-                ['employer', 'Employer'], ['jobTitle', 'Job title'], ['location', 'Location'],
-                ['startDate', 'Start date'], ['endDate', 'End date'], ['description', 'Description'],
-              ] as const).map(([key, label]) => (
-                <div className="form-group" key={key}>
-                  <label htmlFor={`experience-${index}-${key}`}>{label}</label>
-                  {key === 'description' ? (
-                    <textarea id={`experience-${index}-${key}`} maxLength={3000} value={item[key]}
-                      onChange={(event) => {
-                        const workExperience = [...form.workExperience];
-                        workExperience[index] = { ...item, [key]: event.target.value };
-                        setForm({ ...form, workExperience });
-                      }} />
-                  ) : key === 'endDate' && item.currentRole ? (
-                    <input id={`experience-${index}-${key}`} value="Current role" disabled />
-                  ) : (
-                    <input id={`experience-${index}-${key}`}
-                      type={key === 'startDate' || key === 'endDate' ? 'date' : 'text'}
-                      required={key === 'employer' || key === 'jobTitle'}
-                      maxLength={300} value={item[key]}
-                      onChange={(event) => {
-                        const workExperience = [...form.workExperience];
-                        workExperience[index] = { ...item, [key]: event.target.value };
-                        setForm({ ...form, workExperience });
-                      }} />
-                  )}
-                </div>
-              ))}
-              <div className="form-group">
+              <div className="account-profile-form__grid">
+                {([
+                  ['employer', 'Employer'], ['jobTitle', 'Job title'], ['location', 'Location'],
+                  ['startDate', 'Start date'], ['endDate', 'End date'], ['description', 'Description'],
+                ] as const).map(([key, label]) => (
+                  <div className={`form-group${key === 'description' ? ' account-profile-form__field--wide' : ''}`} key={key}>
+                    <label htmlFor={`experience-${index}-${key}`}>{label}</label>
+                    {key === 'description' ? (
+                      <textarea id={`experience-${index}-${key}`} maxLength={3000} value={item[key]}
+                        onChange={(event) => {
+                          const workExperience = [...form.workExperience];
+                          workExperience[index] = { ...item, [key]: event.target.value };
+                          setForm({ ...form, workExperience });
+                        }} />
+                    ) : key === 'endDate' && item.currentRole ? (
+                      <input id={`experience-${index}-${key}`} value="Current role" disabled />
+                    ) : (
+                      <input id={`experience-${index}-${key}`}
+                        type={key === 'startDate' || key === 'endDate' ? 'date' : 'text'}
+                        required={key === 'employer' || key === 'jobTitle'}
+                        maxLength={300} value={item[key]}
+                        onChange={(event) => {
+                          const workExperience = [...form.workExperience];
+                          workExperience[index] = { ...item, [key]: event.target.value };
+                          setForm({ ...form, workExperience });
+                        }} />
+                    )}
+                  </div>
+                ))}
+              </div>
+              <div className="form-group account-profile-form__checkbox">
                 <label htmlFor={`experience-${index}-current`}>This is my current role</label>
                 <input id={`experience-${index}-current`} type="checkbox" checked={item.currentRole}
                   onChange={(event) => {
@@ -401,32 +515,34 @@ export function NewSchemaAccountsView() {
               currentRole: false, description: '',
             }],
           })}>Add work experience</button>
-          <h3>Additional application facts</h3>
+          <h3 className="account-profile-form__section-title">Additional application facts</h3>
           <p className="text-muted">
             These name-and-value facts belong to this Account only. For example, “Work authorization expiry” → “2028-04-30”.
           </p>
           {form.customFields.map((item, index) => (
-            <fieldset className="card" key={index}>
+            <fieldset className="card account-profile-form__card" key={index}>
               <legend>Additional fact {index + 1}</legend>
-              <div className="form-group">
-                <label htmlFor={`account-custom-field-name-${index}`}>Field name</label>
-                <input id={`account-custom-field-name-${index}`} required maxLength={100}
-                  value={item.fieldName}
-                  onChange={(event) => {
-                    const customFields = [...form.customFields];
-                    customFields[index] = { ...item, fieldName: event.target.value };
-                    setForm({ ...form, customFields });
-                  }} />
-              </div>
-              <div className="form-group">
-                <label htmlFor={`account-custom-field-value-${index}`}>Value</label>
-                <textarea id={`account-custom-field-value-${index}`} required maxLength={4000}
-                  value={item.value}
-                  onChange={(event) => {
-                    const customFields = [...form.customFields];
-                    customFields[index] = { ...item, value: event.target.value };
-                    setForm({ ...form, customFields });
-                  }} />
+              <div className="account-profile-form__grid">
+                <div className="form-group">
+                  <label htmlFor={`account-custom-field-name-${index}`}>Field name</label>
+                  <input id={`account-custom-field-name-${index}`} required maxLength={100}
+                    value={item.fieldName}
+                    onChange={(event) => {
+                      const customFields = [...form.customFields];
+                      customFields[index] = { ...item, fieldName: event.target.value };
+                      setForm({ ...form, customFields });
+                    }} />
+                </div>
+                <div className="form-group">
+                  <label htmlFor={`account-custom-field-value-${index}`}>Value</label>
+                  <textarea id={`account-custom-field-value-${index}`} required maxLength={4000}
+                    value={item.value}
+                    onChange={(event) => {
+                      const customFields = [...form.customFields];
+                      customFields[index] = { ...item, value: event.target.value };
+                      setForm({ ...form, customFields });
+                    }} />
+                </div>
               </div>
               <button className="btn btn-ghost" type="button"
                 onClick={() => setForm({ ...form, customFields: form.customFields.filter((_, row) => row !== index) })}>
@@ -438,39 +554,41 @@ export function NewSchemaAccountsView() {
             ...form,
             customFields: [...form.customFields, { fieldName: '', value: '' }],
           })}>Add additional fact</button>
-          <h3>Reusable application questions and answers</h3>
+          <h3 className="account-profile-form__section-title">Reusable application questions and answers</h3>
           <p className="text-muted">
             These answers belong to this Account and are reused only when an application question matches.
           </p>
           {form.customAnswers.map((item, index) => (
-            <fieldset className="card" key={index}>
+            <fieldset className="card account-profile-form__card" key={index}>
               <legend>Saved answer {index + 1}</legend>
-              <div className="form-group">
-                <label htmlFor={`account-answer-topic-${index}`}>Topic</label>
-                <input id={`account-answer-topic-${index}`} required maxLength={100} value={item.topic}
-                  onChange={(event) => {
-                    const customAnswers = [...form.customAnswers];
-                    customAnswers[index] = { ...item, topic: event.target.value };
-                    setForm({ ...form, customAnswers });
-                  }} />
-              </div>
-              <div className="form-group">
-                <label htmlFor={`account-answer-question-${index}`}>Application question</label>
-                <textarea id={`account-answer-question-${index}`} required maxLength={1000} value={item.question}
-                  onChange={(event) => {
-                    const customAnswers = [...form.customAnswers];
-                    customAnswers[index] = { ...item, question: event.target.value };
-                    setForm({ ...form, customAnswers });
-                  }} />
-              </div>
-              <div className="form-group">
-                <label htmlFor={`account-answer-value-${index}`}>Reusable answer</label>
-                <textarea id={`account-answer-value-${index}`} required maxLength={4000} value={item.answer}
-                  onChange={(event) => {
-                    const customAnswers = [...form.customAnswers];
-                    customAnswers[index] = { ...item, answer: event.target.value };
-                    setForm({ ...form, customAnswers });
-                  }} />
+              <div className="account-profile-form__grid">
+                <div className="form-group">
+                  <label htmlFor={`account-answer-topic-${index}`}>Topic</label>
+                  <input id={`account-answer-topic-${index}`} required maxLength={100} value={item.topic}
+                    onChange={(event) => {
+                      const customAnswers = [...form.customAnswers];
+                      customAnswers[index] = { ...item, topic: event.target.value };
+                      setForm({ ...form, customAnswers });
+                    }} />
+                </div>
+                <div className="form-group">
+                  <label htmlFor={`account-answer-question-${index}`}>Application question</label>
+                  <textarea id={`account-answer-question-${index}`} required maxLength={1000} value={item.question}
+                    onChange={(event) => {
+                      const customAnswers = [...form.customAnswers];
+                      customAnswers[index] = { ...item, question: event.target.value };
+                      setForm({ ...form, customAnswers });
+                    }} />
+                </div>
+                <div className="form-group account-profile-form__field--wide">
+                  <label htmlFor={`account-answer-value-${index}`}>Reusable answer</label>
+                  <textarea id={`account-answer-value-${index}`} required maxLength={4000} value={item.answer}
+                    onChange={(event) => {
+                      const customAnswers = [...form.customAnswers];
+                      customAnswers[index] = { ...item, answer: event.target.value };
+                      setForm({ ...form, customAnswers });
+                    }} />
+                </div>
               </div>
               <button className="btn btn-ghost" type="button"
                 onClick={() => setForm({

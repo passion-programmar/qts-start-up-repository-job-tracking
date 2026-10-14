@@ -153,6 +153,53 @@ function resolveManagerId(req: NewSchemaAuthRequest, res: Response): number | nu
   return actor.id;
 }
 
+async function ensureTemplateRecord(templateId: number, managerId: number): Promise<number> {
+  return withTransaction(async (tx) => {
+    const existing = await tx.query(
+      'SELECT template_id FROM application_site_templates WHERE template_id = $1 FOR UPDATE',
+      [templateId]
+    );
+    if (existing.rows.length) {
+      return Number((existing.rows[0] as { template_id: number }).template_id);
+    }
+
+    const siteKey = `manager:${managerId}:scanner-template:${templateId}`;
+    const created = await tx.query(
+      `INSERT INTO application_site_templates (
+         template_id, site_key, platform, host, template_version, status
+       ) VALUES ($1, $2, 'manager', NULL, 'manager-scanner-v1', 'partial')
+       ON CONFLICT (template_id) DO NOTHING
+       RETURNING template_id`,
+      [templateId, siteKey]
+    );
+    const record = created.rows[0] as { template_id: number } | undefined;
+    if (record) {
+      await tx.query(
+        `SELECT setval(
+           pg_get_serial_sequence('application_site_templates', 'template_id'),
+           GREATEST(
+             (SELECT last_value FROM application_site_templates_template_id_seq),
+             $1::bigint
+           ),
+           true
+         )`,
+        [templateId]
+      );
+      return Number(record.template_id);
+    }
+
+    const concurrent = await tx.query(
+      'SELECT template_id FROM application_site_templates WHERE template_id = $1',
+      [templateId]
+    );
+    const concurrentRecord = concurrent.rows[0] as { template_id: number } | undefined;
+    if (!concurrentRecord) {
+      throw new Error('Could not create or find the Scanner site template.');
+    }
+    return Number(concurrentRecord.template_id);
+  });
+}
+
 async function readProfile(managerId: number) {
   const profile = await queryOne<Record<string, unknown>>(
     `SELECT u.managed_country, p.authorized_to_work, p.authorization_status,
@@ -197,6 +244,7 @@ router.get('/scanner-rules/:templateId', async (req: NewSchemaAuthRequest, res: 
     return;
   }
 
+  const effectiveTemplateId = await ensureTemplateRecord(templateId, managerId);
   const rules = await queryAll(
     `SELECT rule.rule_id, rule.template_id, rule.field_id, rule.semantic_key,
             rule.question, rule.strategy, rule.profile_field_key,
@@ -210,7 +258,7 @@ router.get('/scanner-rules/:templateId', async (req: NewSchemaAuthRequest, res: 
       AND answer.manager_user_id = rule.manager_user_id
      WHERE rule.manager_user_id = $1 AND rule.template_id = $2
      ORDER BY rule.rule_id`,
-    [managerId, templateId]
+    [managerId, effectiveTemplateId]
   );
   res.json({ success: true, rules });
 });
@@ -232,14 +280,7 @@ router.post('/scanner-rules', async (req: NewSchemaAuthRequest, res: Response) =
   }
 
   const data = parsed.data;
-  const template = await queryOne<{ template_id: number }>(
-    'SELECT template_id FROM application_site_templates WHERE template_id = $1',
-    [data.templateId]
-  );
-  if (!template) {
-    res.status(404).json({ success: false, message: 'Site template was not found.' });
-    return;
-  }
+  const effectiveTemplateId = await ensureTemplateRecord(data.templateId, managerId);
 
   if (data.reusableAnswerId) {
     const existingAnswer = await queryOne<{ custom_answer_id: number }>(
@@ -304,7 +345,7 @@ router.post('/scanner-rules', async (req: NewSchemaAuthRequest, res: Response) =
        FROM manager_application_template_rules
        WHERE manager_user_id = $1 AND template_id = $2 AND field_id = $3
        FOR UPDATE`,
-      [managerId, data.templateId, data.fieldId]
+      [managerId, effectiveTemplateId, data.fieldId]
     );
     const previous = previousResult.rows[0] as Record<string, unknown> | undefined;
     const existingHistory = Array.isArray(previous?.history) ? previous.history : [];
@@ -341,7 +382,7 @@ router.post('/scanner-rules', async (req: NewSchemaAuthRequest, res: Response) =
                  history, confirmed_at, updated_at`,
       [
         managerId,
-        data.templateId,
+        effectiveTemplateId,
         data.fieldId,
         data.semanticKey,
         data.question,
@@ -374,6 +415,7 @@ router.post('/scanner-rules/evidence', async (req: NewSchemaAuthRequest, res: Re
     });
     return;
   }
+  const effectiveTemplateId = await ensureTemplateRecord(parsed.data.templateId, managerId);
   const updated = await queryOne<{ rule_id: number }>(
     `UPDATE manager_application_template_rules
      SET field_snapshot = $1::jsonb, updated_at = NOW()
@@ -382,7 +424,7 @@ router.post('/scanner-rules/evidence', async (req: NewSchemaAuthRequest, res: Re
     [
       JSON.stringify(parsed.data.fieldSnapshot),
       managerId,
-      parsed.data.templateId,
+      effectiveTemplateId,
       parsed.data.fieldId,
     ]
   );

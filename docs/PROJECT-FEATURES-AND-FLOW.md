@@ -26,8 +26,8 @@ Its main current product loop is:
    profiles**; these profiles are data records, not login users.
 2. A Manager captures job details, associates a job with one or more Accounts,
    and reviews each Account's separate job row.
-3. On supported, non-Workable application sites, a Manager can explicitly run
-   Scanner for one Account and one visible form step.
+3. On supported application sites, including Workable, a Manager can explicitly
+   run Scanner for one Account and one visible form step.
 4. Scanner observes the form, asks the Manager to decide how fields should be
    handled, and may fill only confirmed fields on the current page.
 5. Custom GPT may generate requested answers or documents for that job task;
@@ -37,8 +37,9 @@ Its main current product loop is:
 7. If an application is confirmed as submitted, the job moves into Bids, where
    Managers schedule interviews and Callers record interview outcomes.
 
-Workable job capture and tracking remain supported. Workable form filling,
-Workable application handling, and the Manager Apply queue are retired.
+Workable job capture and tracking remain supported. Workable uses the same
+generic, confirmation-gated Scanner flow as other supported application sites;
+the former Workable-specific handler and Manager Apply queue are retired.
 
 ## 2. Architecture and product boundaries
 
@@ -230,9 +231,7 @@ flowchart TD
     A[Manager clicks Scan current step] --> B[Get JD extracts job details]
     B --> C[Manager reviews job and selects Account]
     C --> D[Save Job & Scan]
-    D --> E{Workable job?}
-    E -->|Yes| X[Keep job tracking; do not start application]
-    E -->|No| F[Claim exact Account job row]
+    D --> F[Claim exact Account job row]
     F --> G[API checks Manager, Account, supported type and run lock]
     G --> H[Scan visible form step]
     H --> I{New, changed, or uncertain evidence?}
@@ -263,15 +262,15 @@ flowchart TD
 2. The Manager selects an owned Account and clicks **Save Job & Scan**.
 3. The extension saves or updates the job row and verifies that the response
    contains the selected Account's exact row.
-4. For non-Workable application types, the extension generates a run UUID and
-   calls the Manager-only claim endpoint for that job ID, Account ID, and
-   supported type.
+4. The extension generates a run UUID and calls the Manager-only claim endpoint
+   for that job ID, Account ID, and supported type, including `workable`.
 5. The API transaction validates ownership and active status, excludes
-   Workable, prevents competing active rows/runs, and sets the selected row to
-   `processing`. A later scan can resume the same run when its identifier is
-   present.
-6. Scanner refuses to start a Workable row. The job can remain saved for
-   tracking, but it is not an application task.
+   unsupported job types, prevents competing active rows/runs, and sets the
+   selected row to `processing`. A later scan can resume the same run when its
+   identifier is present.
+6. Workable uses the generic Scanner; there is no Workable-specific form
+   handler. The same visible-step, Manager-confirmation, and no-submission
+   boundaries apply.
 
 ### Field observation and fill boundaries
 
@@ -323,7 +322,7 @@ sequenceDiagram
 
     M->>E: Scan and choose generated fields/documents
     E->>A: Create task for exact processing job row
-    A->>A: Reject non-Manager, non-processing, or Workable job
+    A->>A: Reject non-Manager or non-processing job
     A->>A: Build scoped context from job + Account + Manager answers
     A->>D: Save/reuse job-scoped task and resume text if available
     E->>A: Set current page, fields, and job description
@@ -341,8 +340,8 @@ sequenceDiagram
 Important controls include:
 
 - The task must be associated with the Manager's exact processing job row.
-- Workable job rows are excluded from task creation and subsequent task routes
-  that are joined back to the job.
+- Workable job rows may use the generic job-scoped task flow; task creation and
+  subsequent task routes remain joined back to the Manager's job.
 - The Action must use the configured GPT Action key; the extension uses
   authenticated Manager APIs.
 - A task already active or closed cannot be overwritten by a new Scanner page.
@@ -421,7 +420,9 @@ new resume template PDF.
 The Manager PDFs page accepts one JSON document containing resume data and a
 cover letter, previews either document, and creates both PDFs together. Resume
 templates include QTS Resume 1, QTS Resume 2, QTS Resume 3, Classic ATS, and
-Compact. The cover letter uses a separate QTS-branded page design.
+Compact. Each QTS resume has a coordinated cover-letter layout. The QTS
+cover-letter layouts omit the QTS/Career Documents brand mark and update their
+existing preview frame as the JSON changes.
 
 - The QTS designs have live HTML previews. The matching rendered HTML can be
   sent to the API's headless browser renderer for a PDF.
@@ -536,7 +537,7 @@ reporting; it does not initiate applications or update their state.
 System settings include a global application submission mode, defaulting to
 `manual`. That setting is not proof that automatic submission is enabled:
 the current shipped workflow still does not include the Manager Apply queue or
-Workable application handler, and Scanner does not submit a form.
+Workable-specific application handler, and Scanner does not submit a form.
 
 ## 13. Data model at a glance
 
@@ -584,21 +585,21 @@ The most important separation is:
 |---|---|
 | Workable job capture | Supported for saving/tracking job rows |
 | Workable manual status tracking | Supported |
-| Workable form-specific application handler | Retired/removed |
-| Workable claim, application context, and GPT task | Blocked in the current source flow |
+| Workable form-specific application handler | Retired/removed; supported sites use the generic Scanner |
+| Workable claim, application context, and GPT task | Supported for the explicit Manager Scanner flow |
 | Manager Apply queue | Not shipped |
 | Automatic final form submission | Not part of Scanner; Scanner does not advance or submit |
 | Generic read-only site discovery | Available as a structural observation path |
-| Scanner fill on supported non-Workable page | Explicit Manager-triggered, visible-step-only, confirmation-gated assistance |
+| Scanner fill on supported page, including Workable | Explicit Manager-triggered, visible-step-only, confirmation-gated assistance |
 | Saved site template | Not permission for automatic replay, navigation, or submission |
 | Custom GPT output | Must be task-scoped and reviewed before field/document use |
 | Generated resume PDF | Returned/downloaded; not automatically persisted as the Account's uploaded resume |
 | Account profile | A candidate record; not a login |
 
-Two separate safety layers protect Workable: the extension blocks Workable form
-fill/GPT-package paths, and the API excludes Workable rows from claim,
-application-context, and GPT-task creation paths. The Workable URL/type remains
-useful for job tracking and read-only discovery.
+Workable does not use a site-specific application handler. It follows the same
+generic Scanner controls as other supported sites: Manager-triggered current
+step only, field-level review, and no navigation or final submission. The
+Manager Apply queue remains retired.
 
 ## 15. Deployment and source-state implications
 

@@ -10,13 +10,15 @@ Browser ──► Vercel web app ──► Vercel API functions ──► Neon
 
 The web app proxies API requests to the API deployment. The deployed system
 uses the new-schema tables only. The extension supports the new Manager login,
-job-posting capture, and read-only site discovery. Workable job capture remains
-supported, but Workable application automation and the Manager Apply queue have
-been removed.
+job-posting capture, and Manager-triggered Scanner assistance on supported
+application sites, including Workable. Scanner is limited to the visible step,
+requires Manager review, and never navigates or submits the application. The
+retired Manager Apply queue and Workable-specific application handler are not
+part of this workflow.
 
 Vercel deployment updates the web app and API only. The browser extension is a
 separate deliverable; update or reload the unpacked extension from the
-`extension` directory to use the latest capture and discovery behavior.
+`extension` directory to use the latest capture and Scanner behavior.
 
 ## 1. Create a Neon database
 

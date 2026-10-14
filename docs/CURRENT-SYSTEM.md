@@ -78,13 +78,13 @@ tables listed above are kept. Legacy tables are not recreated by migrations.
   `manual`.
 - Super can manage Custom GPT assignments and reusable application profile
   data; these records remain available for future supported workflows.
-- The Manager Apply queue and Workable application handler are not shipped.
-  Workable rows remain available for job tracking and manual status updates,
-  but the server excludes them from claims and rejects their application
-  context and GPT-task creation. The extension blocks form filling on
-  Workable pages, including through the legacy generic fill entry point.
-- Managers can explicitly click Scanner on supported non-Workable pages to
-  scan the visible application step. Scanner first loads job details through
+- The Manager Apply queue and Workable-specific application handler are not
+  shipped. Workable rows support job tracking and the same generic Manager
+  Scanner flow as other supported sites; claim, application-context, and
+  job-scoped GPT task routes accept Workable rows.
+- Managers can explicitly click Scanner on supported application pages,
+  including Workable, to scan the visible application step. Scanner first
+  loads job details through
   the Get JD flow, lets the Manager choose an Account, then saves or updates
   the job and starts that Account's exact `todo` row before using its
   job-scoped GPT task. Scanner stores Manager-owned answer strategies separately from the
@@ -110,19 +110,19 @@ tables listed above are kept. Legacy tables are not recreated by migrations.
   applications. A GPT task that is already active or closed cannot be
   overwritten. Scanner claims only the selected Account's exact `todo` row
   through the existing Apply-run lock; later step scans resume that same
-  Scanner run rather than starting another one. Workable rows are never started.
-  Workable remains read-only.
+  Scanner run rather than starting another one. These boundaries also apply to
+  Workable.
 - Generic read-only site-template discovery remains available to other
   extension users. It records structural field/step checkpoints only; it does
   not save typed answers, fill fields, navigate, or submit.
 - Managers can continue to track application outcomes through their Jobs and
-  Bids workflows. The row status and manual confirmation controls remain; a
-  Workable row cannot be claimed by an application handler.
+  Bids workflows. The row status and manual confirmation controls remain.
+  Workable uses the generic Scanner rather than a site-specific handler.
 - The Manager Bid Status and Jobs pages display each Account-specific job row
   and its `todo`, `processing`, `did`, or `failed` status. Managers can reset a
   `failed` row to `todo` from either page for tracking and cleanup. This does
-  not start an application attempt; Workable rows remain excluded from claims,
-  and no Manager Apply queue is currently shipped.
+  not start an application attempt; Scanner starts only after an explicit
+  Manager action, and no Manager Apply queue is currently shipped.
 - Extension discovery stores structural site-template drafts in
   `application_site_templates`. Manager-confirmed strategies are stored in
   `manager_application_template_rules`, scoped to the Manager and template;
@@ -147,10 +147,10 @@ tables listed above are kept. Legacy tables are not recreated by migrations.
 
 The extension's Manager login uses the new-schema API. The retired
 candidate/application-session and direct legacy GPT application/PDF workflows
-are not part of the active Manager workflow. The previous Workable application
-connector has also been removed; its form-specific extension scripts and
-Manager Apply controls are no longer shipped. Workable job capture and
-read-only discovery are not affected.
+are not part of the active Manager workflow. The previous Workable-specific
+application connector and Manager Apply controls are no longer shipped.
+Workable job capture and the generic, confirmation-gated Scanner flow remain
+supported.
 
 ## Deployment
 

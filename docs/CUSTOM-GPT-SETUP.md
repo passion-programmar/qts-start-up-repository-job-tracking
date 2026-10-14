@@ -77,10 +77,11 @@ normal purpose and instructions.
 
 1. Confirm the API deployment is healthy and the Custom GPT Action saves without
    an authentication or schema error.
-2. The Workable application connector and Manager Apply controls have been
-   removed. This GPT Action setup is retained for API compatibility and does
-   not enable Workable job-site applications. Use the extension's read-only
-   site discovery for structural scans; it does not fill, navigate, or submit.
+2. The former Workable-specific application connector and Manager Apply
+   controls have been removed. Managers can use the generic, confirmation-gated
+   Scanner flow on supported Workable application pages; this GPT Action
+   provides job-scoped generated answers/documents only when requested by that
+   flow. Scanner does not advance pages or submit applications.
 
 The Action key is a shared server-to-GPT credential, not a user login. If an
 Action returns 401 or 503, check the Vercel environment variable and Action

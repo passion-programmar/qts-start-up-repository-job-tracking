@@ -134,6 +134,44 @@ after(async () => {
   }
 });
 
+it('auto-creates a missing template record when a manager saves scanner rules', async () => {
+  const missingTemplateId = templateId + 1000;
+  const createResponse = await fetch(`${serverUrl}/api/v2/manager-application-profile/scanner-rules`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${managerToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      templateId: missingTemplateId,
+      fieldId: 'missing-template-field',
+      semanticKey: 'missing template bootstrap',
+      question: 'This should bootstrap a temporary template row.',
+      strategy: 'manual',
+    }),
+  });
+
+  assert.equal(createResponse.status, 200);
+  const created = await createResponse.json() as { success: boolean; rule: { template_id: number } };
+  assert.equal(created.success, true);
+  assert.equal(created.rule.template_id, missingTemplateId);
+
+  const database = await import('../../database/connection');
+  const template = await database.queryOne<{ template_id: number }>(
+    'SELECT template_id FROM application_site_templates WHERE template_id = $1',
+    [missingTemplateId]
+  );
+  assert.ok(template);
+  assert.equal(Number(template.template_id), missingTemplateId);
+  const nextTemplate = await database.queryOne<{ template_id: number }>(
+    `INSERT INTO application_site_templates (site_key, template_version)
+     VALUES ('scanner-sequence-test', 'scanner-sequence-v1')
+     RETURNING template_id`
+  );
+  assert.ok(nextTemplate);
+  assert.ok(Number(nextTemplate.template_id) > missingTemplateId);
+});
+
 it('saves reusable question/answers with Manager-scoped template rules and keeps revisions', async () => {
   const scannerObservation = {
     label: 'Are you willing to relocate to Japan?',

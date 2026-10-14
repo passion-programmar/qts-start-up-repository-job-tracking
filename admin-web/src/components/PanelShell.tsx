@@ -1,11 +1,12 @@
 'use client';
 
 import Link from 'next/link';
+import { Dropdown } from 'antd';
 import { usePathname } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth, roleLabel } from '@/components/AuthProvider';
 import { api } from '@/lib/api';
-import { panelLogoUrl } from '@/lib/branding';
+import { APP_NAME, panelLogoUrl } from '@/lib/branding';
 import type { PanelMode, UserRole } from '@/lib/types';
 
 type NavItem = {
@@ -113,6 +114,7 @@ export function PanelShell({
   const [online, setOnline] = useState(true);
   const [navOpen, setNavOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
 
   const navItems = useMemo(() => {
     return NAV_ITEMS.filter((item) =>
@@ -185,6 +187,12 @@ export function PanelShell({
     };
   }, []);
 
+  const role = roleLabel(user?.role || mode);
+  const accountName = user?.name || user?.username || role;
+  const accountMenuItems = [
+    ...(mode !== 'account' ? [{ key: 'profile', label: <Link href={basePath + '/settings'}>My Profile</Link> }, { type: 'divider' as const }] : []),
+    { key: 'logout', label: 'Log Out', danger: true },
+  ];
   const roleCls =
     mode === 'admin' ? 'role-admin' : mode === 'manager' ? 'role-admin' : mode === 'caller' ? 'role-user' : 'role-user';
 
@@ -255,7 +263,7 @@ export function PanelShell({
             Caller mode — view assigned interviews and submit outcomes only.
           </div>
         )}
-        <div className="topbar">
+        <header className="topbar">
           <div className="topbar-left">
             <button
               type="button"
@@ -264,15 +272,53 @@ export function PanelShell({
               aria-expanded={navOpen || !sidebarCollapsed}
               onClick={toggleSidebar}
             >
-              ☰
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
             </button>
-            {mode === 'admin' && <h1>{title}</h1>}
+            <Link className="topbar-brand" href={basePath} aria-label={APP_NAME + ' home'}>
+              {APP_NAME}
+            </Link>
+            <span className="topbar-divider" aria-hidden="true" />
+            <h1 className="topbar-title">{title}</h1>
           </div>
-          <div className="topbar-status">
-            <span className={`dot ${online ? 'dot-green' : 'dot-red'}`} />
-            {online ? 'Connected' : 'Offline'}
+          <div className="topbar-right">
+            <div className="topbar-status" role="status" aria-label={'API status: ' + (online ? 'Connected' : 'Offline')}>
+              <span className={'dot ' + (online ? 'dot-green' : 'dot-red')} aria-hidden="true" />
+              {online ? 'Connected' : 'Offline'}
+            </div>
+            <Dropdown
+              trigger={['click']}
+              placement="bottomRight"
+              open={accountMenuOpen}
+              onOpenChange={setAccountMenuOpen}
+              menu={{
+                id: 'qts-account-menu',
+                items: accountMenuItems,
+                onClick: ({ key }) => {
+                  if (key === 'logout') void logout();
+                },
+              }}
+            >
+              <button
+                type="button"
+                className="topbar-account"
+                aria-label={'Account menu for ' + accountName + ', ' + role}
+                aria-haspopup="menu"
+                aria-expanded={accountMenuOpen}
+                aria-controls="qts-account-menu"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path d="M20 21a8 8 0 0 0-16 0" />
+                  <circle cx="12" cy="8" r="4" />
+                </svg>
+                <span className="topbar-account__name">{accountName}</span>
+                <span className="topbar-account__role">{role}</span>
+                <svg className="topbar-account__chevron" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="m4 6 4 4 4-4" /></svg>
+              </button>
+            </Dropdown>
           </div>
-        </div>
+        </header>
         <div className="content">{children}</div>
       </main>
     </div>
