@@ -151,12 +151,15 @@
   }
 
   function captureFieldSnapshot(field) {
+    const evidence = captureEvidence(field);
     return {
       label: String(field?.label || field?.question || '').slice(0, 1000),
       fieldType: String(field?.fieldType || 'unknown').slice(0, 64),
       required: Boolean(field?.required),
       options: (Array.isArray(field?.options) ? field.options : []).slice(0, 100).map((value) => String(value).slice(0, 300)),
       section: String(field?.sectionHeading || '').slice(0, 200),
+      selectorHints: evidence.selectorHints,
+      domEvidence: evidence.domEvidence,
     };
   }
 

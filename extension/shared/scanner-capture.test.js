@@ -79,6 +79,14 @@ test('matching captures are verified and retain bounded locator evidence', () =>
   assert.equal(result.fields[0].scannerCapture.classEvidenceChanged, false);
 });
 
+test('field snapshots include the locator evidence required by the API schema', () => {
+  const snapshot = scannerCapture.captureFieldSnapshot(field());
+  assert.deepEqual(snapshot.selectorHints, scannerCapture.captureEvidence(field()).selectorHints);
+  assert.deepEqual(snapshot.domEvidence, scannerCapture.captureEvidence(field()).domEvidence);
+  assert.equal(snapshot.domEvidence.control.tag, 'input');
+  assert.equal(snapshot.domEvidence.ancestors.length, 1);
+});
+
 test('one-pass-only fields and meaningful DOM differences remain unresolved', () => {
   const first = field();
   const second = field({
