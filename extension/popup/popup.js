@@ -2683,8 +2683,15 @@ async function loadCurrentTab({ preferCache = false, allowExtract = true } = {})
       if (saved) {
         loadExistingJob(saved, { silent: true });
         renderCandidates();
+        if (allowExtract && hasMissingJobDetails() && isExtractablePageUrl(currentTabUrl)) {
+          await extractFromPage(tab.id, currentTabUrl, { onlyMissing: true });
+        }
         return;
       }
+    }
+
+    if (existingJobId && allowExtract && hasMissingJobDetails() && isExtractablePageUrl(currentTabUrl)) {
+      await extractFromPage(tab.id, currentTabUrl, { onlyMissing: true });
     }
 
     if (!existingJobId) {
@@ -2698,7 +2705,7 @@ async function loadCurrentTab({ preferCache = false, allowExtract = true } = {})
 
       if (isExtractablePageUrl(currentTabUrl)) {
         const applied = await applyDetectedJobForTab(tab.id, currentTabUrl, { allowExtract, silent: true });
-        if (!applied) {
+        if (!applied && allowExtract) {
           await extractFromPage(tab.id, currentTabUrl, { silent: true });
         }
       }
@@ -2774,6 +2781,7 @@ async function applyDetectedJobForTab(tabId, pageUrl, { allowExtract = true, sil
       onJobDetected();
       return true;
     }
+    if (allowExtract) return false;
     if (!silent) {
       showAlert('main-alert', 'Could not confidently detect the job details. Review the fields and enter or correct them before saving.', 'warn');
     }
@@ -2837,7 +2845,7 @@ async function fetchJobByUrl(url) {
   }
 }
 
-async function extractFromPage(tabId, pageUrl, { silent = false } = {}) {
+async function extractFromPage(tabId, pageUrl, { silent = false, onlyMissing = false } = {}) {
   if (!isExtractablePageUrl(pageUrl)) {
     if (!silent) showAlert('main-alert', restrictedPageMessage(pageUrl), 'info');
     return;
@@ -2855,6 +2863,26 @@ async function extractFromPage(tabId, pageUrl, { silent = false } = {}) {
       return;
     }
 
+    if (onlyMissing && response?.data && typeof response.data === 'object') {
+      const partial = usablePartialJobDetails(response.data, response.url || pageUrl);
+      const detected = partial.data;
+      const filledFields = populateMissingJobDetails(detected);
+      const hasDetectedDetails = partial.hasDetails;
+      if (!silent) {
+        showAlert(
+          'main-alert',
+          filledFields.length
+            ? `Recovered missing job details (${filledFields.join(', ')}) for this Scanner session.`
+            : hasDetectedDetails
+              ? 'Job details were extracted, but the saved job already has values for the detected fields.'
+              : 'Could not extract additional job details from this page. Check the page or enter the missing details manually.',
+          filledFields.length ? 'success' : hasDetectedDetails ? 'info' : 'warn'
+        );
+      }
+      onJobDetected();
+      return;
+    }
+
     const valid = Boolean(response?.detected);
     if (valid && response?.data) {
       const detected = normalizeDetectedJobData(response.data, response.url || pageUrl);
@@ -2869,8 +2897,16 @@ async function extractFromPage(tabId, pageUrl, { silent = false } = {}) {
       return;
     }
 
+    const partial = usablePartialJobDetails(response?.data, response?.url || pageUrl);
+    if (partial.hasDetails) populateForm(partial.data);
     if (!silent) {
-      showAlert('main-alert', 'Could not confidently detect the job details. Review the fields and enter or correct them before saving.', 'warn');
+      showAlert(
+        'main-alert',
+        partial.hasDetails
+          ? 'Some job details were extracted. Review them and fill any missing fields before saving.'
+          : 'Could not confidently detect the job details. Review the fields and enter or correct them before saving.',
+        'warn'
+      );
     }
     onJobDetected();
   } catch (e) {
@@ -2880,6 +2916,39 @@ async function extractFromPage(tabId, pageUrl, { silent = false } = {}) {
     }
     onJobDetected();
   }
+}
+
+function populateMissingJobDetails(data) {
+  const fields = {
+    title: document.getElementById('f-title'),
+    company: document.getElementById('f-company'),
+    description: document.getElementById('f-desc'),
+    url: document.getElementById('f-url'),
+  };
+  const current = {
+    title: fields.title?.value || '',
+    company: fields.company?.value || '',
+    description: fields.description?.value || '',
+    url: fields.url?.value || '',
+    source: currentSource,
+  };
+  const merged = mergeMissingJobDetails(current, data);
+  const filledFields = [];
+  for (const key of ['title', 'company', 'description', 'url']) {
+    if (fields[key] && !String(current[key] || '').trim() && merged[key]) {
+      fields[key].value = merged[key];
+      filledFields.push(key);
+    }
+  }
+  if (!currentSource && merged.source) currentSource = merged.source;
+  if (filledFields.length) updateJobSummary();
+  return filledFields;
+}
+
+function hasMissingJobDetails() {
+  return ['f-title', 'f-company', 'f-desc'].some((id) => (
+    !String(document.getElementById(id)?.value || '').trim()
+  ));
 }
 
 function populateForm(data) {

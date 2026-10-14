@@ -51,6 +51,49 @@ function normalizeDetectedJobData(data, pageUrl) {
   };
 }
 
+function mergeMissingJobDetails(current, detected) {
+  const merged = { ...current };
+  for (const key of ['title', 'company', 'description', 'url', 'source']) {
+    const currentValue = String(current?.[key] || '').trim();
+    const detectedValue = String(detected?.[key] || '').trim();
+    merged[key] = currentValue ? current[key] : detectedValue;
+  }
+  return merged;
+}
+
+function mergeJobExtractionSamples(previous, next, pageUrl) {
+  const current = normalizeDetectedJobData(previous, pageUrl);
+  const candidate = normalizeDetectedJobData(next, pageUrl);
+  const preferSpecificText = (oldValue, newValue) => {
+    if (!oldValue || (isGenericJobTitle(oldValue) && newValue && !isGenericJobTitle(newValue))) {
+      return newValue || oldValue;
+    }
+    return oldValue;
+  };
+  return {
+    title: preferSpecificText(current.title, candidate.title),
+    company: preferSpecificText(current.company, candidate.company),
+    description: candidate.description.length > current.description.length
+      ? candidate.description
+      : current.description,
+    url: normalizeJobUrl(pageUrl || current.url || candidate.url),
+    source: current.source || candidate.source,
+  };
+}
+
+function usablePartialJobDetails(data, pageUrl) {
+  const normalized = normalizeDetectedJobData(data, pageUrl);
+  const partial = {
+    ...normalized,
+    title: isGenericJobTitle(normalized.title) ? '' : normalized.title,
+    company: isGenericJobTitle(normalized.company) ? '' : normalized.company,
+  };
+  return {
+    data: partial,
+    hasDetails: Boolean(partial.title || partial.company || partial.description.trim()),
+  };
+}
+
 function isValidHttpUrl(url) {
   if (!url || typeof url !== 'string') return false;
   try {
@@ -326,4 +369,12 @@ async function removeDetectedJobForTab(tabId) {
   if (!jobs[key]) return;
   delete jobs[key];
   await chrome.storage.local.set({ [DETECTED_JOBS_STORAGE_KEY]: jobs });
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    mergeJobExtractionSamples,
+    mergeMissingJobDetails,
+    usablePartialJobDetails,
+  };
 }

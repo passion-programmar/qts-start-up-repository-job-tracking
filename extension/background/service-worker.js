@@ -364,12 +364,22 @@ async function extractJobFromTab(tabId) {
         manualOnly: true,
       };
     }
-    const results = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      func: () => (window.__extractJobData ? window.__extractJobData() : null),
-    });
+    let data = null;
+    for (const delay of [0, 300, 600, 900, 1200]) {
+      if (delay) await sleep(delay);
+      const currentTab = await getTab(tab.id);
+      if (!currentTab?.id || currentTab.url !== tab.url) {
+        return { error: 'The page changed while job details were being extracted.', tab: currentTab || tab };
+      }
+      const results = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: () => (window.__extractJobData ? window.__extractJobData() : null),
+      });
+      data = mergeJobExtractionSamples(data, results[0]?.result, tab.url);
+      if (isValidDetectedJob(data, tab.url)) break;
+    }
     return {
-      data: results[0]?.result || null,
+      data,
       url: tab.url,
       title: tab.title,
       tab,
