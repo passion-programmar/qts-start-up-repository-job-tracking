@@ -426,6 +426,13 @@ existing preview frame as the JSON changes.
 
 - The QTS designs have live HTML previews. The matching rendered HTML can be
   sent to the API's headless browser renderer for a PDF.
+- QTS Resume 1 and QTS Resume 3 use typography scaled an additional 3 CSS
+  pixels above their previous sizes, including contact text.
+- All three QTS cover-letter templates use typography scaled an additional
+  3 CSS pixels above their previous sizes.
+- QTS Resume 1 reflows work and education entries into available page space
+  so fixed FlowCV sample-page continuations do not leave stale content or large
+  gaps in the generated preview.
 - Other templates can use the server renderer.
 - The web UI can display generated resume PDF pages on a canvas and preview the
   QTS cover letter before generation.

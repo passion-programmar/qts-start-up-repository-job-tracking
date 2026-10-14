@@ -3611,6 +3611,14 @@ function updateCustomGptButton(taskStatus) {
 function renderCandidates() {
   const list = document.getElementById('cand-list');
   const empty = document.getElementById('cand-empty');
+  if (currentUser?.role === 'manager') {
+    list.classList.add('hidden');
+    empty.classList.add('hidden');
+    document.querySelector('.cand-header')?.classList.add('hidden');
+    scheduleFitPopup();
+    return;
+  }
+
   const filters = getCandidateFilters();
   const filtered = candidates.filter((c) => candidateMatchesFilters(c, filters));
 

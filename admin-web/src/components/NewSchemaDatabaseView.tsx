@@ -345,7 +345,15 @@ export function NewSchemaDatabaseView() {
             </div>
             {loadingRecords ? <LoadingState label="Loading records…" /> : (
               <>
-                <div className="table-scroll">
+                <p className="database-records-scroll-hint">
+                  Scroll horizontally to view all fields.
+                </p>
+                <div
+                  className="table-scroll table-scroll--database"
+                  role="region"
+                  aria-label={`${tableInfo?.label || 'Database'} records`}
+                  tabIndex={0}
+                >
                   <table>
                     <thead>
                       <tr>

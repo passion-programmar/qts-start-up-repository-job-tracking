@@ -2,8 +2,8 @@
 
 ## Status
 
-Implementation is complete on `feature/sb-admin-header`; lint/build and preview
-verification are pending.
+The production header is live. The sidebar user/logout block and repeated header
+wordmark have been removed; logout remains available in the header account menu.
 
 ## Goal
 
@@ -22,14 +22,15 @@ by `admin-web/src/components/PanelLayout.tsx`.
 Update the shared header/top bar used by the Admin, Manager, Account, and Caller
 authenticated panels. The header should:
 
-- Use QTS branding and existing panel logo assets rather than the theme's
-  "Start Bootstrap" brand.
+- Let the existing QTS logo in the sidebar provide branding; do not repeat a
+  QTS wordmark in the header.
 - Keep the existing menu button and sidebar expand/collapse behavior.
 - Present the current page title consistently for every panel role.
 - Preserve the existing API connection indicator.
 - Provide a compact signed-in-user menu showing the current username and role,
   with links/actions wired to existing QTS profile/settings and logout
-  behavior.
+  behavior. Remove the duplicate username/role and Log Out block from the
+  sidebar footer; logout remains available in the account menu.
 - Use responsive styling consistent with QTS's current mobile navigation.
 
 The first implementation should not add an inactive or misleading search
@@ -87,7 +88,7 @@ Scope new styles to the panel header and its controls. Reuse existing QTS
 design tokens, focus styling, and breakpoints where practical. Do not import
 the theme's global styles or alter styles for unrelated pages and components.
 
-Adapt relevant SB Admin ideas—clear brand area, aligned controls, compact
+Adapt relevant SB Admin ideas—sidebar-based branding, aligned controls, compact
 spacing, and a user dropdown—rather than duplicating Bootstrap class names or
 its exact implementation.
 

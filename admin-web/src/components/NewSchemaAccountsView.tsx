@@ -337,6 +337,9 @@ export function NewSchemaAccountsView() {
           dataSource={filteredProfiles}
           loading={loading}
           size="middle"
+          sticky={{
+            getContainer: () => document.querySelector<HTMLElement>('.content') ?? document.documentElement,
+          }}
           scroll={{ x: 760 }}
           pagination={{
             pageSize: 10,

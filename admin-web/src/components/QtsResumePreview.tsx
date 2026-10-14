@@ -198,6 +198,9 @@ function updateFlowCvDocument(document: Document, resume: QtsResumeDocument) {
   if (!firstPage || !secondPage) {
     throw new Error('The saved FlowCV template must contain its first two resume pages.');
   }
+  secondPage.style.display = '';
+  firstPage.removeAttribute('data-qts-last-visible-page');
+  secondPage.removeAttribute('data-qts-last-visible-page');
 
   setText(firstPage.querySelector('.js-fullName'), resume.candidate.fullName);
   setText(firstPage.querySelector('#js-jobTitleEl'), resume.candidate.headline);
@@ -252,7 +255,25 @@ function updateFlowCvDocument(document: Document, resume: QtsResumeDocument) {
     const title = section.title?.toLowerCase() || '';
     return title.includes('experience') || title.includes('work');
   })?.items || [];
-  const educationHeading = secondPage.querySelector<HTMLElement>('#educationHeading');
+  const secondWorkBottomSpace = secondPage.querySelector<HTMLElement>('#workBottomSpace');
+  const secondWorkContainer = secondWorkBottomSpace?.parentElement;
+  const firstWorkContainer = firstPage.querySelector<HTMLElement>('#workHeading')?.parentElement;
+  if (!secondWorkBottomSpace || !secondWorkContainer || !firstWorkContainer) {
+    throw new Error('The saved FlowCV template is missing its work or education layout.');
+  }
+
+  const educationBottomSpace = secondPage.querySelector<HTMLElement>('#educationBottomSpace');
+  secondWorkBottomSpace.style.display = '';
+  if (educationBottomSpace) educationBottomSpace.style.display = '';
+  const educationHeading = document.querySelector<HTMLElement>('[data-qts-education-heading]')
+    || secondPage.querySelector<HTMLElement>('#educationHeading');
+  if (educationHeading) {
+    educationHeading.setAttribute('data-qts-education-heading', '');
+    secondWorkContainer.insertBefore(educationHeading, educationBottomSpace);
+  }
+  const educationEntries = Array.from(document.querySelectorAll<HTMLElement>('[data-qts-education-entry]'));
+  educationEntries.forEach((entry) => secondWorkContainer.insertBefore(entry, educationBottomSpace));
+
   const nextEducationEntry = educationHeading?.nextElementSibling;
   const educationEntry = document.defaultView && nextEducationEntry instanceof document.defaultView.HTMLElement
     ? nextEducationEntry
@@ -264,41 +285,66 @@ function updateFlowCvDocument(document: Document, resume: QtsResumeDocument) {
       const markedRoot = date.closest<HTMLElement>('[data-qts-work-entry]');
       const prefix = date.id.endsWith('-date') ? date.id.slice(0, -'-date'.length) : '';
       const root = markedRoot || (prefix ? page.querySelector<HTMLElement>(`[id="${prefix}"]`) : null);
-      if (!root || root === educationEntry || root.closest('#educationHeading') || seenWorkRoots.has(root)) return;
+      if (
+        !root
+        || root.matches('[data-qts-education-entry]')
+        || root.closest('#educationHeading')
+        || seenWorkRoots.has(root)
+      ) return;
       seenWorkRoots.add(root);
       markWorkEntry(root);
       workRoots.push(root);
     });
   });
+  workRoots.forEach((root, index) => {
+    if (!root.hasAttribute('data-qts-template-work-order')) {
+      root.setAttribute('data-qts-template-work-order', String(index));
+    }
+  });
+  workRoots.sort((left, right) => (
+    Number(left.getAttribute('data-qts-template-work-order'))
+    - Number(right.getAttribute('data-qts-template-work-order'))
+  ));
+
+  if (!secondPage.hasAttribute('data-qts-flowcv-continuations-cleaned')) {
+    const firstWorkRootOnSecondPage = workRoots.find((root) => secondPage.contains(root));
+    let continuation = firstWorkRootOnSecondPage?.previousElementSibling || null;
+    while (continuation) {
+      const previous = continuation.previousElementSibling;
+      continuation.remove();
+      continuation = previous;
+    }
+    secondPage.setAttribute('data-qts-flowcv-continuations-cleaned', '');
+  }
+
   const lastWorkRoot = workRoots[workRoots.length - 1];
-  const workContainer = lastWorkRoot?.parentElement;
-  while (workRoots.length < workItems.length && lastWorkRoot && workContainer) {
+  while (workRoots.length < workItems.length && lastWorkRoot && secondWorkContainer) {
     const clone = lastWorkRoot.cloneNode(true) as HTMLElement;
     clearIds(clone);
     markWorkEntry(clone);
-    workContainer.appendChild(clone);
+    clone.setAttribute('data-qts-template-work-order', String(workRoots.length));
+    secondWorkContainer.insertBefore(clone, secondWorkBottomSpace);
     workRoots.push(clone);
   }
   workRoots.forEach((root, index) => {
     const item = workItems[index];
     if (item) updateEntry(root, item);
-    else (root as HTMLElement).style.display = 'none';
+    else setVisible(root, false);
   });
 
   const educationItems = resume.sections.find((section) => section.title?.toLowerCase().includes('education'))?.items || [];
   if (educationEntry) {
     markWorkEntry(educationEntry);
     educationEntry.setAttribute('data-qts-education-entry', '');
-    const existing = [educationEntry, ...Array.from(secondPage.querySelectorAll<HTMLElement>('[data-qts-education-entry]'))
-      .filter((entry) => entry !== educationEntry)];
+    const existing = Array.from(document.querySelectorAll<HTMLElement>('[data-qts-education-entry]'));
     const prototype = existing[0];
-    const container = prototype.parentElement;
+    const container = secondWorkContainer;
     while (existing.length < educationItems.length && container) {
       const clone = prototype.cloneNode(true) as HTMLElement;
       clearIds(clone);
       markWorkEntry(clone);
       clone.setAttribute('data-qts-education-entry', '');
-      container.appendChild(clone);
+      container.insertBefore(clone, educationBottomSpace);
       existing.push(clone);
     }
     existing.forEach((entry, index) => {
@@ -306,6 +352,40 @@ function updateFlowCvDocument(document: Document, resume: QtsResumeDocument) {
       if (item) updateEntry(entry, item);
       else setVisible(entry, false);
     });
+  }
+
+  const activeWorkRoots = workRoots.slice(0, workItems.length);
+  activeWorkRoots.forEach((root) => firstWorkContainer.append(root));
+  const pageBottom = firstPage.getBoundingClientRect().bottom
+    - Number.parseFloat(getComputedStyle(firstPage).paddingBottom || '0');
+  let pageTwoHasWork = false;
+  let pageTwoStarted = false;
+  activeWorkRoots.forEach((root) => {
+    if (pageTwoStarted || root.getBoundingClientRect().bottom > pageBottom) {
+      secondWorkContainer.insertBefore(root, secondWorkBottomSpace);
+      pageTwoStarted = true;
+      pageTwoHasWork = true;
+    }
+  });
+
+  const activeEducationEntries = educationItems.length
+    ? Array.from(document.querySelectorAll<HTMLElement>('[data-qts-education-entry]')).slice(0, educationItems.length)
+    : [];
+  if (!pageTwoHasWork && educationHeading) {
+    firstWorkContainer.append(educationHeading, ...activeEducationEntries);
+    const lastEducationBlock = activeEducationEntries[activeEducationEntries.length - 1] || educationHeading;
+    if (lastEducationBlock.getBoundingClientRect().bottom <= pageBottom) {
+      secondWorkBottomSpace.style.display = 'none';
+      if (educationBottomSpace) educationBottomSpace.style.display = 'none';
+      secondPage.style.display = 'none';
+      firstPage.setAttribute('data-qts-last-visible-page', 'true');
+    } else {
+      secondWorkContainer.insertBefore(educationHeading, educationBottomSpace);
+      activeEducationEntries.forEach((entry) => secondWorkContainer.insertBefore(entry, educationBottomSpace));
+      secondPage.setAttribute('data-qts-last-visible-page', 'true');
+    }
+  } else {
+    secondPage.setAttribute('data-qts-last-visible-page', 'true');
   }
 
   pages.slice(2).forEach((page) => page.remove());
@@ -349,6 +429,22 @@ function makeDocument(
           .resumePage {
             margin-bottom: 32px !important;
           }
+          .resumePage *:not(#resumeHeaderId):not(#resumeHeaderId *) {
+            font-size: 15.35pt !important;
+          }
+          #resumeHeaderId .js-fullName {
+            font-size: 32.35pt !important;
+          }
+          #resumeHeaderId .js-jobTitle {
+            font-size: 20.75pt !important;
+          }
+          #resumeHeaderId [id^="detailItem-"],
+          #resumeHeaderId [id^="detailItem-"] * {
+            font-size: 14.25pt !important;
+          }
+          .resumePage [id$="-section-heading"] {
+            font-size: 18.35pt !important;
+          }
           @page { size: letter portrait; margin: 0; }
           @media print {
             *, *::before, *::after {
@@ -373,6 +469,10 @@ function makeDocument(
               page-break-after: always;
             }
             .resumePage:last-child {
+              break-after: auto;
+              page-break-after: auto;
+            }
+            .resumePage[data-qts-last-visible-page="true"] {
               break-after: auto;
               page-break-after: auto;
             }
