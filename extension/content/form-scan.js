@@ -39,6 +39,10 @@
   function isVisuallyHiddenInput(el) {
     if (!el) return false;
     const type = cleanText(el.type || '').toLowerCase();
+    const role = cleanText(el.getAttribute('role')).toLowerCase();
+    if (el.tagName.toLowerCase() !== 'input' && !['checkbox', 'radio', 'switch'].includes(role)) {
+      return false;
+    }
     if (type === 'file' || type === 'checkbox' || type === 'radio') return true;
     const style = window.getComputedStyle(el);
     if (style.position === 'absolute' && (Number(style.width) <= 1 || Number(style.height) <= 1)) return true;
