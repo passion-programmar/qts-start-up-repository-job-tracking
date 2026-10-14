@@ -20,6 +20,18 @@
     return String(value || '').replace(/\s+/g, ' ').trim();
   }
 
+  function getReadableText(node) {
+    if (!node) return '';
+    const clone = node.cloneNode(true);
+    const excludedTextSelector = 'svg, script, style, [aria-hidden="true"]';
+    if (clone.matches?.(excludedTextSelector)) return '';
+    clone.querySelectorAll(excludedTextSelector).forEach((child) => child.remove());
+    return cleanText(clone.textContent)
+      .replace(/SVGs?\s+not supported by this browser\.?/gi, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
   function isInApplicationDialog(el) {
     return Boolean(el?.closest('[role="dialog"], [aria-modal="true"], dialog, [class*="modal" i], [class*="Modal" i]'));
   }
@@ -41,6 +53,12 @@
     if (HIDDEN_STYLE.includes(style.display) || style.visibility === 'hidden') return false;
 
     const fieldType = inferFieldType(el);
+    const isAccessibilityHidden = el.getAttribute('aria-hidden') === 'true'
+      || Boolean(el.closest('[aria-hidden="true"]'));
+    const isCustomControlInput = ['file', 'checkbox', 'radio', 'switch'].includes(fieldType);
+    if (isAccessibilityHidden && !isCustomControlInput) {
+      return false;
+    }
     if (fieldType === 'file' || fieldType === 'checkbox' || fieldType === 'radio' || fieldType === 'switch') {
       if (isInApplicationDialog(el) || isVisuallyHiddenInput(el)) return true;
     }
@@ -140,10 +158,10 @@
   function getLabelFromFor(el) {
     if (el.id) {
       const label = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
-      if (label) return cleanText(label.textContent);
+      if (label) return getReadableText(label);
     }
     const wrappingLabel = el.closest('label');
-    if (wrappingLabel) return cleanText(wrappingLabel.textContent);
+    if (wrappingLabel) return getReadableText(wrappingLabel);
     return '';
   }
 
@@ -154,14 +172,14 @@
   function getAriaLabelledBy(el) {
     const ids = cleanText(el.getAttribute('aria-labelledby')).split(/\s+/).filter(Boolean);
     if (!ids.length) return '';
-    return cleanText(ids.map((id) => document.getElementById(id)?.textContent || '').join(' '));
+    return cleanText(ids.map((id) => getReadableText(document.getElementById(id))).join(' '));
   }
 
   function getUploadZoneLabel(el) {
     if (inferFieldType(el) !== 'file') return '';
     let node = el.parentElement;
     for (let depth = 0; node && depth < 5; depth += 1) {
-      const text = cleanText(node.textContent);
+      const text = getReadableText(node);
       if (/add document|upload|cv|resume|attach/i.test(text)) {
         return text.slice(0, 180);
       }
@@ -177,8 +195,8 @@
     let node = el.parentElement;
     for (let depth = 0; node && depth < 4; depth += 1) {
       const clone = node.cloneNode(true);
-      clone.querySelectorAll('input, textarea, select, button, script, style, svg').forEach((child) => child.remove());
-      const text = cleanText(clone.textContent);
+      clone.querySelectorAll('input, textarea, select, button').forEach((child) => child.remove());
+      const text = getReadableText(clone);
       if (text.length >= 8) return text.slice(0, 220);
       node = node.parentElement;
     }
@@ -193,18 +211,18 @@
     const fieldset = el.closest('fieldset');
     if (fieldset) {
       const legend = fieldset.querySelector('legend');
-      if (legend) return cleanText(legend.textContent);
+      if (legend) return getReadableText(legend);
     }
 
     const dialog = el.closest('[role="dialog"], dialog, [aria-modal="true"]');
     const heading = dialog?.querySelector('h1, h2, h3, [role="heading"]');
-    if (heading) return cleanText(heading.textContent).slice(0, 120);
+    if (heading) return getReadableText(heading).slice(0, 120);
 
     let node = el.parentElement;
     for (let depth = 0; node && depth < 6; depth += 1) {
       const localHeading = node.querySelector(':scope > h1, :scope > h2, :scope > h3, :scope > h4, :scope > legend, :scope > [role="heading"]');
       if (localHeading && localHeading !== el && !localHeading.contains(el)) {
-        const text = cleanText(localHeading.textContent);
+        const text = getReadableText(localHeading);
         if (text) return text;
       }
       node = node.parentElement;
@@ -659,7 +677,7 @@
         accept: el.accept ?? el.getAttribute('accept') ?? null,
         multiple: Boolean(el.multiple || el.getAttribute('multiple')),
       },
-      group: el.closest('fieldset')?.querySelector('legend') ? cleanText(el.closest('fieldset').querySelector('legend')?.textContent) : null,
+      group: el.closest('fieldset')?.querySelector('legend') ? getReadableText(el.closest('fieldset').querySelector('legend')) : null,
       locale: document.documentElement.lang || navigator.language || null,
     });
   }

@@ -7,6 +7,9 @@ const PROFILE_PATTERNS = [
   { key: 'email', patterns: [/\be[\s-]?mail\b/i, /\bemail[\s_-]?address\b/i] },
   { key: 'phone', patterns: [/\bphone\b/i, /\bmobile\b/i, /\bcell\b/i, /\btelephone\b/i, /\bcontact[\s_-]?number\b/i] },
   { key: 'linkedinUrl', patterns: [/\blinkedin\b/i, /\bprofile[\s_-]?url\b/i, /\bportfolio[\s_-]?url\b/i] },
+  { key: 'address', patterns: [/\baddress\b/i, /\bstreet[\s_-]?address\b/i] },
+  { key: 'city', patterns: [/\bcity\b/i] },
+  { key: 'country', patterns: [/\bcountry\b/i] },
 ];
 
 const SAVED_ANSWER_PATTERNS = [
@@ -56,6 +59,9 @@ function inferFromAutocomplete(autocomplete) {
   if (value === 'name') return { category: 'candidate_profile', profileKey: 'name' };
   if (value.includes('email')) return { category: 'candidate_profile', profileKey: 'email' };
   if (value.includes('tel')) return { category: 'candidate_profile', profileKey: 'phone' };
+  if (value.includes('street-address')) return { category: 'candidate_profile', profileKey: 'address' };
+  if (value.includes('address-level2')) return { category: 'candidate_profile', profileKey: 'city' };
+  if (value.includes('country-name')) return { category: 'candidate_profile', profileKey: 'country' };
   if (value === 'url') return { category: 'candidate_profile', profileKey: 'linkedinUrl' };
   return null;
 }
@@ -77,6 +83,9 @@ function inferFromNameAttr(nameAttr, fieldType) {
   if (/\bemail\b/.test(value)) return { category: 'candidate_profile', profileKey: 'email' };
   if (/\b(phone|mobile|tel)\b/.test(value)) return { category: 'candidate_profile', profileKey: 'phone' };
   if (/\blinkedin\b/.test(value)) return { category: 'candidate_profile', profileKey: 'linkedinUrl' };
+  if (/\b(address|street)\b/.test(value)) return { category: 'candidate_profile', profileKey: 'address' };
+  if (/\bcity\b/.test(value)) return { category: 'candidate_profile', profileKey: 'city' };
+  if (/\bcountry\b/.test(value)) return { category: 'candidate_profile', profileKey: 'country' };
   return null;
 }
 

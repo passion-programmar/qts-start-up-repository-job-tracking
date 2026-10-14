@@ -585,7 +585,6 @@ function scannerTaskField(field, documentSlot) {
     required: Boolean(field.required),
     options: Array.isArray(field.options) ? field.options.map((item) => String(item).slice(0, 500)).slice(0, 100) : [],
     placeholder: String(field.placeholder || '').slice(0, 1000) || undefined,
-    currentValue: String(field.currentValue || '').slice(0, 5000) || undefined,
     manualReview: true,
   };
 }
@@ -739,7 +738,13 @@ async function runManagerScannerGptTask({ job, account, tabId, generatedFields, 
     if (!pageResponse.success) throw new Error(pageResponse.message || 'Could not add the scanned fields to the GPT task.');
 
     await chrome.storage.local.set({ qtsJobSourceTabId: tabId });
-    await notifyScannerStage(tabId, statusElement, 'Sending the confirmed fields to the assigned Custom GPT…');
+    await notifyScannerStage(
+      tabId,
+      statusElement,
+      `Sending ${generatedFields.length} answer field(s) and ${documentFields.length} document request(s) to the assigned Custom GPT (task ${taskId}). The page context is saved; the GPT can also retrieve this task’s job description, Account profile/resume, and Manager answers. Existing page-field contents are not sent.`,
+      'info',
+      12000
+    );
     const handoff = await sendGptTaskToBackground({
       taskId,
       jobTabId: tabId,
