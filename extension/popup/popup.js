@@ -243,6 +243,10 @@ async function scanAndSaveSiteDiscoveryStep() {
         saveStatus.classList.remove('hidden');
         saveStatus.textContent = error?.message || 'Could not prepare Scanner.';
       }
+      if (targetTabId) {
+        notifyScannerStage(targetTabId, saveStatus, error?.message || 'Could not prepare Scanner.', 'error', 12000)
+          .catch((noticeError) => console.warn('Could not display the Scanner setup error on the job page:', noticeError));
+      }
     }
   } finally {
     if (button) button.disabled = false;
@@ -360,7 +364,7 @@ async function verifyManagerScannerCapture(tabId, fields, rules, statusElement) 
     return { fields, outcomes: [], evidenceFields: [], verifiedSecondCapture: false };
   }
 
-  if (statusElement) statusElement.textContent = 'Verifying this step with a second settled DOM capture…';
+  await notifyScannerStage(tabId, statusElement, 'New or changed fields found. Verifying this step with a second read-only capture…');
   const verification = await chrome.runtime.sendMessage({
     type: 'CAPTURE_APPLICATION_STEP',
     tabId,
@@ -460,9 +464,10 @@ async function prepareManagerScannerJob(tabId, statusElement) {
   showJobSection();
   const scanStatus = document.getElementById('scanner-save-status');
   scanStatus?.classList.remove('hidden');
-  if (scanStatus) scanStatus.textContent = 'Loading job details using the Get JD flow…';
-  if (statusElement) statusElement.textContent = 'Loading job details using the Get JD flow…';
+  await notifyScannerStage(tabId, statusElement, 'Loading job details using Get JD…');
+  if (scanStatus) scanStatus.textContent = 'Loading job details using Get JD…';
   await loadCurrentTab({ preferCache: false, allowExtract: true });
+  await notifyScannerStage(tabId, statusElement, 'Job details loaded. Choose the Account for this application.');
 
   const account = selectScannerAccountForJob();
   scannerSelectedAccountId = Number(account.id);
@@ -486,6 +491,11 @@ async function prepareManagerScannerJob(tabId, statusElement) {
   if (statusElement) {
     statusElement.textContent = 'Review the job details and Account assignment below, then click Save Job & Scan.';
   }
+  await notifyScannerStage(
+    tabId,
+    statusElement,
+    'Review the job details and selected Account in the extension, then choose Save Job & Scan.'
+  );
 }
 
 async function saveJobAndStartScanner() {
@@ -496,8 +506,13 @@ async function saveJobAndStartScanner() {
   }
   if (button) button.disabled = true;
   try {
+    await notifyScannerStage(targetTabId, status, 'Saving the reviewed job details…');
     const saveResult = await doSave();
-    if (!saveResult?.success || !saveResult.job) return;
+    if (!saveResult?.success || !saveResult.job) {
+      await notifyScannerStage(targetTabId, status, 'Job was not saved. Scanner did not start.', 'warn');
+      return;
+    }
+    await notifyScannerStage(targetTabId, status, 'Job saved. Checking the selected Account’s application row…');
 
     const assignedRow = (saveResult.job.selected_accounts || []).find((item) => (
       Number(item.account_user_id) === scannerSelectedAccountId
@@ -520,6 +535,15 @@ async function saveJobAndStartScanner() {
         || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(applyRunId)) {
         throw new Error('This Account row is already processing without a saved Scanner run. Resolve the active run before starting Scanner.');
       }
+      const confirmed = await confirmOnJobPage(
+        targetTabId,
+        'You have moved to another application step. Scan only the currently visible step? Scanner will not click Next, change pages, or submit the application.',
+        'Confirm next step scan'
+      );
+      if (!confirmed) {
+        await notifyScannerStage(targetTabId, status, 'Step scan cancelled. No fields were scanned or filled.', 'warn');
+        return;
+      }
     } else {
       throw new Error(`The selected Account’s job row is ${assignedRow.status}. Set it back to todo before starting Scanner.`);
     }
@@ -539,7 +563,11 @@ async function saveJobAndStartScanner() {
     const job = { ...saveResult.job, id: jobId, status: 'processing' };
     scannerSetupPending = false;
     if (button) button.classList.add('hidden');
-    if (status) status.textContent = 'Job saved and Account row started. Scanning the current application step…';
+    await notifyScannerStage(
+      targetTabId,
+      status,
+      'Account application row is ready. Scanning only the visible step; Scanner will not navigate or submit.'
+    );
     await runManagerScanner(targetTabId, status, account, job);
   } finally {
     if (button && scannerSetupPending) button.disabled = false;
@@ -620,9 +648,10 @@ async function reviewScannerDocument(documentFile, documentType, account, fieldQ
   }
 }
 
-async function getScannerGptTaskResult(taskId, statusElement) {
+async function getScannerGptTaskResult(taskId, statusElement, tabId) {
   const startedAt = Date.now();
   const timeoutMs = 180000;
+  let lastProgressNoticeAt = 0;
   while (Date.now() - startedAt < timeoutMs) {
     const response = await window.api.getManagerGptTaskStatus(taskId);
     if (!response.success) throw new Error(response.message || 'Could not read the Scanner GPT task status.');
@@ -635,7 +664,16 @@ async function getScannerGptTaskResult(taskId, statusElement) {
       || Boolean(packageData.documents?.resume)
       || Boolean(packageData.documents?.coverLetter);
     if (response.status === 'ready' || submitted) return response;
-    if (statusElement) statusElement.textContent = 'Waiting for Custom GPT to prepare answers and requested documents…';
+    if (Date.now() - lastProgressNoticeAt >= 15000) {
+      await notifyScannerStage(
+        tabId,
+        statusElement,
+        'Waiting for Custom GPT to prepare reviewed answers and requested documents…',
+        'info',
+        18000
+      );
+      lastProgressNoticeAt = Date.now();
+    }
     await new Promise((resolve) => setTimeout(resolve, 2500));
   }
   throw new Error('Timed out waiting for Custom GPT. Check the assigned Custom GPT tab and try again.');
@@ -650,6 +688,7 @@ async function runManagerScannerGptTask({ job, account, tabId, generatedFields, 
   if (!window.__qtsCustomGpt?.buildPrompt) throw new Error('Custom GPT helper is not loaded.');
   requireManagerCustomGpt();
 
+  await notifyScannerStage(tabId, statusElement, 'Preparing a job-specific GPT task for the selected application…');
   const createResponse = await window.api.createManagerGptTaskForJob(job.id, {
     sourcePlatform: job.application_type,
     jobDescription: document.getElementById('f-desc')?.value?.trim() || undefined,
@@ -676,7 +715,7 @@ async function runManagerScannerGptTask({ job, account, tabId, generatedFields, 
     if (!samePage) {
       throw new Error('This job already has an active GPT request for a different page. Finish or review it before starting Scanner on another page.');
     }
-    result = await getScannerGptTaskResult(taskId, statusElement);
+    result = await getScannerGptTaskResult(taskId, statusElement, tabId);
   } else if (currentTask.status === 'ready' && samePage) {
     result = currentTask;
   } else if (['waiting_for_page', 'ready'].includes(currentTask.status)) {
@@ -700,7 +739,7 @@ async function runManagerScannerGptTask({ job, account, tabId, generatedFields, 
     if (!pageResponse.success) throw new Error(pageResponse.message || 'Could not add the scanned fields to the GPT task.');
 
     await chrome.storage.local.set({ qtsJobSourceTabId: tabId });
-    if (statusElement) statusElement.textContent = 'Sending this job’s confirmed Scanner fields to the assigned Custom GPT…';
+    await notifyScannerStage(tabId, statusElement, 'Sending the confirmed fields to the assigned Custom GPT…');
     const handoff = await sendGptTaskToBackground({
       taskId,
       jobTabId: tabId,
@@ -709,11 +748,14 @@ async function runManagerScannerGptTask({ job, account, tabId, generatedFields, 
     if (!handoff?.ok || handoff?.handoff?.sent === false) {
       throw new Error(handoff?.handoff?.error || handoff?.error || 'Custom GPT handoff failed.');
     }
-    result = await getScannerGptTaskResult(taskId, statusElement);
+    result = await getScannerGptTaskResult(taskId, statusElement, tabId);
   } else {
     throw new Error(`The selected job’s GPT task is ${currentTask.status}; Scanner will not overwrite an active or closed task.`);
   }
 
+  if (generatedFields.length || documentFields.length) {
+    await notifyScannerStage(tabId, statusElement, 'Custom GPT returned its package. Review generated answers and documents before any use.');
+  }
   const answers = new Map(
     (Array.isArray(result.package?.answers) ? result.package.answers : [])
       .map((answer) => [String(answer.stableFieldId), String(answer.answer || '')])
@@ -789,6 +831,7 @@ async function runManagerScannerGptTask({ job, account, tabId, generatedFields, 
 }
 
 async function runManagerScanner(tabId, statusElement, account, job) {
+  await notifyScannerStage(tabId, statusElement, 'Reading the current application step. No page controls will be activated.');
   const response = await chrome.runtime.sendMessage({
     type: 'DISCOVER_APPLICATION_FORM',
     tabId,
@@ -798,16 +841,23 @@ async function runManagerScanner(tabId, statusElement, account, job) {
     readOnly: true,
   });
   if (!response?.success) throw new Error(response?.error || 'The current application step could not be scanned.');
+  const rawDiscoveredFields = Array.isArray(response.scan?.fields) ? response.scan.fields : [];
+  await notifyScannerStage(
+    tabId,
+    statusElement,
+    `Detected ${rawDiscoveredFields.length} field(s) on this step. Checking saved Manager decisions…`
+  );
 
   const templateId = Number(response.templateSave?.template?.id);
   if (!response.templateSave?.success || !Number.isSafeInteger(templateId) || templateId <= 0) {
     throw new Error(response.templateSave?.message || 'The site template could not be saved; no answer rules were changed.');
   }
 
+  await notifyScannerStage(tabId, statusElement, 'Loading this Manager’s saved field strategies…');
   const rulesResponse = await window.api.getManagerScannerRules(templateId);
   if (!rulesResponse.success) throw new Error(rulesResponse.message || 'Could not load this Manager’s Scanner rules.');
   const rules = Array.isArray(rulesResponse.rules) ? rulesResponse.rules : [];
-  const rawDiscoveredFields = Array.isArray(response.scan?.fields) ? response.scan.fields : [];
+  await notifyScannerStage(tabId, statusElement, `Loaded ${rules.length} saved field decision(s). Checking capture consistency…`);
   const scannerStepKey = window.__qtsScannerCapture.deriveStepKey(rawDiscoveredFields);
   const genericCheckpointFields = response.templateSave?.checkpoint?.steps
     ?.find((step) => step.stepId === response.templateSave?.checkpoint?.currentStepId)?.fields || [];
@@ -821,6 +871,7 @@ async function runManagerScanner(tabId, statusElement, account, job) {
   const captureVerification = await verifyManagerScannerCapture(tabId, discoveredFields, rules, statusElement);
   const fields = captureVerification.fields;
   if (captureVerification.verifiedSecondCapture) {
+    await notifyScannerStage(tabId, statusElement, 'Saving the second-capture evidence for this step…');
     const evidenceSave = await chrome.runtime.sendMessage({
       type: 'SAVE_SCANNER_STEP_EVIDENCE',
       tabId,
@@ -855,6 +906,11 @@ async function runManagerScanner(tabId, statusElement, account, job) {
     throw new Error('No fields were consistently detected or confirmed on this step. Wait for the page to settle and scan again.');
   }
 
+  await notifyScannerStage(
+    tabId,
+    statusElement,
+    `Reviewing ${fields.length} field(s). Scanner will ask before using new strategies or replacing existing values.`
+  );
   const profileChoices = scannerAccountProfileChoices(account);
   const profileLabel = account.name || `Account ${account.u_id}`;
   const groupMap = new Map();
@@ -1044,6 +1100,15 @@ async function runManagerScanner(tabId, statusElement, account, job) {
     outcomes.push(`${question}: queued from ${strategy === 'profile' ? 'Account profile' : 'reusable answer'}.`);
   }
 
+  if (generatedFields.length || documentFields.length) {
+    await notifyScannerStage(
+      tabId,
+      statusElement,
+      `Preparing reviewed job-specific assistance for ${generatedFields.length} generated answer(s) and ${documentFields.length} document field(s)…`,
+      'info',
+      12000
+    );
+  }
   const gptResult = await runManagerScannerGptTask({
     job,
     account,
@@ -1057,6 +1122,7 @@ async function runManagerScanner(tabId, statusElement, account, job) {
 
   let fillSummary = 'No fields were filled.';
   if (fillFields.length) {
+    await notifyScannerStage(tabId, statusElement, `Applying ${fillFields.length} Manager-approved value(s) to this visible step…`);
     const fillResponse = await chrome.runtime.sendMessage({
       type: 'FILL_APPLICATION_FORM',
       tabId,
@@ -1078,6 +1144,13 @@ async function runManagerScanner(tabId, statusElement, account, job) {
       throw new Error(acknowledgeResponse.message || 'The reviewed GPT page could not be acknowledged for this job.');
     }
   }
+  await notifyScannerStage(
+    tabId,
+    statusElement,
+    `Current step complete. ${fillSummary} Scanner did not navigate or submit. Manually advance, then choose Scan current step to continue.`,
+    'success',
+    10000
+  );
   if (statusElement) {
     statusElement.textContent = `Job: ${job.title || 'Untitled job'} — ${profileLabel}. ${fillSummary} ${outcomes.join(' ')}`;
   }
@@ -1367,15 +1440,20 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   document.getElementById('btn-save-and-scan')?.addEventListener('click', () => {
     saveJobAndStartScanner().catch((error) => {
+      const errorMessage = error?.message || 'Could not save and start Scanner.';
       const status = document.getElementById('site-discovery-status');
-      if (status) status.textContent = error?.message || 'Could not save and start Scanner.';
+      if (status) status.textContent = errorMessage;
       const saveStatus = document.getElementById('scanner-save-status');
       if (saveStatus) {
         saveStatus.classList.remove('hidden');
-        saveStatus.textContent = error?.message || 'Could not save and start Scanner.';
+        saveStatus.textContent = errorMessage;
       }
       const button = document.getElementById('btn-save-and-scan');
       if (button && scannerSetupPending) button.disabled = false;
+      if (targetTabId) {
+        notifyScannerStage(targetTabId, saveStatus, errorMessage, 'error', 12000)
+          .catch((noticeError) => console.warn('Could not display the Scanner error on the job page:', noticeError));
+      }
     });
   });
   document.getElementById('btn-custom-apply').addEventListener('click', async () => {
@@ -1689,6 +1767,15 @@ async function showPageNotice(tabId, message, toastType = 'info', options = {}) 
   }
 }
 
+async function notifyScannerStage(tabId, statusElement, message, toastType = 'info', durationMs = 6000) {
+  if (statusElement) statusElement.textContent = message;
+  await clearPageNotice(tabId, 'scanner-progress');
+  await showPageNotice(tabId, message, toastType, {
+    durationMs,
+    alertId: 'scanner-progress',
+  });
+}
+
 async function clearPageNotice(tabId, alertId) {
   await ensurePageNotificationHost(tabId);
   const response = await chrome.tabs.sendMessage(tabId, {
@@ -1700,11 +1787,11 @@ async function clearPageNotice(tabId, alertId) {
   }
 }
 
-async function confirmOnJobPage(tabId, message) {
+async function confirmOnJobPage(tabId, message, title = 'Job already saved') {
   await ensurePageNotificationHost(tabId);
   const response = await chrome.tabs.sendMessage(tabId, {
     type: 'QTS_CONFIRM_PAGE',
-    title: 'Job already saved',
+    title,
     message,
   });
   if (!response?.ok) {

@@ -82,9 +82,10 @@ async function request(
   route: string,
   token?: string,
   body?: Record<string, unknown>,
+  method?: string,
 ): Promise<Response> {
   return fetch(`${serverUrl}${route}`, {
-    method: body ? 'POST' : 'GET',
+    method: method || (body ? 'POST' : 'GET'),
     headers: {
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(body ? { 'Content-Type': 'application/json' } : {}),
@@ -164,4 +165,54 @@ it('authorizes reviewers and persists failed and successful template validation 
   assert.equal(promoted.template.promotedBy, reviewerId);
   assert.ok(promoted.template.promotedAt);
   assert.equal(promoted.template.validationReport.passed, true);
+});
+
+it('allows only Super users to delete a template and returns not found for repeated deletion', async () => {
+  const { queryOne } = await import('../../database/connection');
+  const createResponse = await request('/from-discovery', reviewerToken, {
+    siteKey: `template-delete-test-${Date.now()}`,
+    platform: 'test-ats',
+  });
+  assert.equal(createResponse.status, 201);
+  const created = await createResponse.json() as { template: { id: number } };
+
+  const unauthenticated = await request(`/${created.template.id}`, undefined, undefined, 'DELETE');
+  assert.equal(unauthenticated.status, 401);
+  const forbidden = await request(`/${created.template.id}`, adminToken, undefined, 'DELETE');
+  assert.equal(forbidden.status, 403);
+  const invalid = await request('/not-a-number', reviewerToken, undefined, 'DELETE');
+  assert.equal(invalid.status, 400);
+
+  await queryOne(
+    `INSERT INTO manager_application_template_rules (
+       manager_user_id, template_id, field_id, semantic_key, question, strategy
+     ) VALUES ($1, $2, 'test-field', 'test-semantic', 'Test question', 'manual')
+     RETURNING rule_id`,
+    [reviewerId, created.template.id]
+  );
+  await queryOne(
+    `INSERT INTO application_field_semantics (
+       stable_field_id, inferred_semantic_group, source_template_id
+     ) VALUES ('template-delete-test-field', 'test-group', $1)
+     RETURNING id`,
+    [created.template.id]
+  );
+  const deleted = await request(`/${created.template.id}`, reviewerToken, undefined, 'DELETE');
+  assert.equal(deleted.status, 200);
+  assert.equal((await deleted.json() as { success: boolean }).success, true);
+  const rulesRemaining = await queryOne<{ count: number }>(
+    'SELECT COUNT(*)::int AS count FROM manager_application_template_rules WHERE template_id = $1',
+    [created.template.id]
+  );
+  assert.equal(Number(rulesRemaining?.count), 0);
+  const retainedSemantics = await queryOne<{ source_template_id: number | null }>(
+    `SELECT source_template_id
+     FROM application_field_semantics
+     WHERE stable_field_id = 'template-delete-test-field'`
+  );
+  assert.ok(retainedSemantics);
+  assert.equal(retainedSemantics.source_template_id, null);
+
+  const missing = await request(`/${created.template.id}`, reviewerToken, undefined, 'DELETE');
+  assert.equal(missing.status, 404);
 });

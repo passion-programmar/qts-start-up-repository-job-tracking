@@ -251,7 +251,7 @@ flowchart TD
     T --> S
     R --> U[Report unresolved/manual fields]
     S --> V[Fill current visible step only]
-    V --> W[Manager may explicitly scan the next visible step]
+    V --> W[Manager manually advances, then confirms scanning the visible step]
     W --> H
 ```
 
@@ -271,6 +271,9 @@ flowchart TD
 6. Workable uses the generic Scanner; there is no Workable-specific form
    handler. The same visible-step, Manager-confirmation, and no-submission
    boundaries apply.
+7. When resuming the selected processing row, the extension asks the Manager
+   to confirm before scanning the currently visible step. Choosing No leaves
+   the step untouched. Scanner never clicks Next or Continue.
 
 ### Field observation and fill boundaries
 
@@ -290,6 +293,9 @@ flowchart TD
 - Uncertain fields and manual-only fields remain untouched.
 - Scanner operates on the current visible step. It does not click Next,
   navigate, or submit the final application.
+- Scanner reports progress on the page as it saves, claims, observes, verifies,
+  reviews, and fills. The Manager must manually advance and confirm before a
+  later visible step is scanned.
 
 ### Answer strategies
 
@@ -383,7 +389,10 @@ validation evidence. Promotion requires multiple distinct observed steps,
 validated stable field mappings and explicit confirmations for authorized test
 conditions, manual review, and verification/security review. The endpoint
 compares submitted evidence to stored checkpoints; it does not independently
-rescan a live ATS site. Failed criteria leave a template inactive.
+rescan a live ATS site. Super can delete an individual template after
+confirmation; this also removes Manager-specific field rules linked to that
+template and clears its provenance pointer from retained shared field
+semantics. Failed validation criteria leave a template inactive.
 
 ## 9. Feature category: learning subsystem (separate from Scanner rules)
 

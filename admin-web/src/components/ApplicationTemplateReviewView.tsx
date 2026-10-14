@@ -96,6 +96,7 @@ export function ApplicationTemplateReviewView() {
   const [verificationReviewConfirmed, setVerificationReviewConfirmed] = useState(false);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -189,6 +190,37 @@ export function ApplicationTemplateReviewView() {
     setSubmitting(false);
   }
 
+  async function deleteTemplate(template: ApplicationTemplate) {
+    const confirmed = window.confirm(
+      `Delete "${template.siteKey}" (${template.host || template.platform || 'unknown site'})?\n\nThis permanently removes the saved template and its Manager-specific field rules. This cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    setDeletingId(template.id);
+    setError(null);
+    setMessage(null);
+    const result = await api<TemplateListResponse>(
+      'DELETE',
+      `/api/application-templates/${template.id}`
+    );
+    if (!result.success) {
+      setError(result.message || 'Could not delete the application template.');
+      setDeletingId(null);
+      return;
+    }
+
+    const remaining = templates.filter((item) => item.id !== template.id);
+    setTemplates(remaining);
+    setSelectedId((current) => current === template.id ? remaining[0]?.id ?? null : current);
+    setSelectedSignatures([]);
+    setValidatedFieldIds([]);
+    setAuthorizedTestEnvironmentConfirmed(false);
+    setManualReviewConfirmed(false);
+    setVerificationReviewConfirmed(false);
+    setMessage(result.message || `Deleted template "${template.siteKey}".`);
+    setDeletingId(null);
+  }
+
   if (user?.role !== 'super') {
     return <div className="alert alert-error">Super access is required to review application templates.</div>;
   }
@@ -257,6 +289,14 @@ export function ApplicationTemplateReviewView() {
                 <span className={`template-review__status template-review__status--${selectedTemplate.status}`}>
                   {selectedTemplate.status}
                 </span>
+                <button
+                  className="btn btn-danger btn-sm"
+                  type="button"
+                  disabled={loading || deletingId !== null || submitting}
+                  onClick={() => { void deleteTemplate(selectedTemplate); }}
+                >
+                  {deletingId === selectedTemplate.id ? 'Deleting…' : 'Delete template'}
+                </button>
               </div>
 
               <div className="alert alert-info" role="note">

@@ -1,4 +1,4 @@
-import { queryAll, queryOne } from '../database/connection';
+import { queryAll, queryOne, withTransaction } from '../database/connection';
 import {
   buildApplicationTemplateValidationReport,
   type ApplicationTemplateValidationEvidence,
@@ -266,6 +266,26 @@ export async function getApplicationTemplate(id: number): Promise<ApplicationTem
     [id]
   );
   return row ? mapTemplateRow(row) : null;
+}
+
+export async function deleteApplicationTemplate(id: number): Promise<boolean> {
+  return withTransaction(async (client) => {
+    const deleted = await client.query(
+      `DELETE FROM application_site_templates
+       WHERE template_id = $1
+       RETURNING template_id`,
+      [id]
+    );
+    if (!deleted.rows.length) return false;
+
+    await client.query(
+      `UPDATE application_field_semantics
+       SET source_template_id = NULL, updated_at = NOW()
+       WHERE source_template_id = $1`,
+      [id]
+    );
+    return true;
+  });
 }
 
 export async function getApplicationTemplateBySiteKey(siteKey: string): Promise<ApplicationTemplateRecord | null> {

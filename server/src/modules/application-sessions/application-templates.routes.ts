@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { AuthRequest, requireAuth, requireSuper } from '../../middleware/auth';
 import {
   createApplicationTemplateDraftFromDiscovery,
+  deleteApplicationTemplate,
   findReusableApplicationTemplateForSite,
   getApplicationTemplate,
   getApplicationTemplateBySiteKey,
@@ -207,6 +208,29 @@ router.post('/:id/validate', requireSuper, async (req: AuthRequest, res: Respons
       message: result.report.passed
         ? 'Validation passed; template promoted to active.'
         : 'Validation evidence did not meet the promotion criteria. Template remains inactive.',
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.delete('/:id', requireSuper, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isSafeInteger(id) || id <= 0) {
+      res.status(400).json({ success: false, message: 'Invalid template id.' });
+      return;
+    }
+
+    const deleted = await deleteApplicationTemplate(id);
+    if (!deleted) {
+      res.status(404).json({ success: false, message: 'Application template not found.' });
+      return;
+    }
+
+    res.json({
+      success: true,
+      message: 'Application template and its Manager-specific field rules were deleted. Shared field semantics were retained.',
     });
   } catch (error) {
     next(error);
