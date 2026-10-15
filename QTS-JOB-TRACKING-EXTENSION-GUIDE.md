@@ -42,8 +42,9 @@ in the QTS database and apply automatically on supported HTTP and HTTPS
 websites for every Manager who signs into the extension. Super controls which
 Managers can add, edit, or delete shared rules from the extension. Existing
 rules saved only in a Chrome profile can be imported into the shared database
-from that Manager's highlights panel. Chrome-restricted pages do not allow
-extension highlighting.
+from that Manager's Text Highlight panel. Assigned Managers open rule
+management with the **Text Highlight** button; it is not shown to other
+Managers. Chrome-restricted pages do not allow extension highlighting.
 
 Super also assigns **Job-site Scanner** access separately from highlight
 management. Managers without Scanner access can still use the extension's

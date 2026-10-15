@@ -268,10 +268,13 @@ async function showPageHighlights() {
   const panel = document.getElementById('page-highlights');
   if (!panel) return;
   if (currentUser?.role !== 'manager' || !managerExtensionFeatures.canManageTextHighlights) {
-    panel.classList.add('hidden');
+    hidePageHighlights();
     return;
   }
   panel.classList.remove('hidden');
+  document.querySelectorAll('.btn-text-highlights').forEach((button) => {
+    button.setAttribute('aria-expanded', 'true');
+  });
   setPageHighlightStatus('Loading shared database rules…');
   try {
     await ensurePageHighlightContext();
@@ -290,6 +293,35 @@ async function showPageHighlights() {
 
 function hidePageHighlights() {
   document.getElementById('page-highlights')?.classList.add('hidden');
+  document.querySelectorAll('.btn-text-highlights').forEach((button) => {
+    button.setAttribute('aria-expanded', 'false');
+  });
+}
+
+async function togglePageHighlights() {
+  const panel = document.getElementById('page-highlights');
+  if (!panel) return;
+  await refreshManagerExtensionFeatures();
+  if (!managerExtensionFeatures.canManageTextHighlights) {
+    hidePageHighlights();
+    const alertId = document.getElementById('job-section')?.classList.contains('hidden')
+      ? 'action-alert'
+      : 'main-alert';
+    showAlert(
+      alertId,
+      managerExtensionFeaturesError || 'Super must assign text highlight management to this Manager account.',
+      'error'
+    );
+    return;
+  }
+  if (panel.classList.contains('hidden')) {
+    await showPageHighlights();
+    if (!panel.classList.contains('hidden')) {
+      panel.scrollIntoView({ block: 'nearest' });
+    }
+    return;
+  }
+  hidePageHighlights();
 }
 
 function confirmGetJobDetails() {
@@ -1601,6 +1633,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
   document.getElementById('btn-login').addEventListener('click', doLogin);
+  document.querySelectorAll('.btn-text-highlights').forEach((button) => {
+    button.addEventListener('click', () => {
+      togglePageHighlights().catch((error) => {
+        setPageHighlightStatus(error.message || 'Could not open text highlight management.', true);
+      });
+    });
+  });
   document.getElementById('page-highlight-form')?.addEventListener('submit', (event) => {
     event.preventDefault();
     const text = document.getElementById('page-highlight-text');
@@ -5067,10 +5106,15 @@ function showLogin() {
 function updateFeatureGatedControls(user) {
   const managerMode = user?.role === 'manager';
   const scannerUnavailable = managerMode && !managerExtensionFeatures.canUseScanner;
+  const canManageHighlights = managerMode && managerExtensionFeatures.canManageTextHighlights;
   const scannerSection = document.getElementById('site-discovery');
   scannerSection?.classList.toggle('hidden', scannerUnavailable);
   const scannerButton = document.getElementById('btn-discover-site-step');
   scannerButton?.classList.toggle('hidden', scannerUnavailable);
+  document.querySelectorAll('.btn-text-highlights').forEach((button) => {
+    button.classList.toggle('hidden', !canManageHighlights);
+  });
+  if (!canManageHighlights) hidePageHighlights();
   const saveAndScanButton = document.getElementById('btn-save-and-scan');
   if (scannerUnavailable) {
     saveAndScanButton?.classList.add('hidden');
@@ -5137,7 +5181,7 @@ async function initializeManagerExtensionFeatures(user) {
 
 async function showActionScreen(user) {
   await initializeManagerExtensionFeatures(user);
-  await showPageHighlights();
+  hidePageHighlights();
   await restoreSelectedAction();
   scannerSetupPending = false;
   scannerSelectedAccountId = null;
@@ -5174,7 +5218,7 @@ function showJobSection() {
   document.getElementById('login-section').classList.add('hidden');
   document.getElementById('action-section').classList.add('hidden');
   document.getElementById('job-section').classList.remove('hidden');
-  showPageHighlights();
+  hidePageHighlights();
   document.getElementById('action-bar').classList.remove('hidden');
   showJobAccountAssignment();
   scheduleFitPopup();

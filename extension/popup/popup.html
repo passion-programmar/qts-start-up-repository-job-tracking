@@ -374,7 +374,13 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
+      gap: 8px;
       margin-bottom: 8px;
+    }
+    .job-mode-feature-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
     }
     .job-mode-indicator {
       color: #166534;
@@ -504,6 +510,7 @@
           <div id="action-alert" aria-live="polite"></div>
           <div class="action-buttons">
             <button class="btn btn-primary" id="btn-get-jd" type="button" aria-pressed="false">Get JD</button>
+            <button class="btn btn-ghost btn-text-highlights hidden" type="button" aria-controls="page-highlights" aria-expanded="false">Text Highlight</button>
             <button class="btn btn-primary" id="btn-custom-apply" type="button" aria-pressed="false">Custom Apply</button>
             <button class="btn btn-ghost" id="btn-action-logout" type="button">Logout</button>
           </div>
@@ -521,6 +528,28 @@
         </div>
       </div>
     </div>
+
+    <section id="page-highlights" class="page-highlights hidden" aria-labelledby="page-highlights-title">
+      <h2 id="page-highlights-title">Text highlights on all websites</h2>
+      <p class="page-highlights-hint">Rules are shared from the database and automatically highlighted across supported HTTP and HTTPS websites. Only Managers assigned by Super can change them.</p>
+      <form id="page-highlight-form" class="page-highlight-form">
+        <label class="page-highlight-field page-highlight-term">
+          <span>Text or characters</span>
+          <input id="page-highlight-text" type="text" maxlength="500" required>
+        </label>
+        <label class="page-highlight-field">
+          <span>Text color</span>
+          <input id="page-highlight-text-color" type="color" value="#111827">
+        </label>
+        <label class="page-highlight-field">
+          <span>Background</span>
+          <input id="page-highlight-background-color" type="color" value="#fef08a">
+        </label>
+        <button class="btn btn-primary btn-sm" type="submit">Add rule</button>
+      </form>
+      <p id="page-highlights-status" class="page-highlights-status" role="status" aria-live="polite"></p>
+      <ul id="page-highlight-list" class="page-highlight-list"></ul>
+    </section>
 
     <dialog id="get-jd-confirmation" aria-labelledby="get-jd-confirmation-title">
       <h2 class="get-jd-confirmation-title" id="get-jd-confirmation-title">Get job details?</h2>
@@ -547,7 +576,10 @@
     <div id="job-section" class="hidden">
       <div class="job-mode-actions">
         <span class="job-mode-indicator">Get JD mode</span>
-        <button type="button" class="btn btn-ghost btn-sm" id="btn-change-mode">Change mode</button>
+        <div class="job-mode-feature-actions">
+          <button class="btn btn-ghost btn-sm btn-text-highlights hidden" type="button" aria-controls="page-highlights" aria-expanded="false">Text Highlight</button>
+          <button type="button" class="btn btn-ghost btn-sm" id="btn-change-mode">Change mode</button>
+        </div>
       </div>
       <div id="main-alert"></div>
 
@@ -685,27 +717,6 @@
       </div>
       <p class="site-discovery-status hidden" id="scanner-save-status" role="status" aria-live="polite"></p>
     </div>
-    <section id="page-highlights" class="page-highlights hidden" aria-labelledby="page-highlights-title">
-      <h2 id="page-highlights-title">Text highlights on all websites</h2>
-      <p class="page-highlights-hint">Rules are shared from the database and automatically highlighted across supported HTTP and HTTPS websites. Only Managers assigned by Super can change them.</p>
-      <form id="page-highlight-form" class="page-highlight-form">
-        <label class="page-highlight-field page-highlight-term">
-          <span>Text or characters</span>
-          <input id="page-highlight-text" type="text" maxlength="500" required>
-        </label>
-        <label class="page-highlight-field">
-          <span>Text color</span>
-          <input id="page-highlight-text-color" type="color" value="#111827">
-        </label>
-        <label class="page-highlight-field">
-          <span>Background</span>
-          <input id="page-highlight-background-color" type="color" value="#fef08a">
-        </label>
-        <button class="btn btn-primary btn-sm" type="submit">Add rule</button>
-      </form>
-      <p id="page-highlights-status" class="page-highlights-status" role="status" aria-live="polite"></p>
-      <ul id="page-highlight-list" class="page-highlight-list"></ul>
-    </section>
     </div>
   </div>
 
