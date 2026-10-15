@@ -35,11 +35,14 @@ The **QTS_Startup** Chrome extension lets **Managers** capture job postings for 
 - Reads job **title**, **company**, **URL**, and **description** from the page
 - Lets you mark which **candidates** you applied for
 - Saves everything to the QTS database (visible to manager and admin)
-- Lets you create, edit, and delete text-highlighting rules for the current page
+- Lets you create, edit, and delete text-highlighting rules that apply across websites
 
 Text-highlight rules include a text color and background color. They are saved
-for the current page URL (not other URLs) and apply automatically when that page
-loads. Open the QTS window from the page to add, edit, or delete its rules.
+in the current Chrome profile and apply automatically on supported HTTP and
+HTTPS websites. Existing page-specific rules are migrated to the shared rule
+list the next time you open the highlights panel. Chrome-restricted pages do not
+allow extension highlighting. Open the QTS window from a supported page to add,
+edit, or delete rules.
 
 ```text
 Job site (LinkedIn, Indeed, etc.)

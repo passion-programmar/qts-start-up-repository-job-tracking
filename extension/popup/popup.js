@@ -17,9 +17,9 @@ let existingJobId = null;
 let scannerSetupPending = false;
 let scannerSelectedAccountId = null;
 let currentTabUrl = '';
-let pageHighlightUrl = '';
 let pageHighlightStorageKey = '';
 let pageHighlightRules = [];
+let pageHighlightMigrationDuplicates = 0;
 let currentSource = '';
 let targetTabId = null;
 let sourceWindowId = null;
@@ -164,16 +164,18 @@ async function ensurePageHighlightContext() {
   if (pageUrl.protocol !== 'http:' && pageUrl.protocol !== 'https:') {
     throw new Error('Text highlights are available on HTTP and HTTPS pages only.');
   }
-  pageUrl.hash = '';
-  pageHighlightUrl = pageUrl.href;
-  pageHighlightStorageKey = window.__qtsTextHighlighting.getPageStorageKey(pageHighlightUrl);
-  const urlDisplay = document.getElementById('page-highlights-url');
-  if (urlDisplay) {
-    urlDisplay.textContent = pageUrl.host + pageUrl.pathname + pageUrl.search;
-    urlDisplay.title = pageHighlightUrl;
+  pageHighlightStorageKey = window.__qtsTextHighlighting.getGlobalStorageKey();
+  const stored = await chrome.storage.local.get(null);
+  const migration = window.__qtsTextHighlighting.migratePageRules(stored);
+  pageHighlightRules = migration.rules;
+  pageHighlightMigrationDuplicates = migration.duplicatesMerged;
+
+  const globalKeyExists = Object.prototype.hasOwnProperty.call(stored, pageHighlightStorageKey);
+  const globalStoredRules = globalKeyExists ? window.__qtsTextHighlighting.normalizeRules(stored[pageHighlightStorageKey]) : [];
+  if (!globalKeyExists || migration.legacyKeys.length || migration.rules.length !== globalStoredRules.length) {
+    await chrome.storage.local.set({ [pageHighlightStorageKey]: pageHighlightRules });
   }
-  const stored = await chrome.storage.local.get(pageHighlightStorageKey);
-  pageHighlightRules = window.__qtsTextHighlighting.normalizeRules(stored[pageHighlightStorageKey] || []);
+  if (migration.legacyKeys.length) await chrome.storage.local.remove(migration.legacyKeys);
   renderPageHighlightRules();
 }
 
@@ -196,30 +198,34 @@ async function persistPageHighlightRules(nextRules, successMessage) {
 async function savePageHighlightRule(ruleId, updatedRule) {
   const rules = pageHighlightRules.map((rule) => (rule.id === ruleId ? updatedRule : rule));
   if (!rules.some((rule) => rule.id === ruleId)) throw new Error('This highlight rule no longer exists. Refresh the rule list.');
-  await persistPageHighlightRules(rules, 'Highlight rule updated for this page.');
+  await persistPageHighlightRules(rules, 'Highlight rule updated across all websites.');
 }
 
 async function deletePageHighlightRule(ruleId) {
   if (!pageHighlightRules.some((rule) => rule.id === ruleId)) throw new Error('This highlight rule no longer exists. Refresh the rule list.');
-  await persistPageHighlightRules(pageHighlightRules.filter((rule) => rule.id !== ruleId), 'Highlight rule deleted from this page.');
+  await persistPageHighlightRules(pageHighlightRules.filter((rule) => rule.id !== ruleId), 'Highlight rule deleted across all websites.');
 }
 
 async function showPageHighlights() {
   const panel = document.getElementById('page-highlights');
   if (!panel) return;
   panel.classList.remove('hidden');
-  setPageHighlightStatus('Loading rules for this page…');
+  setPageHighlightStatus('Loading global highlight rules…');
   try {
     await ensurePageHighlightContext();
     await chrome.scripting.executeScript({
       target: { tabId: targetTabId },
       files: ['shared/text-highlighting.js', 'content/text-highlighter.js'],
     });
-    setPageHighlightStatus(pageHighlightRules.length
-      ? `${pageHighlightRules.length} rule(s) loaded for this page.`
-      : 'No highlight rules saved for this page yet.');
+    const status = pageHighlightRules.length
+      ? `${pageHighlightRules.length} global rule(s) loaded.`
+      : 'No global highlight rules saved yet.';
+    const migrationNotice = pageHighlightMigrationDuplicates
+      ? ` Duplicate text rules were combined; one existing style was kept for each phrase.`
+      : '';
+    setPageHighlightStatus(`${status}${migrationNotice}`);
   } catch (error) {
-    setPageHighlightStatus(error.message || 'Could not load highlights for this page.', true);
+    setPageHighlightStatus(error.message || 'Could not load global highlights.', true);
   }
 }
 
@@ -1542,7 +1548,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       textColor: textColor.value,
       backgroundColor: backgroundColor.value,
     };
-    persistPageHighlightRules([...pageHighlightRules, rule], 'Highlight rule added to this page.')
+    persistPageHighlightRules([...pageHighlightRules, rule], 'Highlight rule added across all websites.')
       .then(() => { text.value = ''; })
       .catch((error) => setPageHighlightStatus(error.message || 'Could not add this rule.', true));
   });

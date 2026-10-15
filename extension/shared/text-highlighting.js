@@ -4,6 +4,8 @@
   if (root) root.__qtsTextHighlighting = api;
 })(typeof globalThis === 'object' ? globalThis : this, () => {
   const COLOR_PATTERN = /^#[0-9a-f]{6}$/i;
+  const GLOBAL_STORAGE_KEY = 'qtsTextHighlights';
+  const LEGACY_PAGE_STORAGE_PREFIX = 'qtsPageTextHighlights:';
 
   function normalizeRule(rule) {
     if (!rule || typeof rule !== 'object') {
@@ -27,9 +29,13 @@
     }
     const normalized = rules.map(normalizeRule);
     const ids = new Set();
+    const texts = new Set();
     for (const rule of normalized) {
       if (ids.has(rule.id)) throw new TypeError('Saved highlight rules contain a duplicate ID.');
+      const textKey = rule.text.toLowerCase();
+      if (texts.has(textKey)) throw new TypeError('Saved highlight rules contain duplicate text.');
       ids.add(rule.id);
+      texts.add(textKey);
     }
     return normalized;
   }
@@ -45,8 +51,56 @@
       throw new TypeError('Text highlights are available on HTTP and HTTPS pages only.');
     }
     page.hash = '';
-    return `qtsPageTextHighlights:${encodeURIComponent(page.href)}`;
+    return `${LEGACY_PAGE_STORAGE_PREFIX}${encodeURIComponent(page.href)}`;
   }
 
-  return { normalizeRule, normalizeRules, getPageStorageKey };
+  function getGlobalStorageKey() {
+    return GLOBAL_STORAGE_KEY;
+  }
+
+  function migratePageRules(storage) {
+    if (!storage || typeof storage !== 'object' || Array.isArray(storage)) {
+      throw new TypeError('Saved highlight storage must be an object.');
+    }
+
+    const legacyKeys = Object.keys(storage)
+      .filter((key) => key.startsWith(LEGACY_PAGE_STORAGE_PREFIX))
+      .sort();
+    const sources = [];
+    if (Object.prototype.hasOwnProperty.call(storage, GLOBAL_STORAGE_KEY)) {
+      sources.push(storage[GLOBAL_STORAGE_KEY]);
+    }
+    for (const key of legacyKeys) sources.push(storage[key]);
+
+    const rules = [];
+    const ids = new Set();
+    const texts = new Set();
+    let duplicatesMerged = 0;
+    for (const source of sources) {
+      if (!Array.isArray(source)) {
+        throw new TypeError('Saved highlight rules must be a list.');
+      }
+      for (const candidate of source) {
+        const rule = normalizeRule(candidate);
+        const textKey = rule.text.toLowerCase();
+        if (ids.has(rule.id) || texts.has(textKey)) {
+          duplicatesMerged += 1;
+          continue;
+        }
+        ids.add(rule.id);
+        texts.add(textKey);
+        rules.push(rule);
+      }
+    }
+
+    return { rules, legacyKeys, duplicatesMerged };
+  }
+
+  return {
+    normalizeRule,
+    normalizeRules,
+    getPageStorageKey,
+    getGlobalStorageKey,
+    migratePageRules,
+  };
 });

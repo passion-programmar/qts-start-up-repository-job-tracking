@@ -77,9 +77,7 @@
   }
 
   async function loadAndApply() {
-    const href = new URL(location.href);
-    href.hash = '';
-    currentStorageKey = highlighting.getPageStorageKey(href.href);
+    currentStorageKey = highlighting.getGlobalStorageKey();
     const stored = await chrome.storage.local.get(currentStorageKey);
     currentRules = highlighting.normalizeRules(stored[currentStorageKey] || []);
     applyRules(currentRules);
@@ -97,14 +95,6 @@
     setTimeout(() => {
       refreshQueued = false;
       if (observer) observer.disconnect();
-      const nextHref = new URL(location.href);
-      nextHref.hash = '';
-      const nextStorageKey = highlighting.getPageStorageKey(nextHref.href);
-      if (nextStorageKey !== currentStorageKey) {
-        loadAndApply().catch((error) => console.error('[QTS text highlights] Could not follow page navigation:', error))
-          .finally(observePage);
-        return;
-      }
       applyRules(currentRules);
       observePage();
     }, 0);
