@@ -5,6 +5,10 @@ import {
   NewSchemaAuthRequest,
   requireNewSchemaAuth,
 } from '../../middleware/new-schema-auth';
+import {
+  BUILT_IN_SCANNER_PROMPT,
+  SCANNER_DEFAULT_PROMPT_SETTING,
+} from './scanner-prompt-default';
 
 const router = Router();
 router.use(requireNewSchemaAuth);
@@ -22,7 +26,7 @@ function requireSuper(req: NewSchemaAuthRequest, res: Response): boolean {
 
 router.get('/', async (req: NewSchemaAuthRequest, res: Response) => {
   if (!requireSuper(req, res)) return;
-  const [prompts, managers, assignments] = await Promise.all([
+  const [prompts, managers, assignments, defaultPromptSetting] = await Promise.all([
     queryAll(
       `SELECT prompt_id AS id, prompt_name AS name, prompt_content AS content,
               created_date AS "createdDate", updated_date AS "updatedDate"
@@ -44,8 +48,18 @@ router.get('/', async (req: NewSchemaAuthRequest, res: Response) => {
        WHERE manager.role = 'manager'
        ORDER BY manager.name ASC, manager.u_id ASC`
     ),
+    queryOne<{ setting_value: string }>(
+      'SELECT setting_value FROM app_settings WHERE setting_name = $1',
+      [SCANNER_DEFAULT_PROMPT_SETTING]
+    ),
   ]);
-  res.json({ success: true, prompts, managers, assignments });
+  res.json({
+    success: true,
+    prompts,
+    managers,
+    assignments,
+    defaultPrompt: defaultPromptSetting?.setting_value || BUILT_IN_SCANNER_PROMPT,
+  });
 });
 
 router.get('/assigned', async (req: NewSchemaAuthRequest, res: Response) => {
@@ -87,6 +101,35 @@ router.post('/', async (req: NewSchemaAuthRequest, res: Response) => {
     [parsed.data.name, parsed.data.content, req.newSchemaUser!.id]
   );
   res.status(201).json({ success: true, prompt });
+});
+
+router.put('/default', async (req: NewSchemaAuthRequest, res: Response) => {
+  if (!requireSuper(req, res)) return;
+  const parsed = z.object({
+    content: z.string().trim().min(1).max(50000),
+  }).strict().safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({
+      success: false,
+      message: 'Enter default Scanner instructions (up to 50,000 characters).',
+    });
+    return;
+  }
+  const saved = await queryOne<{ setting_value: string }>(
+    `INSERT INTO app_settings (setting_name, setting_value, updated_by, updated_date)
+     VALUES ($1, $2, $3, NOW())
+     ON CONFLICT (setting_name) DO UPDATE
+     SET setting_value = EXCLUDED.setting_value,
+         updated_by = EXCLUDED.updated_by,
+         updated_date = NOW()
+     RETURNING setting_value`,
+    [SCANNER_DEFAULT_PROMPT_SETTING, parsed.data.content, req.newSchemaUser!.id]
+  );
+  if (!saved) {
+    res.status(500).json({ success: false, message: 'Could not save the default Scanner instructions.' });
+    return;
+  }
+  res.json({ success: true, defaultPrompt: saved.setting_value });
 });
 
 router.put('/:id', async (req: NewSchemaAuthRequest, res: Response) => {

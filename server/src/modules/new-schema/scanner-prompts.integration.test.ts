@@ -20,6 +20,7 @@ let otherManagerId = 0;
 type PromptResponse = {
   success?: boolean;
   message?: string;
+  defaultPrompt?: string;
   prompt?: { id: number; name: string; content: string } | null;
   prompts?: Array<{ id: number; name: string; content: string }>;
 };
@@ -137,6 +138,32 @@ it('restricts prompt library management to Super', async () => {
     content: 'Duplicate prompt.',
   });
   assert.equal(duplicate.response.status, 409);
+});
+
+it('allows only Super to update the default Scanner instructions', async () => {
+  const initial = await request('/', superToken);
+  assert.equal(initial.response.status, 200);
+  assert.equal(
+    initial.body.defaultPrompt,
+    'Write safe, concise, ATS-friendly application materials using only verified candidate profile information and the supplied job description.'
+  );
+
+  const denied = await request('/default', managerToken, 'PUT', {
+    content: 'Manager should not change the global default.',
+  });
+  assert.equal(denied.response.status, 403);
+
+  const invalid = await request('/default', superToken, 'PUT', { content: '   ' });
+  assert.equal(invalid.response.status, 400);
+
+  const saved = await request('/default', superToken, 'PUT', {
+    content: 'Use the Super-configured global Scanner instructions.',
+  });
+  assert.equal(saved.response.status, 200);
+  assert.equal(saved.body.defaultPrompt, 'Use the Super-configured global Scanner instructions.');
+
+  const reloaded = await request('/', superToken);
+  assert.equal(reloaded.body.defaultPrompt, 'Use the Super-configured global Scanner instructions.');
 });
 
 it('allows one shared prompt per Manager, updates and unassigns it safely', async () => {

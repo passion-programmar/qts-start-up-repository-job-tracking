@@ -77,9 +77,11 @@ Manager Scanner uses regular ChatGPT and does not depend on a Custom GPT
 assignment or Action key.
 
 Super assigns Job-site Scanner and text-highlight management independently to
-each Manager from the People page. Super manages Scanner prompt content and
-assignments from the Admin Prompts page: the same prompt may be shared, but
-each Manager has at most one; no assignment uses the built-in default.
+each Manager from the People page. Super manages the global default Scanner
+instructions, reusable prompt content, and Manager assignments from the Admin
+Prompts page. A Manager can have at most one assigned prompt; that assignment
+overrides the global default. A Manager without an assignment uses the
+Super-configured default instructions.
 Scanner API operations check feature assignments server-side. Shared
 text-highlight rules are stored in the database and read by all signed-in
 Managers; only Managers assigned text-highlight management can edit them in the

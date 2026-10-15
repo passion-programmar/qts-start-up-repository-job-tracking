@@ -28,6 +28,25 @@ test('prompt supplies a safe built-in instruction when no Manager prompt is assi
   assert.match(prompt, /using only verified candidate profile information/);
 });
 
+test('prompt uses the Super-managed default when no Manager prompt is assigned', () => {
+  const prompt = scannerChatGpt.buildPrompt({
+    defaultPrompt: 'Use the global QTS writing style.',
+  });
+
+  assert.match(prompt, /Use the global QTS writing style\./);
+  assert.doesNotMatch(prompt, /safe, concise, ATS-friendly application materials/);
+});
+
+test('Manager-assigned prompt takes precedence over the Super-managed default', () => {
+  const prompt = scannerChatGpt.buildPrompt({
+    assignedPrompt: { content: 'Use the assigned Manager style.' },
+    defaultPrompt: 'Use the global QTS writing style.',
+  });
+
+  assert.match(prompt, /Use the assigned Manager style\./);
+  assert.doesNotMatch(prompt, /Use the global QTS writing style\./);
+});
+
 test('extracts raw and fenced JSON packages, including braces inside strings', () => {
   const raw = scannerChatGpt.extractPackage(
     '{"answers":[{"stableFieldId":"field-1","answer":"Use { braces } safely"}]}'

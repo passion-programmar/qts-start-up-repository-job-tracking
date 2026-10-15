@@ -18,6 +18,10 @@ import {
   managerHasExtensionFeature,
   requireManagerExtensionFeature,
 } from './extension-feature-access';
+import {
+  BUILT_IN_SCANNER_PROMPT,
+  SCANNER_DEFAULT_PROMPT_SETTING,
+} from './scanner-prompt-default';
 
 const router = Router();
 const taskIdSchema = z.string().regex(/^task_[0-9a-f-]{36}$/i);
@@ -719,14 +723,20 @@ router.get('/:taskId/extension-status', requireNewSchemaAuth, async (req: NewSch
   const task = await loadManagerTask(req, res, req.params.taskId);
   if (!task) return;
   const { candidate, managerAnswers } = taskContextParts(task.task_context);
-  const assignedPrompt = await queryOne<{ id: number; name: string; content: string }>(
-    `SELECT prompt.prompt_id AS id, prompt.prompt_name AS name,
-            prompt.prompt_content AS content
-     FROM manager_scanner_prompt_assignments assignment
-     JOIN prompts prompt ON prompt.prompt_id = assignment.prompt_id
-     WHERE assignment.manager_user_id = $1`,
-    [task.manager_user_id]
-  );
+  const [assignedPrompt, defaultPromptSetting] = await Promise.all([
+    queryOne<{ id: number; name: string; content: string }>(
+      `SELECT prompt.prompt_id AS id, prompt.prompt_name AS name,
+              prompt.prompt_content AS content
+       FROM manager_scanner_prompt_assignments assignment
+       JOIN prompts prompt ON prompt.prompt_id = assignment.prompt_id
+       WHERE assignment.manager_user_id = $1`,
+      [task.manager_user_id]
+    ),
+    queryOne<{ setting_value: string }>(
+      'SELECT setting_value FROM app_settings WHERE setting_name = $1',
+      [SCANNER_DEFAULT_PROMPT_SETTING]
+    ),
+  ]);
   await execute(
     `UPDATE gpt_application_tasks
      SET last_activity_at = NOW(), updated_at = NOW(),
@@ -741,6 +751,7 @@ router.get('/:taskId/extension-status', requireNewSchemaAuth, async (req: NewSch
     pageNumber: task.page_number,
     jobContext: task.task_context.jobContext || {},
     assignedPrompt: assignedPrompt || null,
+    defaultPrompt: defaultPromptSetting?.setting_value || BUILT_IN_SCANNER_PROMPT,
     candidate,
     managerAnswers,
     resumeText: task.resume_text || '',

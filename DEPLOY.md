@@ -21,11 +21,14 @@ Super also assigns Job-site Scanner access and shared text-highlight management
 per Manager from the People page. Highlight phrases are database-backed and
 visible to all signed-in Managers on supported sites; only assigned Managers
 can change the shared rules.
-Super manages reusable Scanner instructions from the Admin Prompts page. A
-Manager can have one assigned prompt, and prompts can be shared among Managers.
-The extension adds the assignment to the ChatGPT request as user-message
-instructions (not a ChatGPT system-role message); Managers without an
-assignment receive the built-in default. Scanner-generated resume PDFs render
+Super manages the global default Scanner instructions, reusable prompts, and
+Manager assignments from the Admin Prompts page. A Manager can have one
+assigned prompt, and prompts can be shared among Managers. An assigned prompt
+overrides the global default; Managers without an assignment receive the
+Super-configured default (or the built-in default before Super changes it).
+The extension adds the selected instructions to the ChatGPT request as
+user-message instructions (not a ChatGPT system-role message).
+Scanner-generated resume PDFs render
 `**bold**` emphasis in experience bullets as bold text.
 The retired Manager Apply queue and
 Workable-specific application handler are not part of this workflow.
