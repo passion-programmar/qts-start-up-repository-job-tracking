@@ -834,7 +834,8 @@
 }
 
 .popup-app .page-highlight-form .page-highlight-term,
-.popup-app .page-highlight-form > .btn {
+.popup-app .page-highlight-form > .btn,
+.popup-app .page-highlight-form > .page-highlight-preview {
   grid-column: 1 / -1;
 }
 
@@ -914,6 +915,43 @@
   justify-self: stretch;
 }
 
+.popup-app .page-highlight-preview {
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid #dbe4ef;
+  border-radius: 9px;
+  background: #f8fafc;
+}
+
+.popup-app .page-highlight-preview-label {
+  display: block;
+  margin-bottom: 5px;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.popup-app .page-highlight-preview-sample {
+  overflow-wrap: anywhere;
+  margin: 0;
+  color: #334155;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.popup-app .page-highlight-preview-mark {
+  padding: 2px 4px;
+  border-radius: 3px;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+.popup-app .page-highlight-preview-mark.is-placeholder {
+  opacity: 0.72;
+}
+
 .popup-app .page-highlight-list {
   display: grid;
   gap: 8px;
@@ -932,6 +970,7 @@
 }
 
 .popup-app .page-highlight-rule .page-highlight-term,
+.popup-app .page-highlight-rule > .page-highlight-preview,
 .popup-app .page-highlight-rule-actions {
   grid-column: 1 / -1;
 }
@@ -967,12 +1006,24 @@
   .popup-app .page-highlight-form .page-highlight-term,
   .popup-app .page-highlight-rule .page-highlight-term,
   .popup-app .page-highlight-form > .btn,
+  .popup-app .page-highlight-form > .page-highlight-preview,
+  .popup-app .page-highlight-rule > .page-highlight-preview,
   .popup-app .page-highlight-rule-actions {
     grid-column: auto;
   }
 
+  .popup-app .page-highlight-form > .page-highlight-preview,
+  .popup-app .page-highlight-rule > .page-highlight-preview {
+    grid-column: 1 / -1;
+  }
+
   .popup-app .page-highlight-form > .btn {
+    grid-column: 1 / -1;
     justify-self: end;
+  }
+
+  .popup-app .page-highlight-rule-actions {
+    grid-column: 1 / -1;
   }
 }
 

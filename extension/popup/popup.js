@@ -144,6 +144,7 @@ function createHighlightColorInput(label, value, inputId = '') {
       option.tabIndex = selected ? 0 : -1;
       option.classList.toggle('is-selected', selected);
     }
+    input.dispatchEvent(new Event('input', { bubbles: true }));
     if (focus) button.focus();
   }
 
@@ -199,6 +200,54 @@ function initializePageHighlightColorPickers() {
   }
 }
 
+function initializePageHighlightPreview() {
+  const previewSlot = document.getElementById('page-highlight-form-preview');
+  const text = document.getElementById('page-highlight-text');
+  const textColor = document.getElementById('page-highlight-text-color');
+  const backgroundColor = document.getElementById('page-highlight-background-color');
+  if (!previewSlot || !text || !textColor || !backgroundColor) return;
+  const preview = createHighlightPreview(text.value, textColor.value, backgroundColor.value);
+  previewSlot.replaceWith(preview);
+  const refreshPreview = () => updateHighlightPreview(preview, text, textColor, backgroundColor);
+  text.addEventListener('input', refreshPreview);
+  textColor.addEventListener('input', refreshPreview);
+  backgroundColor.addEventListener('input', refreshPreview);
+}
+
+function createHighlightPreview(text, textColor, backgroundColor) {
+  const preview = document.createElement('div');
+  preview.className = 'page-highlight-preview';
+  const label = document.createElement('span');
+  label.className = 'page-highlight-preview-label';
+  label.textContent = 'Live preview';
+  const sample = document.createElement('p');
+  sample.className = 'page-highlight-preview-sample';
+  const leadIn = document.createElement('span');
+  leadIn.textContent = 'Example: ';
+  const mark = document.createElement('mark');
+  mark.className = 'page-highlight-preview-mark';
+  const phrase = String(text || '').trim();
+  mark.textContent = phrase || 'Your text';
+  mark.style.color = textColor;
+  mark.style.backgroundColor = backgroundColor;
+  mark.classList.toggle('is-placeholder', !phrase);
+  sample.append(leadIn, mark);
+  preview.append(label, sample);
+  return preview;
+}
+
+function updateHighlightPreview(preview, text, textColor, backgroundColor) {
+  const sample = preview?.querySelector('.page-highlight-preview-sample');
+  const mark = preview?.querySelector('.page-highlight-preview-mark');
+  if (!sample || !mark) return;
+  const phrase = String(text.value || '').trim();
+  mark.textContent = phrase || 'Your text';
+  mark.style.color = textColor.value;
+  mark.style.backgroundColor = backgroundColor.value;
+  mark.classList.toggle('is-placeholder', !phrase);
+  sample.setAttribute('aria-label', `Live preview: ${phrase || 'Your text'}`);
+}
+
 function renderPageHighlightRules() {
   const list = document.getElementById('page-highlight-list');
   if (!list) return;
@@ -220,6 +269,11 @@ function renderPageHighlightRules() {
 
     const textColor = createHighlightColorInput('Text color', rule.textColor);
     const backgroundColor = createHighlightColorInput('Background', rule.backgroundColor);
+    const preview = createHighlightPreview(rule.text, rule.textColor, rule.backgroundColor);
+    const refreshPreview = () => updateHighlightPreview(preview, termInput, textColor.input, backgroundColor.input);
+    termInput.addEventListener('input', refreshPreview);
+    textColor.input.addEventListener('input', refreshPreview);
+    backgroundColor.input.addEventListener('input', refreshPreview);
     const actions = document.createElement('div');
     actions.className = 'page-highlight-rule-actions';
     const save = document.createElement('button');
@@ -242,7 +296,7 @@ function renderPageHighlightRules() {
       deletePageHighlightRule(rule.id).catch((error) => setPageHighlightStatus(error.message || 'Could not delete this rule.', true));
     });
     actions.append(save, remove);
-    item.append(termField, textColor.wrapper, backgroundColor.wrapper, actions);
+    item.append(termField, textColor.wrapper, backgroundColor.wrapper, preview, actions);
     list.append(item);
   }
 }
@@ -1707,6 +1761,7 @@ function applyGptDispatchResult(msg) {
 
 document.addEventListener('DOMContentLoaded', async () => {
   initializePageHighlightColorPickers();
+  initializePageHighlightPreview();
   if (new URLSearchParams(window.location.search).get('embedded') === '1') {
     document.documentElement.style.width = '100%';
     document.documentElement.style.height = '100%';
