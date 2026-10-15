@@ -449,7 +449,11 @@ async function persistPageHighlightRules(response, successMessage, selectedRuleI
 async function savePageHighlightRule(ruleId, updatedRule) {
   if (!pageHighlightStorageKey) await ensurePageHighlightContext();
   if (!pageHighlightRules.some((rule) => rule.id === ruleId)) throw new Error('This highlight rule no longer exists. Refresh the rule list.');
-  const response = await window.api.updateGlobalTextHighlight(ruleId, updatedRule);
+  const response = await window.api.updateGlobalTextHighlight(ruleId, {
+    text: updatedRule.text,
+    textColor: updatedRule.textColor,
+    backgroundColor: updatedRule.backgroundColor,
+  });
   await persistPageHighlightRules(response, 'Shared highlight rule updated.', ruleId);
 }
 
