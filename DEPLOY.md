@@ -17,6 +17,10 @@ later step, keeps GPT sending/waiting alerts visible until the package arrives,
 and never navigates or submits the application. Other Scanner alerts are timed.
 Super users can delete individual saved application templates; linked Manager
 field rules are deleted with their template while shared field semantics are retained.
+Super also assigns Job-site Scanner access and shared text-highlight management
+per Manager from the People page. Highlight phrases are database-backed and
+visible to all signed-in Managers on supported sites; only assigned Managers
+can change the shared rules.
 The retired Manager Apply queue and
 Workable-specific application handler are not part of this workflow.
 

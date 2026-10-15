@@ -7,6 +7,7 @@ import { useAuth } from '@/components/AuthProvider';
 import { Modal } from '@/components/Modal';
 import { api } from '@/lib/api';
 import { SuperCustomGptsView } from '@/components/SuperCustomGptsView';
+import { SuperExtensionFeaturesView } from '@/components/SuperExtensionFeaturesView';
 
 interface ManagedUser {
   u_id: number;
@@ -120,7 +121,12 @@ export function NewSchemaUsersView() {
 
   return (
     <>
-      {user?.role === 'super' && <SuperCustomGptsView />}
+      {user?.role === 'super' && (
+        <>
+          <SuperCustomGptsView />
+          <SuperExtensionFeaturesView />
+        </>
+      )}
       {error && <div className="alert alert-error">{error}</div>}
       {message && <div className="alert alert-success">{message}</div>}
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>

@@ -19,7 +19,12 @@ let scannerSelectedAccountId = null;
 let currentTabUrl = '';
 let pageHighlightStorageKey = '';
 let pageHighlightRules = [];
-let pageHighlightMigrationDuplicates = 0;
+let pageHighlightMigrationMessage = '';
+let managerExtensionFeatures = {
+  canManageTextHighlights: false,
+  canUseScanner: false,
+};
+let managerExtensionFeaturesError = '';
 let currentSource = '';
 let targetTabId = null;
 let sourceWindowId = null;
@@ -156,6 +161,9 @@ function renderPageHighlightRules() {
 }
 
 async function ensurePageHighlightContext() {
+  if (currentUser?.role !== 'manager' || !managerExtensionFeatures.canManageTextHighlights) {
+    throw new Error('Super must assign text highlight management to this Manager account.');
+  }
   if (!targetTabId) {
     throw new Error('No current web page is selected. Open the extension from a web page and try again.');
   }
@@ -167,24 +175,65 @@ async function ensurePageHighlightContext() {
   pageHighlightStorageKey = window.__qtsTextHighlighting.getGlobalStorageKey();
   const stored = await chrome.storage.local.get(null);
   const migration = window.__qtsTextHighlighting.migratePageRules(stored);
-  pageHighlightRules = migration.rules;
-  pageHighlightMigrationDuplicates = migration.duplicatesMerged;
-
-  const globalKeyExists = Object.prototype.hasOwnProperty.call(stored, pageHighlightStorageKey);
-  const globalStoredRules = globalKeyExists ? window.__qtsTextHighlighting.normalizeRules(stored[pageHighlightStorageKey]) : [];
-  if (!globalKeyExists || migration.legacyKeys.length || migration.rules.length !== globalStoredRules.length) {
-    await chrome.storage.local.set({ [pageHighlightStorageKey]: pageHighlightRules });
+  const response = await window.api.getGlobalTextHighlights();
+  if (!response.success || !Array.isArray(response.rules)) {
+    throw new Error(response.message || 'Could not load shared text highlight rules.');
   }
-  if (migration.legacyKeys.length) await chrome.storage.local.remove(migration.legacyKeys);
+  pageHighlightRules = window.__qtsTextHighlighting.normalizeRules(response.rules);
+  pageHighlightMigrationMessage = '';
+
+  if (migration.rules.length && window.confirm(
+    `Found ${migration.rules.length} text highlight rule(s) saved only in this Chrome profile. Import them into the shared database so all Managers can see them?`
+  )) {
+    const importedTexts = new Set(pageHighlightRules.map((rule) => rule.text.toLocaleLowerCase()));
+    const existingIds = new Set(pageHighlightRules.map((rule) => rule.id));
+    for (const legacyRule of migration.rules) {
+      const textKey = legacyRule.text.toLocaleLowerCase();
+      if (importedTexts.has(textKey)) continue;
+      const rule = {
+        ...legacyRule,
+        id: existingIds.has(legacyRule.id) ? crypto.randomUUID() : legacyRule.id,
+      };
+      const imported = await window.api.createGlobalTextHighlight(rule);
+      if (!imported.success || !Array.isArray(imported.rules)) {
+        if (imported._httpStatus === 409) {
+          const latest = await window.api.getGlobalTextHighlights();
+          if (latest.success && Array.isArray(latest.rules) &&
+              latest.rules.some((saved) => String(saved.text).toLocaleLowerCase() === textKey)) {
+            pageHighlightRules = window.__qtsTextHighlighting.normalizeRules(latest.rules);
+            importedTexts.add(textKey);
+            continue;
+          }
+        }
+        throw new Error(imported.message || `Could not import the saved rule “${legacyRule.text}”.`);
+      }
+      pageHighlightRules = window.__qtsTextHighlighting.normalizeRules(imported.rules);
+      importedTexts.add(textKey);
+      existingIds.add(rule.id);
+    }
+    if (migration.legacyKeys.length) await chrome.storage.local.remove(migration.legacyKeys);
+    pageHighlightMigrationMessage = ' Existing local rules were imported into the shared database.';
+  } else if (migration.rules.length) {
+    pageHighlightMigrationMessage = ' Existing local-only rules were kept; import them later from this panel.';
+  }
+  await chrome.storage.local.set({
+    [pageHighlightStorageKey]: pageHighlightRules,
+    [window.__qtsTextHighlighting.getGlobalStorageTimestampKey()]: Date.now(),
+  });
   renderPageHighlightRules();
 }
 
-async function persistPageHighlightRules(nextRules, successMessage) {
-  if (!pageHighlightStorageKey) await ensurePageHighlightContext();
-  pageHighlightRules = window.__qtsTextHighlighting.normalizeRules(nextRules);
-  await chrome.storage.local.set({ [pageHighlightStorageKey]: pageHighlightRules });
+async function persistPageHighlightRules(response, successMessage) {
+  if (!response.success || !Array.isArray(response.rules)) {
+    throw new Error(response.message || 'Could not save shared text highlight rules.');
+  }
+  pageHighlightRules = window.__qtsTextHighlighting.normalizeRules(response.rules);
+  await chrome.storage.local.set({
+    [pageHighlightStorageKey]: pageHighlightRules,
+    [window.__qtsTextHighlighting.getGlobalStorageTimestampKey()]: Date.now(),
+  });
   renderPageHighlightRules();
-  setPageHighlightStatus(successMessage);
+  setPageHighlightStatus(`${successMessage}${pageHighlightMigrationMessage}`);
   try {
     await chrome.scripting.executeScript({
       target: { tabId: targetTabId },
@@ -196,21 +245,34 @@ async function persistPageHighlightRules(nextRules, successMessage) {
 }
 
 async function savePageHighlightRule(ruleId, updatedRule) {
-  const rules = pageHighlightRules.map((rule) => (rule.id === ruleId ? updatedRule : rule));
-  if (!rules.some((rule) => rule.id === ruleId)) throw new Error('This highlight rule no longer exists. Refresh the rule list.');
-  await persistPageHighlightRules(rules, 'Highlight rule updated across all websites.');
+  if (!pageHighlightStorageKey) await ensurePageHighlightContext();
+  if (!pageHighlightRules.some((rule) => rule.id === ruleId)) throw new Error('This highlight rule no longer exists. Refresh the rule list.');
+  const response = await window.api.updateGlobalTextHighlight(ruleId, updatedRule);
+  await persistPageHighlightRules(response, 'Shared highlight rule updated.');
 }
 
 async function deletePageHighlightRule(ruleId) {
+  if (!pageHighlightStorageKey) await ensurePageHighlightContext();
   if (!pageHighlightRules.some((rule) => rule.id === ruleId)) throw new Error('This highlight rule no longer exists. Refresh the rule list.');
-  await persistPageHighlightRules(pageHighlightRules.filter((rule) => rule.id !== ruleId), 'Highlight rule deleted across all websites.');
+  const response = await window.api.deleteGlobalTextHighlight(ruleId);
+  await persistPageHighlightRules(response, 'Shared highlight rule deleted.');
+}
+
+async function addPageHighlightRule(rule) {
+  if (!pageHighlightStorageKey) await ensurePageHighlightContext();
+  const response = await window.api.createGlobalTextHighlight(rule);
+  await persistPageHighlightRules(response, 'Shared highlight rule added.');
 }
 
 async function showPageHighlights() {
   const panel = document.getElementById('page-highlights');
   if (!panel) return;
+  if (currentUser?.role !== 'manager' || !managerExtensionFeatures.canManageTextHighlights) {
+    panel.classList.add('hidden');
+    return;
+  }
   panel.classList.remove('hidden');
-  setPageHighlightStatus('Loading global highlight rules…');
+  setPageHighlightStatus('Loading shared database rules…');
   try {
     await ensurePageHighlightContext();
     await chrome.scripting.executeScript({
@@ -218,12 +280,9 @@ async function showPageHighlights() {
       files: ['shared/text-highlighting.js', 'content/text-highlighter.js'],
     });
     const status = pageHighlightRules.length
-      ? `${pageHighlightRules.length} global rule(s) loaded.`
-      : 'No global highlight rules saved yet.';
-    const migrationNotice = pageHighlightMigrationDuplicates
-      ? ` Duplicate text rules were combined; one existing style was kept for each phrase.`
-      : '';
-    setPageHighlightStatus(`${status}${migrationNotice}`);
+      ? `${pageHighlightRules.length} shared rule(s) loaded from the database.`
+      : 'No shared highlight rules saved yet.';
+    setPageHighlightStatus(`${status}${pageHighlightMigrationMessage}`);
   } catch (error) {
     setPageHighlightStatus(error.message || 'Could not load global highlights.', true);
   }
@@ -516,6 +575,7 @@ async function verifyManagerScannerCapture(tabId, fields, rules, statusElement) 
   const verification = await chrome.runtime.sendMessage({
     type: 'CAPTURE_APPLICATION_STEP',
     tabId,
+    managerScanner: true,
   });
   if (!verification?.success || !verification.scan) {
     throw new Error(verification?.error || 'Scanner’s second capture failed; no uncertain fields were used.');
@@ -608,6 +668,7 @@ function selectScannerAccountForJob() {
 
 async function prepareManagerScannerJob(tabId, statusElement) {
   if (currentUser?.role !== 'manager') throw new Error('Only Managers can start Scanner.');
+  await requireScannerFeatureAccess();
   await selectAction('btn-get-jd');
   showJobSection();
   const scanStatus = document.getElementById('scanner-save-status');
@@ -654,6 +715,7 @@ async function saveJobAndStartScanner() {
   }
   if (button) button.disabled = true;
   try {
+    await requireScannerFeatureAccess();
     await notifyScannerStage(targetTabId, status, 'Saving the reviewed job details…');
     const saveResult = await doSave();
     if (!saveResult?.success || !saveResult.job) {
@@ -1009,6 +1071,7 @@ async function runManagerScanner(tabId, statusElement, account, job) {
   const response = await chrome.runtime.sendMessage({
     type: 'DISCOVER_APPLICATION_FORM',
     tabId,
+    managerScanner: true,
     openApplyForm: false,
     expandDynamic: false,
     mode: 'DISCOVERY',
@@ -1049,6 +1112,7 @@ async function runManagerScanner(tabId, statusElement, account, job) {
     const evidenceSave = await chrome.runtime.sendMessage({
       type: 'SAVE_SCANNER_STEP_EVIDENCE',
       tabId,
+      managerScanner: true,
       metadata: {
         siteKey: response.discovery?.siteKey,
         platform: response.discovery?.platform,
@@ -1548,7 +1612,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       textColor: textColor.value,
       backgroundColor: backgroundColor.value,
     };
-    persistPageHighlightRules([...pageHighlightRules, rule], 'Highlight rule added across all websites.')
+    addPageHighlightRule(rule)
       .then(() => { text.value = ''; })
       .catch((error) => setPageHighlightStatus(error.message || 'Could not add this rule.', true));
   });
@@ -2525,6 +2589,8 @@ function setSession(user) {
 
 function clearSession() {
   currentUser = null;
+  managerExtensionFeatures = { canManageTextHighlights: false, canUseScanner: false };
+  managerExtensionFeaturesError = '';
   defaultCandidateId = null;
   const bar = document.getElementById('session-bar');
   if (bar) bar.classList.add('hidden');
@@ -4994,10 +5060,66 @@ function showLogin() {
   scheduleFitPopup();
 }
 
+function updateFeatureGatedControls(user) {
+  const managerMode = user?.role === 'manager';
+  const scannerButton = document.getElementById('btn-discover-site-step');
+  scannerButton?.classList.toggle('hidden', managerMode && !managerExtensionFeatures.canUseScanner);
+  const scannerAccessNote = document.getElementById('scanner-access-note');
+  if (scannerAccessNote) {
+    const showNote = managerMode && !managerExtensionFeatures.canUseScanner;
+    scannerAccessNote.classList.toggle('hidden', !showNote);
+    scannerAccessNote.textContent = showNote
+      ? managerExtensionFeaturesError
+        ? 'Scanner is unavailable because permissions could not be verified. Other extension actions remain available.'
+        : 'Scanner access must be assigned to this Manager by Super. Other extension actions remain available.'
+      : '';
+  }
+}
+
+async function refreshManagerExtensionFeatures() {
+  managerExtensionFeatures = { canManageTextHighlights: false, canUseScanner: false };
+  managerExtensionFeaturesError = '';
+  if (currentUser?.role !== 'manager') return managerExtensionFeatures;
+  const result = await window.api.getManagerExtensionFeatures();
+  if (!result.success || !result.features) {
+    managerExtensionFeaturesError = result.message || 'Could not verify this Manager’s extension permissions.';
+    return managerExtensionFeatures;
+  }
+  managerExtensionFeatures = {
+    canManageTextHighlights: result.features.canManageTextHighlights === true,
+    canUseScanner: result.features.canUseScanner === true,
+  };
+  return managerExtensionFeatures;
+}
+
+async function requireScannerFeatureAccess() {
+  await refreshManagerExtensionFeatures();
+  if (managerExtensionFeatures.canUseScanner) return true;
+  const message = managerExtensionFeaturesError
+    ? `Scanner is unavailable because extension permissions could not be verified: ${managerExtensionFeaturesError}`
+    : 'Super must assign job-site Scanner access to this Manager account.';
+  throw new Error(message);
+}
+
+async function initializeManagerExtensionFeatures(user) {
+  setSession(user);
+  if (user?.role === 'manager') await refreshManagerExtensionFeatures();
+  else managerExtensionFeatures = { canManageTextHighlights: false, canUseScanner: false };
+  try {
+    const highlights = await chrome.runtime.sendMessage({ type: 'GET_GLOBAL_TEXT_HIGHLIGHTS' });
+    if (!highlights?.success) {
+      console.warn('[QTS text highlights] Shared rules were not refreshed after Manager sign-in:', highlights?.message);
+    }
+  } catch (error) {
+    console.warn('[QTS text highlights] Could not refresh shared rules after sign-in:', error);
+  }
+  updateFeatureGatedControls(user);
+}
+
 async function showActionScreen(user) {
+  await initializeManagerExtensionFeatures(user);
   await showPageHighlights();
   await restoreSelectedAction();
-  setSession(user);
   scannerSetupPending = false;
   scannerSelectedAccountId = null;
   document.getElementById('btn-save-and-scan')?.classList.add('hidden');
@@ -5031,7 +5153,7 @@ async function resumeSelectedMode(user) {
     return;
   }
 
-  setSession(user);
+  await initializeManagerExtensionFeatures(user);
   showJobSection();
   await loadCurrentTab({ preferCache: true, allowExtract: true });
 }

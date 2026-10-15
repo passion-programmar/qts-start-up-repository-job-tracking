@@ -4,8 +4,10 @@
   if (root) root.__qtsTextHighlighting = api;
 })(typeof globalThis === 'object' ? globalThis : this, () => {
   const COLOR_PATTERN = /^#[0-9a-f]{6}$/i;
-  const GLOBAL_STORAGE_KEY = 'qtsTextHighlights';
+  const LEGACY_GLOBAL_STORAGE_KEY = 'qtsTextHighlights';
+  const GLOBAL_STORAGE_KEY = 'qtsGlobalTextHighlightsCache';
   const LEGACY_PAGE_STORAGE_PREFIX = 'qtsPageTextHighlights:';
+  const GLOBAL_STORAGE_TIMESTAMP_KEY = 'qtsGlobalTextHighlightsFetchedAt';
 
   function normalizeRule(rule) {
     if (!rule || typeof rule !== 'object') {
@@ -67,10 +69,13 @@
       .filter((key) => key.startsWith(LEGACY_PAGE_STORAGE_PREFIX))
       .sort();
     const sources = [];
-    if (Object.prototype.hasOwnProperty.call(storage, GLOBAL_STORAGE_KEY)) {
-      sources.push(storage[GLOBAL_STORAGE_KEY]);
+    if (Object.prototype.hasOwnProperty.call(storage, LEGACY_GLOBAL_STORAGE_KEY)) {
+      sources.push(storage[LEGACY_GLOBAL_STORAGE_KEY]);
+      legacyKeys.unshift(LEGACY_GLOBAL_STORAGE_KEY);
     }
-    for (const key of legacyKeys) sources.push(storage[key]);
+    for (const key of legacyKeys) {
+      if (key !== LEGACY_GLOBAL_STORAGE_KEY) sources.push(storage[key]);
+    }
 
     const rules = [];
     const ids = new Set();
@@ -101,6 +106,7 @@
     normalizeRules,
     getPageStorageKey,
     getGlobalStorageKey,
+    getGlobalStorageTimestampKey: () => GLOBAL_STORAGE_TIMESTAMP_KEY,
     migratePageRules,
   };
 });

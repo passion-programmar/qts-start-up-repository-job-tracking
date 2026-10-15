@@ -11,6 +11,7 @@ let serverUrl = '';
 let temporaryDatabasePath = '';
 let closeDatabase: (() => Promise<void>) | undefined;
 let managerToken = '';
+let unassignedManagerToken = '';
 let managerId = 0;
 let accountId = 0;
 let jobId = 0;
@@ -40,7 +41,19 @@ before(async () => {
     [superUser.u_id]
   );
   assert.ok(manager);
+  const unassignedManager = await database.queryOne<{ u_id: number }>(
+    `INSERT INTO users (username, name, role, password_hash, parent_user_id)
+     VALUES ('workable-unassigned-manager-test', 'Unassigned Workable Manager Test', 'manager', 'test-hash', $1)
+     RETURNING u_id`,
+    [superUser.u_id]
+  );
+  assert.ok(unassignedManager);
   managerId = Number(manager.u_id);
+  await database.execute(
+    `INSERT INTO manager_extension_feature_assignments (manager_user_id, feature_key, assigned_by)
+     VALUES ($1, 'job_site_scanner', $2)`,
+    [managerId, Number(superUser.u_id)]
+  );
 
   const category = await database.queryOne<{ category_id: number }>(
     `INSERT INTO categories (category_title)
@@ -77,6 +90,7 @@ before(async () => {
     import('../../config/env'),
   ]);
   managerToken = jwtModule.default.sign({ id: managerId, schema: 'new' }, config.jwtSecret);
+  unassignedManagerToken = jwtModule.default.sign({ id: Number(unassignedManager.u_id), schema: 'new' }, config.jwtSecret);
 
   const app = express();
   app.use(express.json());
@@ -140,6 +154,20 @@ it('allows Workable jobs to be claimed and used for application-context and GPT 
   assert.equal(saved.job.selected_accounts[0].account_user_id, accountId);
   jobId = Number(saved.job.selected_accounts[0].job_id);
 
+  const deniedClaim = await fetch(`${serverUrl}/api/v2/jobs/claim-next`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${unassignedManagerToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      accountUserId: accountId,
+      applyRunId: '8b75db44-c7d4-4f57-b8d4-0a2a9c04dc77',
+      supportedTypes: ['workable'],
+    }),
+  });
+  assert.equal(deniedClaim.status, 403);
+
   const claimResponse = await fetch(`${serverUrl}/api/v2/jobs/claim-next`, {
     method: 'POST',
     headers: {
@@ -174,6 +202,16 @@ it('allows Workable jobs to be claimed and used for application-context and GPT 
   assert.equal(context.success, true);
   assert.equal(context.job?.application_type, 'workable');
 
+  const unassignedTaskResponse = await fetch(`${serverUrl}/api/v2/gpt-application-tasks/jobs/${jobId}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${unassignedManagerToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({}),
+  });
+  assert.equal(unassignedTaskResponse.status, 403);
+
   const taskResponse = await fetch(`${serverUrl}/api/v2/gpt-application-tasks/jobs/${jobId}`, {
     method: 'POST',
     headers: {
@@ -186,4 +224,15 @@ it('allows Workable jobs to be claimed and used for application-context and GPT 
   const task = await taskResponse.json() as { success: boolean; taskId?: string };
   assert.equal(task.success, true);
   assert.ok(task.taskId);
+
+  const database = await import('../../database/connection');
+  await database.execute(
+    `DELETE FROM manager_extension_feature_assignments
+     WHERE manager_user_id = $1 AND feature_key = 'job_site_scanner'`,
+    [managerId]
+  );
+  const revokedTaskContext = await fetch(`${serverUrl}/api/v2/gpt-application-tasks/${task.taskId}/context`, {
+    headers: { Authorization: 'Bearer isolated-workable-test-action-key' },
+  });
+  assert.equal(revokedTaskContext.status, 403);
 });

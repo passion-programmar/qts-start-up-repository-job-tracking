@@ -1,6 +1,7 @@
 import { Router, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { AuthRequest, requireAuth, requireSuper } from '../../middleware/auth';
+import { managerHasExtensionFeature } from '../new-schema/extension-feature-access';
 import {
   createApplicationTemplateDraftFromDiscovery,
   deleteApplicationTemplate,
@@ -278,6 +279,16 @@ router.post('/', async (req: AuthRequest, res: Response, next: NextFunction) => 
 
 router.post('/from-discovery', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
+    if (req.role === 'manager' &&
+        (!Number.isSafeInteger(req.userId) || !req.userId ||
+         !(await managerHasExtensionFeature(req.userId, 'job_site_scanner')))) {
+      res.status(403).json({
+        success: false,
+        code: 'EXTENSION_FEATURE_NOT_ASSIGNED',
+        message: 'Your Super administrator has not assigned Scanner access to your Manager account.',
+      });
+      return;
+    }
     const parsed = TemplatePayloadSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({

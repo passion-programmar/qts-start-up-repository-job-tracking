@@ -81,6 +81,14 @@
     const stored = await chrome.storage.local.get(currentStorageKey);
     currentRules = highlighting.normalizeRules(stored[currentStorageKey] || []);
     applyRules(currentRules);
+    try {
+      const response = await chrome.runtime.sendMessage({ type: 'GET_GLOBAL_TEXT_HIGHLIGHTS' });
+      if (!response?.success) {
+        console.warn('[QTS text highlights] Shared rules are unavailable:', response?.message || 'Unknown error.');
+      }
+    } catch (error) {
+      console.warn('[QTS text highlights] Could not request shared rules:', error);
+    }
   }
 
   function observePage() {

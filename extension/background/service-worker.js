@@ -1,6 +1,7 @@
 // Background service worker — tab tracking, capture window, messages
 
 importScripts(
+  '../shared/text-highlighting.js',
   '../shared/application-flow.js',
   '../shared/job-detect.js',
   '../shared/api-prefetch.js',
@@ -43,6 +44,65 @@ let lastSourceTabId = null;
 const lastAutoDetectKeyByTab = new Map();
 const CAPTURE_PANEL_FILE = 'content/capture-panel.js';
 const detectGenerationByTab = new Map();
+const GLOBAL_TEXT_HIGHLIGHT_REFRESH_TTL_MS = 60_000;
+let globalTextHighlightRefreshPromise = null;
+
+async function refreshGlobalTextHighlights() {
+  if (globalTextHighlightRefreshPromise) return globalTextHighlightRefreshPromise;
+  globalTextHighlightRefreshPromise = fetchGlobalTextHighlights();
+  try {
+    return await globalTextHighlightRefreshPromise;
+  } finally {
+    globalTextHighlightRefreshPromise = null;
+  }
+}
+
+async function fetchGlobalTextHighlights() {
+  const highlighting = self.__qtsTextHighlighting;
+  if (!highlighting) return { success: false, message: 'Text highlight helper is unavailable.' };
+
+  const storageKey = highlighting.getGlobalStorageKey();
+  const timestampKey = highlighting.getGlobalStorageTimestampKey();
+  const stored = await chrome.storage.local.get([storageKey, timestampKey]);
+  const cachedRules = highlighting.normalizeRules(stored[storageKey] || []);
+  const cachedAt = Number(stored[timestampKey] || 0);
+  const cacheAge = Date.now() - cachedAt;
+  if (cachedAt > 0 && cacheAge >= 0 && cacheAge < GLOBAL_TEXT_HIGHLIGHT_REFRESH_TTL_MS) {
+    return { success: true, rules: cachedRules, cached: true };
+  }
+
+  const token = await self.__qtsAccountAuth?.getWorkerAuthToken?.();
+  if (!token) {
+    return cachedRules.length
+      ? { success: true, rules: cachedRules, cached: true }
+      : { success: false, message: 'Sign in as a Manager to load shared text highlights.' };
+  }
+
+  const result = await workerApiRequest('GET', '/api/v2/extension-features/highlights');
+  if (!result.success || !Array.isArray(result.rules)) {
+    if (cachedRules.length) {
+      console.warn('[QTS text highlights] Could not refresh shared rules; using the last saved copy:', result.message);
+      return { success: true, rules: cachedRules, cached: true, stale: true };
+    }
+    return { success: false, message: result.message || 'Could not load shared text highlights.' };
+  }
+  const rules = highlighting.normalizeRules(result.rules);
+  await chrome.storage.local.set({
+    [storageKey]: rules,
+    [timestampKey]: Date.now(),
+  });
+  return { success: true, rules, cached: false };
+}
+
+async function verifyManagerScannerAccess() {
+  const result = await workerApiRequest('GET', '/api/v2/extension-features/me');
+  return result.success && result.features?.canUseScanner === true
+    ? { allowed: true }
+    : {
+      allowed: false,
+      message: result.message || 'Super must assign job-site Scanner access to this Manager account.',
+    };
+}
 
 const EXTRACTOR_FILES = [
   'content/extractors/generic.js',
@@ -1833,6 +1893,15 @@ chrome.runtime.onConnect.addListener((port) => {
 });
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.type === 'GET_GLOBAL_TEXT_HIGHLIGHTS') {
+    refreshGlobalTextHighlights()
+      .then(sendResponse)
+      .catch((error) => {
+        console.error('[QTS text highlights] Could not refresh shared rules:', error);
+        sendResponse({ success: false, message: error?.message || 'Could not load shared text highlights.' });
+      });
+    return true;
+  }
   if (msg.type === 'AUTH_SESSION_EXPIRED') {
     disarmJobPageActivity();
     sendResponse({ ok: true });
@@ -1956,6 +2025,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.type === 'DISCOVER_APPLICATION_FORM') {
     (async () => {
+      if (msg.managerScanner === true) {
+        const scannerAccess = await verifyManagerScannerAccess();
+        if (!scannerAccess.allowed) {
+          sendResponse({ success: false, error: scannerAccess.message });
+          return;
+        }
+      }
       let tabId = msg.tabId || lastSourceTabId;
       if (!tabId) {
         const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
@@ -1981,6 +2057,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.type === 'CAPTURE_APPLICATION_STEP') {
     (async () => {
+      if (msg.managerScanner === true) {
+        const scannerAccess = await verifyManagerScannerAccess();
+        if (!scannerAccess.allowed) {
+          sendResponse({ success: false, error: scannerAccess.message });
+          return;
+        }
+      }
       let tabId = msg.tabId || lastSourceTabId;
       if (!tabId) {
         const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
@@ -1999,6 +2082,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.type === 'SAVE_SCANNER_STEP_EVIDENCE') {
     (async () => {
+      if (msg.managerScanner === true) {
+        const scannerAccess = await verifyManagerScannerAccess();
+        if (!scannerAccess.allowed) {
+          sendResponse({ success: false, message: scannerAccess.message });
+          return;
+        }
+      }
       let tabId = msg.tabId || lastSourceTabId;
       if (!tabId) {
         const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });

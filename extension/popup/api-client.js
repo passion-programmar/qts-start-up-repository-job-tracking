@@ -236,6 +236,13 @@ window.api = {
     `/api/auth/extension-bootstrap${accountId ? `?accountId=${encodeURIComponent(accountId)}` : ''}`
   ),
   getAssignedCustomGpt: () => apiRequest('GET', '/api/v2/auth/custom-gpt-assignment'),
+  getManagerExtensionFeatures: () => apiRequest('GET', '/api/v2/extension-features/me'),
+  getGlobalTextHighlights: () => apiRequest('GET', '/api/v2/extension-features/highlights'),
+  createGlobalTextHighlight: (rule) => apiRequest('POST', '/api/v2/extension-features/highlights', rule),
+  updateGlobalTextHighlight: (ruleId, rule) =>
+    apiRequest('PUT', `/api/v2/extension-features/highlights/${encodeURIComponent(ruleId)}`, rule),
+  deleteGlobalTextHighlight: (ruleId) =>
+    apiRequest('DELETE', `/api/v2/extension-features/highlights/${encodeURIComponent(ruleId)}`),
   getManagerApplicationProfile: () => apiRequest('GET', '/api/v2/manager-application-profile'),
   getManagerScannerRules: (templateId) =>
     apiRequest('GET', `/api/v2/manager-application-profile/scanner-rules/${encodeURIComponent(String(templateId))}`),

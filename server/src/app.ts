@@ -3,6 +3,7 @@ import cors from 'cors';
 import newSchemaAuthRoutes from './modules/new-schema/auth.routes';
 import newSchemaUsersRoutes from './modules/new-schema/users.routes';
 import newSchemaCustomGptsRoutes from './modules/new-schema/custom-gpts.routes';
+import newSchemaExtensionFeaturesRoutes from './modules/new-schema/extension-features.routes';
 import newSchemaInterviewsRoutes from './modules/new-schema/interviews.routes';
 import newSchemaCategoriesRoutes from './modules/new-schema/categories.routes';
 import newSchemaSettingsRoutes from './modules/new-schema/settings.routes';
@@ -81,6 +82,7 @@ if (process.env.VERCEL) {
 app.use('/api/v2/auth', newSchemaAuthRoutes);
 app.use('/api/v2/users', newSchemaUsersRoutes);
 app.use('/api/v2/custom-gpts', newSchemaCustomGptsRoutes);
+app.use('/api/v2/extension-features', newSchemaExtensionFeaturesRoutes);
 app.use('/api/v2/interviews', newSchemaInterviewsRoutes);
 app.use('/api/v2/categories', newSchemaCategoriesRoutes);
 app.use('/api/v2/settings', newSchemaSettingsRoutes);

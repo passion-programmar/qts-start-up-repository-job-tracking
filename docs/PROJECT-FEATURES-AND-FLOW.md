@@ -75,6 +75,12 @@ extension means distributing or reloading the files in `extension/` separately.
 The Custom GPT Action is an external integration, assigned by Super and
 authorized to the API with a separate action key.
 
+Super assigns Job-site Scanner and text-highlight management independently to
+each Manager from the People page. Scanner API operations check the assignment
+server-side. Shared text-highlight rules are stored in the database and read by
+all signed-in Managers; only Managers assigned text-highlight management can
+edit them in the extension.
+
 ### Main code map
 
 | Area | Main location | Responsibility |
@@ -115,7 +121,7 @@ access-control boundary.
 
 | Role | Main responsibilities in the current web app |
 |---|---|
-| **Super** | Create/manage Admins, maintain categories and global settings, assign Custom GPTs, inspect the protected database browser, review/promote application templates, view broad analytics |
+| **Super** | Create/manage Admins, maintain categories and global settings, assign Custom GPTs and Manager extension features, inspect the protected database browser, review/promote application templates, view broad analytics |
 | **Admin** | Manage their organization’s Managers and Callers, jobs, categories, interviews, and scoped analytics |
 | **Manager** | Manage Account profiles, job rows, application answers, resume PDFs, bids, interviews, and explicit Scanner sessions |
 | **Caller** | View assigned interviews and record the interview outcome/comment |

@@ -50,6 +50,11 @@ before(async () => {
   assert.ok(manager);
   assert.ok(otherManager);
   managerId = Number(manager.u_id);
+  await database.execute(
+    `INSERT INTO manager_extension_feature_assignments (manager_user_id, feature_key, assigned_by)
+     VALUES ($1, 'job_site_scanner', $2), ($3, 'job_site_scanner', $2)`,
+    [managerId, Number(superUser.u_id), Number(otherManager.u_id)]
+  );
 
   const category = await database.queryOne<{ category_id: number }>(
     `INSERT INTO categories (category_title)

@@ -37,12 +37,17 @@ The **QTS_Startup** Chrome extension lets **Managers** capture job postings for 
 - Saves everything to the QTS database (visible to manager and admin)
 - Lets you create, edit, and delete text-highlighting rules that apply across websites
 
-Text-highlight rules include a text color and background color. They are saved
-in the current Chrome profile and apply automatically on supported HTTP and
-HTTPS websites. Existing page-specific rules are migrated to the shared rule
-list the next time you open the highlights panel. Chrome-restricted pages do not
-allow extension highlighting. Open the QTS window from a supported page to add,
-edit, or delete rules.
+Text-highlight rules include a text color and background color. Rules are saved
+in the QTS database and apply automatically on supported HTTP and HTTPS
+websites for every Manager who signs into the extension. Super controls which
+Managers can add, edit, or delete shared rules from the extension. Existing
+rules saved only in a Chrome profile can be imported into the shared database
+from that Manager's highlights panel. Chrome-restricted pages do not allow
+extension highlighting.
+
+Super also assigns **Job-site Scanner** access separately from highlight
+management. Managers without Scanner access can still use the extension's
+other actions, including Get JD, but cannot run Scanner.
 
 ```text
 Job site (LinkedIn, Indeed, etc.)

@@ -223,6 +223,31 @@ async function runMigrations(): Promise<void> {
       assigned_date TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+  await execute(`
+    CREATE TABLE IF NOT EXISTS manager_extension_feature_assignments (
+      manager_user_id INTEGER NOT NULL REFERENCES users(u_id) ON DELETE CASCADE,
+      feature_key TEXT NOT NULL CHECK (feature_key IN ('text_highlights_manage', 'job_site_scanner')),
+      assigned_by INTEGER REFERENCES users(u_id) ON DELETE SET NULL,
+      assigned_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (manager_user_id, feature_key)
+    )
+  `);
+  await execute(`
+    CREATE TABLE IF NOT EXISTS global_text_highlight_rules (
+      rule_id TEXT PRIMARY KEY,
+      text TEXT NOT NULL CHECK (length(trim(text)) > 0 AND length(text) <= 500),
+      text_color TEXT NOT NULL CHECK (text_color ~ '^#[0-9a-fA-F]{6}$'),
+      background_color TEXT NOT NULL CHECK (background_color ~ '^#[0-9a-fA-F]{6}$'),
+      created_by INTEGER REFERENCES users(u_id) ON DELETE SET NULL,
+      updated_by INTEGER REFERENCES users(u_id) ON DELETE SET NULL,
+      created_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_date TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await execute(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_global_text_highlight_rules_text
+    ON global_text_highlight_rules (lower(trim(text)))
+  `);
 
   await execute(`
     CREATE TABLE IF NOT EXISTS admins (

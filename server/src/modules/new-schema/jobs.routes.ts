@@ -7,6 +7,7 @@ import {
 } from '../../middleware/new-schema-auth';
 import { normalizeUrl } from '../../utilities/normalize-url';
 import { logger } from '../../utilities/logger';
+import { requireManagerExtensionFeature } from './extension-feature-access';
 
 const router = Router();
 router.use(requireNewSchemaAuth);
@@ -259,6 +260,7 @@ router.post('/claim-next', async (req: NewSchemaAuthRequest, res: Response) => {
     res.status(403).json({ success: false, message: 'Only Managers can start jobs from their job list.' });
     return;
   }
+  if (!(await requireManagerExtensionFeature(req, res, 'job_site_scanner'))) return;
   const parsedBody = z.object({
     url: z.string().url().max(2000).optional(),
     jobId: z.number().int().positive().optional(),

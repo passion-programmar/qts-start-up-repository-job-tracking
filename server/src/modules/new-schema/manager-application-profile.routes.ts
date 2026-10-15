@@ -2,6 +2,7 @@ import { Router, Response } from 'express';
 import { z } from 'zod';
 import { queryAll, queryOne, withTransaction } from '../../database/connection';
 import { NewSchemaAuthRequest, requireNewSchemaAuth } from '../../middleware/new-schema-auth';
+import { requireManagerExtensionFeature } from './extension-feature-access';
 
 const router = Router();
 router.use(requireNewSchemaAuth);
@@ -238,6 +239,7 @@ router.get('/', async (req: NewSchemaAuthRequest, res: Response) => {
 router.get('/scanner-rules/:templateId', async (req: NewSchemaAuthRequest, res: Response) => {
   const managerId = resolveManagerId(req, res);
   if (managerId === null) return;
+  if (!(await requireManagerExtensionFeature(req, res, 'job_site_scanner'))) return;
   const templateId = Number(req.params.templateId);
   if (!Number.isSafeInteger(templateId) || templateId <= 0) {
     res.status(400).json({ success: false, message: 'Invalid site template ID.' });
@@ -266,6 +268,7 @@ router.get('/scanner-rules/:templateId', async (req: NewSchemaAuthRequest, res: 
 router.post('/scanner-rules', async (req: NewSchemaAuthRequest, res: Response) => {
   const managerId = resolveManagerId(req, res);
   if (managerId === null) return;
+  if (!(await requireManagerExtensionFeature(req, res, 'job_site_scanner'))) return;
   const parsed = scannerRuleSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({
@@ -403,6 +406,7 @@ router.post('/scanner-rules', async (req: NewSchemaAuthRequest, res: Response) =
 router.post('/scanner-rules/evidence', async (req: NewSchemaAuthRequest, res: Response) => {
   const managerId = resolveManagerId(req, res);
   if (managerId === null) return;
+  if (!(await requireManagerExtensionFeature(req, res, 'job_site_scanner'))) return;
   const parsed = z.object({
     templateId: z.number().int().positive(),
     fieldId: z.string().trim().min(1).max(255),

@@ -14,6 +14,10 @@ import {
 } from '../document-builder/document.schemas';
 import { NewSchemaAuthRequest, requireNewSchemaAuth } from '../../middleware/new-schema-auth';
 import { config } from '../../config/env';
+import {
+  managerHasExtensionFeature,
+  requireManagerExtensionFeature,
+} from './extension-feature-access';
 
 const router = Router();
 const taskIdSchema = z.string().regex(/^task_[0-9a-f-]{36}$/i);
@@ -114,6 +118,21 @@ function isManager(req: NewSchemaAuthRequest, res: Response): boolean {
   return false;
 }
 
+async function isScannerManager(req: NewSchemaAuthRequest, res: Response): Promise<boolean> {
+  return isManager(req, res) &&
+    await requireManagerExtensionFeature(req, res, 'job_site_scanner');
+}
+
+async function requireScannerTaskAssignment(task: TaskRow, res: Response): Promise<boolean> {
+  if (await managerHasExtensionFeature(task.manager_user_id, 'job_site_scanner')) return true;
+  res.status(403).json({
+    success: false,
+    code: 'EXTENSION_FEATURE_NOT_ASSIGNED',
+    message: 'Super must assign job-site Scanner access to the Manager who owns this task.',
+  });
+  return false;
+}
+
 function actionKeyConfigured(res: Response): boolean {
   if (config.gptActionApiKey) return true;
   res.status(503).json({
@@ -172,7 +191,7 @@ function taskContextParts(context: Record<string, unknown>) {
 }
 
 router.post('/jobs/:jobId', requireNewSchemaAuth, async (req: NewSchemaAuthRequest, res: Response) => {
-  if (!isManager(req, res)) return;
+  if (!(await isScannerManager(req, res))) return;
   if (!actionKeyConfigured(res)) return;
   const jobId = Number.parseInt(req.params.jobId, 10);
   if (!Number.isSafeInteger(jobId) || jobId <= 0) {
@@ -362,7 +381,7 @@ router.post('/jobs/:jobId', requireNewSchemaAuth, async (req: NewSchemaAuthReque
 });
 
 router.put('/:taskId/page', requireNewSchemaAuth, async (req: NewSchemaAuthRequest, res: Response) => {
-  if (!isManager(req, res)) return;
+  if (!(await isScannerManager(req, res))) return;
   const task = await loadManagerTask(req, res, req.params.taskId);
   if (!task) return;
   if (task.status === 'completed' || task.status === 'failed') {
@@ -417,7 +436,7 @@ router.put('/:taskId/page', requireNewSchemaAuth, async (req: NewSchemaAuthReque
 });
 
 router.post('/:taskId/scanner-acknowledge', requireNewSchemaAuth, async (req: NewSchemaAuthRequest, res: Response) => {
-  if (!isManager(req, res)) return;
+  if (!(await isScannerManager(req, res))) return;
   const task = await loadManagerTask(req, res, req.params.taskId);
   if (!task) return;
   if (!['waiting_for_gpt', 'ready'].includes(task.status)) {
@@ -454,6 +473,7 @@ router.get('/:taskId/context', requireGptActionKey, async (req, res: Response) =
     res.status(404).json({ success: false, message: 'GPT application task not found.' });
     return;
   }
+  if (!(await requireScannerTaskAssignment(task, res))) return;
   if (task.status !== 'waiting_for_gpt') {
     res.status(409).json({ success: false, message: 'No application page is currently waiting for a GPT response.' });
     return;
@@ -495,6 +515,7 @@ router.post('/:taskId/package', requireGptActionKey, async (req, res: Response) 
     res.status(404).json({ success: false, message: 'GPT application task not found.' });
     return;
   }
+  if (!(await requireScannerTaskAssignment(task, res))) return;
   const parsed = taskPackageSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({
@@ -661,6 +682,7 @@ router.get('/:taskId/status', requireGptActionKey, async (req, res: Response) =>
     res.status(404).json({ success: false, message: 'GPT application task not found.' });
     return;
   }
+  if (!(await requireScannerTaskAssignment(task, res))) return;
   await execute(
     `UPDATE gpt_application_tasks SET last_activity_at = NOW(), updated_at = NOW(),
        resume_text_expires_at = CASE WHEN resume_text IS NULL THEN NULL ELSE NOW() + INTERVAL '30 days' END
@@ -678,7 +700,7 @@ router.get('/:taskId/status', requireGptActionKey, async (req, res: Response) =>
 });
 
 router.get('/:taskId/extension-status', requireNewSchemaAuth, async (req: NewSchemaAuthRequest, res: Response) => {
-  if (!isManager(req, res)) return;
+  if (!(await isScannerManager(req, res))) return;
   const task = await loadManagerTask(req, res, req.params.taskId);
   if (!task) return;
   await execute(
@@ -701,7 +723,7 @@ router.get('/:taskId/extension-status', requireNewSchemaAuth, async (req: NewSch
 });
 
 router.get('/:taskId/documents/:documentType', requireNewSchemaAuth, async (req: NewSchemaAuthRequest, res: Response) => {
-  if (!isManager(req, res)) return;
+  if (!(await isScannerManager(req, res))) return;
   const task = await loadManagerTask(req, res, req.params.taskId);
   if (!task) return;
   const documentType = req.params.documentType;
@@ -724,7 +746,7 @@ router.get('/:taskId/documents/:documentType', requireNewSchemaAuth, async (req:
 });
 
 router.delete('/:taskId/documents/:documentType', requireNewSchemaAuth, async (req: NewSchemaAuthRequest, res: Response) => {
-  if (!isManager(req, res)) return;
+  if (!(await isScannerManager(req, res))) return;
   const task = await loadManagerTask(req, res, req.params.taskId);
   if (!task) return;
   const documentType = req.params.documentType;
@@ -745,7 +767,7 @@ router.delete('/:taskId/documents/:documentType', requireNewSchemaAuth, async (r
 });
 
 router.post('/:taskId/finish', requireNewSchemaAuth, async (req: NewSchemaAuthRequest, res: Response) => {
-  if (!isManager(req, res)) return;
+  if (!(await isScannerManager(req, res))) return;
   const task = await loadManagerTask(req, res, req.params.taskId);
   if (!task) return;
   const result = await execute(

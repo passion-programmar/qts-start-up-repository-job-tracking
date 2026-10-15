@@ -66,7 +66,7 @@ test('storage keys reject non-web pages', () => {
 });
 
 test('global storage key is independent of the current page', () => {
-  assert.equal(getGlobalStorageKey(), 'qtsTextHighlights');
+  assert.equal(getGlobalStorageKey(), 'qtsGlobalTextHighlightsCache');
 });
 
 test('page-specific rules migrate to global storage and merge duplicate text', () => {
@@ -97,6 +97,7 @@ test('page-specific rules migrate to global storage and merge duplicate text', (
   }), {
     rules: [baseRule, migratedRule],
     legacyKeys: [
+      'qtsTextHighlights',
       'qtsPageTextHighlights:https%3A%2F%2Fa.example%2F',
       'qtsPageTextHighlights:https%3A%2F%2Fb.example%2F',
     ],
