@@ -266,12 +266,11 @@ paths:
       operationId: getTaskContext
       x-openai-isConsequential: false
       summary: Get the current application page and grounded candidate context
-      description: |
-        Automatically call this Action when starting a PROCESS_TASK; do not ask
-        the Manager whether to retrieve the task context. Read the current page.
-        Use only supplied profile facts and return answers with their exact
-        stableFieldId. Report missing, ambiguous, consent, or legal questions as
-        unresolvedFields when submitting.
+      description: >-
+        Call automatically for each PROCESS_TASK; do not ask the Manager. Read
+        the current page and use only supplied profile facts. Return answers
+        with exact stableFieldIds; report missing, ambiguous, consent, or legal
+        fields as unresolved.
       parameters:
         - name: taskId
           in: path
@@ -302,12 +301,10 @@ paths:
       operationId: submitTaskPackage
       summary: Submit grounded answers and any requested document data
       description: >
-        Automatically call this Action after processing the current page for
-        PROCESS_TASK; do not ask the Manager whether to submit the package.
-        Submit answers using exact stableFieldIds. Report missing or unclear fields
-        as unresolvedFields; discuss them with the Manager and resubmit this task.
-        Include resume or coverLetter JSON only when requested; QTS renders PDFs.
-        The extension fills resolved answers. Never submit the job application.
+        Call automatically after each PROCESS_TASK page; do not ask. Submit exact
+        stableFieldIds. Mark unclear fields unresolved, discuss missing facts,
+        and resubmit. Include requested resume or coverLetter JSON only; QTS
+        renders PDFs. Never submit the job application.
       parameters:
         - name: taskId
           in: path
