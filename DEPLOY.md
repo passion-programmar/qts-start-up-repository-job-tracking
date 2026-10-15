@@ -30,6 +30,9 @@ The extension adds the selected instructions to the ChatGPT request as
 user-message instructions (not a ChatGPT system-role message).
 Scanner-generated resume PDFs render
 `**bold**` emphasis in experience bullets as bold text.
+Scanner packages can include generated resumes and cover letters even when the
+current application step has no document upload fields; the Manager can review
+the documents for later steps.
 The retired Manager Apply queue and
 Workable-specific application handler are not part of this workflow.
 

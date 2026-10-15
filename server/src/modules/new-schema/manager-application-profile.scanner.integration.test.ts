@@ -369,7 +369,7 @@ it('rejects non-Manager writes and prevents reading another Manager’s rules', 
   assert.deepEqual(response.rules, []);
 });
 
-it('keeps Scanner GPT generation scoped to the selected processing job and requires page acknowledgement', async () => {
+it('keeps Scanner GPT generation scoped to the selected job and accepts documents without page upload fields', async () => {
   const createResponse = await fetch(`${serverUrl}/api/v2/gpt-application-tasks/jobs/${processingJobId}`, {
     method: 'POST',
     headers: {
@@ -393,18 +393,6 @@ it('keeps Scanner GPT generation scoped to the selected processing job and requi
       fieldType: 'textarea',
       required: true,
       manualReview: true,
-    }, {
-      stableFieldId: 'scanner-resume-upload',
-      label: 'Resume',
-      fieldType: 'file',
-      documentSlot: 'resume',
-      required: true,
-    }, {
-      stableFieldId: 'scanner-cover-letter-upload',
-      label: 'Cover letter',
-      fieldType: 'file',
-      documentSlot: 'cover_letter',
-      required: true,
     }],
     jobDescription: 'A test role description.',
   };

@@ -627,14 +627,6 @@ router.post('/:taskId/package', requireTaskPackageAuth, async (req: NewSchemaAut
     pageFields.filter((field) => field.fieldType === 'file')
       .map((field) => field.documentSlot || 'resume')
   );
-  if (parsed.data.resume && !requestedDocuments.has('resume')) {
-    res.status(400).json({ success: false, message: 'Resume JSON was not requested by a file field on the current page.' });
-    return;
-  }
-  if (parsed.data.coverLetter && !requestedDocuments.has('cover_letter')) {
-    res.status(400).json({ success: false, message: 'Cover letter JSON was not requested by a file field on the current page.' });
-    return;
-  }
   if (pageFields.some((field) => field.fieldType === 'file' && field.required) &&
       [...requestedDocuments].some((type) =>
         pageFields.some((field) => field.fieldType === 'file' && field.required
