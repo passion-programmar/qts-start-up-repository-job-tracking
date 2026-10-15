@@ -261,6 +261,7 @@ paths:
   /api/v2/gpt-application-tasks/{taskId}/context:
     get:
       operationId: getTaskContext
+      x-openai-isConsequential: false
       summary: Get the current application page and grounded candidate context
       description: |
         For each PROCESS_TASK, read the current page. Use only supplied profile
@@ -348,6 +349,7 @@ paths:
   /api/v2/gpt-application-tasks/{taskId}/status:
     get:
       operationId: getTaskStatus
+      x-openai-isConsequential: false
       summary: Check whether a submitted answer package was accepted
       description: |
         Optional verification after submitTaskPackage. The extension independently

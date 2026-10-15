@@ -20,7 +20,12 @@ below. Existing Custom GPT configurations do not update automatically.
 3. Set Action authentication to **API Key**, **Bearer**, and enter the same
    `GPT_ACTION_API_KEY` value configured on the API deployment. Never paste the
    key into GPT instructions, source code, or a conversation.
-4. Save the GPT and assign it to the Manager in QTS. Reload the unpacked
+4. In the Action's approval settings, choose **Always allow** for eligible
+   read-only Actions if you want to avoid approving each read. The OpenAPI
+   contract marks `getTaskContext` and `getTaskStatus` as non-consequential.
+   Keep approval enabled for `submitTaskPackage`: it writes generated answers
+   and documents to the task and can make them available to the extension.
+5. Save/update the GPT and assign it to the Manager in QTS. Reload the unpacked
    extension after installing an extension update.
 
 ## Add these GPT instructions
