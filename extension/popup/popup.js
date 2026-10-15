@@ -20,6 +20,7 @@ let currentTabUrl = '';
 let pageHighlightStorageKey = '';
 let pageHighlightRules = [];
 let pageHighlightMigrationMessage = '';
+let pageHighlightsReturnView = null;
 let managerExtensionFeatures = {
   canManageTextHighlights: false,
   canUseScanner: false,
@@ -271,10 +272,21 @@ async function showPageHighlights() {
     hidePageHighlights();
     return;
   }
+  if (!pageHighlightsReturnView) {
+    pageHighlightsReturnView = document.getElementById('job-section')?.classList.contains('hidden')
+      ? 'action'
+      : 'job';
+  }
+  document.getElementById('login-section')?.classList.add('hidden');
+  document.getElementById('action-section')?.classList.add('hidden');
+  document.getElementById('job-section')?.classList.add('hidden');
+  document.getElementById('action-bar')?.classList.add('hidden');
   panel.classList.remove('hidden');
   document.querySelectorAll('.btn-text-highlights').forEach((button) => {
     button.setAttribute('aria-expanded', 'true');
   });
+  panel.scrollIntoView({ block: 'start' });
+  scheduleFitPopup();
   setPageHighlightStatus('Loading shared database rules…');
   try {
     await ensurePageHighlightContext();
@@ -288,6 +300,8 @@ async function showPageHighlights() {
     setPageHighlightStatus(`${status}${pageHighlightMigrationMessage}`);
   } catch (error) {
     setPageHighlightStatus(error.message || 'Could not load global highlights.', true);
+  } finally {
+    scheduleFitPopup();
   }
 }
 
@@ -298,12 +312,30 @@ function hidePageHighlights() {
   });
 }
 
-async function togglePageHighlights() {
+function returnFromPageHighlights() {
+  const returnView = pageHighlightsReturnView;
+  pageHighlightsReturnView = null;
+  hidePageHighlights();
+  document.getElementById('login-section')?.classList.add('hidden');
+  if (returnView === 'job') {
+    document.getElementById('action-section')?.classList.add('hidden');
+    document.getElementById('job-section')?.classList.remove('hidden');
+    document.getElementById('action-bar')?.classList.remove('hidden');
+  } else {
+    document.getElementById('job-section')?.classList.add('hidden');
+    document.getElementById('action-section')?.classList.remove('hidden');
+    document.getElementById('action-bar')?.classList.add('hidden');
+  }
+  scheduleFitPopup();
+}
+
+async function openPageHighlights() {
   const panel = document.getElementById('page-highlights');
   if (!panel) return;
   await refreshManagerExtensionFeatures();
   if (!managerExtensionFeatures.canManageTextHighlights) {
-    hidePageHighlights();
+    if (!panel.classList.contains('hidden')) returnFromPageHighlights();
+    else hidePageHighlights();
     const alertId = document.getElementById('job-section')?.classList.contains('hidden')
       ? 'action-alert'
       : 'main-alert';
@@ -314,14 +346,7 @@ async function togglePageHighlights() {
     );
     return;
   }
-  if (panel.classList.contains('hidden')) {
-    await showPageHighlights();
-    if (!panel.classList.contains('hidden')) {
-      panel.scrollIntoView({ block: 'nearest' });
-    }
-    return;
-  }
-  hidePageHighlights();
+  await showPageHighlights();
 }
 
 function confirmGetJobDetails() {
@@ -1635,11 +1660,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('btn-login').addEventListener('click', doLogin);
   document.querySelectorAll('.btn-text-highlights').forEach((button) => {
     button.addEventListener('click', () => {
-      togglePageHighlights().catch((error) => {
+      openPageHighlights().catch((error) => {
         setPageHighlightStatus(error.message || 'Could not open text highlight management.', true);
       });
     });
   });
+  document.getElementById('btn-close-page-highlights')?.addEventListener('click', returnFromPageHighlights);
   document.getElementById('page-highlight-form')?.addEventListener('submit', (event) => {
     event.preventDefault();
     const text = document.getElementById('page-highlight-text');
@@ -5093,6 +5119,7 @@ async function doRefresh() {
 
 // ---- UI helpers ----
 function showLogin() {
+  pageHighlightsReturnView = null;
   hidePageHighlights();
   document.getElementById('login-section').classList.remove('hidden');
   document.getElementById('action-section').classList.add('hidden');
@@ -5114,7 +5141,13 @@ function updateFeatureGatedControls(user) {
   document.querySelectorAll('.btn-text-highlights').forEach((button) => {
     button.classList.toggle('hidden', !canManageHighlights);
   });
-  if (!canManageHighlights) hidePageHighlights();
+  if (!canManageHighlights) {
+    if (!document.getElementById('page-highlights')?.classList.contains('hidden')) {
+      returnFromPageHighlights();
+    } else {
+      hidePageHighlights();
+    }
+  }
   const saveAndScanButton = document.getElementById('btn-save-and-scan');
   if (scannerUnavailable) {
     saveAndScanButton?.classList.add('hidden');
@@ -5181,6 +5214,7 @@ async function initializeManagerExtensionFeatures(user) {
 
 async function showActionScreen(user) {
   await initializeManagerExtensionFeatures(user);
+  pageHighlightsReturnView = null;
   hidePageHighlights();
   await restoreSelectedAction();
   scannerSetupPending = false;
@@ -5215,6 +5249,7 @@ async function resumeSelectedMode(user) {
 }
 
 function showJobSection() {
+  pageHighlightsReturnView = null;
   document.getElementById('login-section').classList.add('hidden');
   document.getElementById('action-section').classList.add('hidden');
   document.getElementById('job-section').classList.remove('hidden');
