@@ -21,7 +21,7 @@ export const ResumeSectionSchema = z.object({
   items: z.array(ResumeSectionItemSchema).min(1),
 });
 
-/** JSON resume payload from Custom GPT — matches docs/schemas/resume-document.schema.json */
+/** JSON resume payload from Scanner ChatGPT — matches docs/schemas/resume-document.schema.json */
 export const ResumeDocumentSchema = z.object({
   candidate: CandidateContactSchema,
   targetRole: z.string().min(1).max(300),

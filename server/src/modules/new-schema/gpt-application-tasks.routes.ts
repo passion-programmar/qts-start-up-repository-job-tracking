@@ -719,6 +719,14 @@ router.get('/:taskId/extension-status', requireNewSchemaAuth, async (req: NewSch
   const task = await loadManagerTask(req, res, req.params.taskId);
   if (!task) return;
   const { candidate, managerAnswers } = taskContextParts(task.task_context);
+  const assignedPrompt = await queryOne<{ id: number; name: string; content: string }>(
+    `SELECT prompt.prompt_id AS id, prompt.prompt_name AS name,
+            prompt.prompt_content AS content
+     FROM manager_scanner_prompt_assignments assignment
+     JOIN prompts prompt ON prompt.prompt_id = assignment.prompt_id
+     WHERE assignment.manager_user_id = $1`,
+    [task.manager_user_id]
+  );
   await execute(
     `UPDATE gpt_application_tasks
      SET last_activity_at = NOW(), updated_at = NOW(),
@@ -732,6 +740,7 @@ router.get('/:taskId/extension-status', requireNewSchemaAuth, async (req: NewSch
     status: task.status,
     pageNumber: task.page_number,
     jobContext: task.task_context.jobContext || {},
+    assignedPrompt: assignedPrompt || null,
     candidate,
     managerAnswers,
     resumeText: task.resume_text || '',

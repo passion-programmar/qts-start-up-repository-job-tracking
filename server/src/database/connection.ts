@@ -810,6 +810,14 @@ async function runMigrations(): Promise<void> {
       updated_date TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+  await execute(`
+    CREATE TABLE IF NOT EXISTS manager_scanner_prompt_assignments (
+      manager_user_id INTEGER PRIMARY KEY REFERENCES users(u_id) ON DELETE CASCADE,
+      prompt_id INTEGER NOT NULL REFERENCES prompts(prompt_id) ON DELETE RESTRICT,
+      assigned_by INTEGER REFERENCES users(u_id) ON DELETE SET NULL,
+      assigned_date TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
 
   await execute('CREATE INDEX IF NOT EXISTS idx_users_parent ON users(parent_user_id)');
   await execute('CREATE INDEX IF NOT EXISTS idx_users_role_parent ON users(role, parent_user_id)');
@@ -1140,7 +1148,7 @@ function runPgDump(destination: string): Promise<void> {
 async function runLogicalBackup(destination: string): Promise<void> {
   const tables = [
     'categories', 'users', 'job_list', 'job_account_assignments', 'bids', 'interviews', 'app_settings', 'prompts',
-    'custom_gpts', 'manager_custom_gpt_assignments',
+    'custom_gpts', 'manager_custom_gpt_assignments', 'manager_scanner_prompt_assignments',
     'manager_application_profiles', 'manager_salary_answers', 'manager_custom_application_answers',
     'account_application_profiles', 'account_custom_application_answers',
     'gpt_application_tasks', 'gpt_application_task_documents',

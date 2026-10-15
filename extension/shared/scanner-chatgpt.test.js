@@ -2,18 +2,30 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const scannerChatGpt = require('./scanner-chatgpt');
 
-test('prompt includes scoped task context and strict output instructions', () => {
+test('prompt includes assigned instructions, scoped task context, and package contract', () => {
   const prompt = scannerChatGpt.buildPrompt({
+    assignedPrompt: { name: 'Engineering', content: 'Tailor the resume for platform engineering.' },
     jobContext: { jobTitle: 'Software Engineer' },
     candidate: { fullName: 'Taylor Candidate' },
     page: { fields: [{ stableFieldId: 'field:email', label: 'Email' }] },
   });
 
+  assert.match(prompt, /Tailor the resume for platform engineering/);
   assert.match(prompt, /Software Engineer/);
   assert.match(prompt, /Taylor Candidate/);
   assert.match(prompt, /field:email/);
-  assert.match(prompt, /Return exactly one valid JSON object/);
-  assert.match(prompt, /Never invent or infer personal facts/);
+  assert.match(prompt, /Return one JSON object only/);
+  assert.match(prompt, /exact page field ID/);
+  assert.match(prompt, /never copy sample names\/contact details/);
+  assert.match(prompt, /Original Title \| two relevant keywords/);
+  assert.match(prompt, /double asterisks/);
+});
+
+test('prompt supplies a safe built-in instruction when no Manager prompt is assigned', () => {
+  const prompt = scannerChatGpt.buildPrompt({ candidate: { fullName: 'Taylor Candidate' } });
+
+  assert.match(prompt, /safe, concise, ATS-friendly application materials/);
+  assert.match(prompt, /using only verified candidate profile information/);
 });
 
 test('extracts raw and fenced JSON packages, including braces inside strings', () => {

@@ -90,6 +90,38 @@ function writePdfBuffer(build: (doc: PDFKit.PDFDocument) => void, margin = 54): 
   });
 }
 
+function writeBullet(
+  doc: PDFKit.PDFDocument,
+  bullet: string,
+  options: PDFKit.Mixins.TextOptions,
+  regularFont: string,
+  boldFont: string
+): void {
+  const tokens = bullet.split(/(\*\*[^*]+\*\*)/g).filter(Boolean);
+  const runs = tokens.map((token) => {
+    const bold = token.startsWith('**') && token.endsWith('**');
+    return {
+      text: bold ? token.slice(2, -2) : token,
+      font: bold ? boldFont : regularFont,
+    };
+  });
+
+  if (!runs.length) {
+    doc.font(regularFont).text('• ', options);
+    return;
+  }
+
+  runs.forEach((run, index) => {
+    const first = index === 0;
+    doc.font(run.font).text(
+      `${first ? '• ' : ''}${run.text}`,
+      first
+        ? { ...options, continued: index < runs.length - 1 }
+        : { continued: index < runs.length - 1 }
+    );
+  });
+}
+
 function contactLine(doc: PDFKit.PDFDocument, parts: string[]) {
   const line = parts.filter(Boolean).join('  |  ');
   if (line) {
@@ -177,8 +209,14 @@ function buildModernResume(
       }
       for (const bullet of item.bullets || []) {
         doc.moveDown(0.12);
-        doc.font('Resume-Regular').fontSize(baseSize).fillColor('#334155')
-          .text(`• ${bullet}`, { indent: 10, lineGap: compact ? 0 : 1 });
+        doc.fontSize(baseSize).fillColor('#334155');
+        writeBullet(
+          doc,
+          bullet,
+          { indent: 10, lineGap: compact ? 0 : 1 },
+          'Resume-Regular',
+          'Resume-Bold'
+        );
       }
       doc.moveDown(compact ? 0.12 : 0.25);
     }
@@ -329,8 +367,14 @@ function buildFlowCvResume(doc: PDFKit.PDFDocument, resume: ResumeDocumentInput)
       }
 
       for (const bullet of item.bullets || []) {
-        doc.font('Resume-Slab').fontSize(bodySize).fillColor(flowCvColors.body)
-          .text(`• ${bullet}`, { width, indent: 8, lineGap: 0.8, paragraphGap: 1 });
+        doc.fontSize(bodySize).fillColor(flowCvColors.body);
+        writeBullet(
+          doc,
+          bullet,
+          { width, indent: 8, lineGap: 0.8, paragraphGap: 1 },
+          'Resume-Slab',
+          'Resume-Slab-Bold'
+        );
       }
       doc.moveDown(0.3);
     }
@@ -380,7 +424,8 @@ function buildClassicResume(doc: PDFKit.PDFDocument, resume: ResumeDocumentInput
           doc.font('Resume-Regular').fontSize(10).fillColor('#475569').text(item.subheading);
         }
         for (const bullet of item.bullets || []) {
-          doc.font('Resume-Regular').fontSize(10).fillColor('#334155').text(`• ${bullet}`, { indent: 12, lineGap: 1 });
+          doc.fontSize(10).fillColor('#334155');
+          writeBullet(doc, bullet, { indent: 12, lineGap: 1 }, 'Resume-Regular', 'Resume-Bold');
         }
         doc.moveDown(0.25);
       }

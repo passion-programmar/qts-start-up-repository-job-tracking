@@ -200,6 +200,19 @@ const TABLES = {
       assigned_by: { type: 'integer', nullable: true },
     },
   },
+  manager_scanner_prompt_assignments: {
+    label: 'Manager Scanner prompt assignments',
+    description: 'One optional shared Scanner prompt assigned to each Manager.',
+    columns: ['manager_user_id', 'prompt_id', 'assigned_by', 'assigned_date'],
+    searchColumns: ['manager_user_id', 'prompt_id'],
+    orderBy: 'manager_user_id',
+    primaryKey: 'manager_user_id',
+    fields: {
+      manager_user_id: { type: 'integer', required: true, primaryKey: true },
+      prompt_id: { type: 'integer', required: true },
+      assigned_by: { type: 'integer', nullable: true },
+    },
+  },
   account_apply_runs: {
     label: 'Active Apply runs',
     description: 'Account-level run locks used while applications are processing.',

@@ -24,8 +24,8 @@ type NavIconName =
   | 'chart'
   | 'database'
   | 'template'
-  | 'user'
   | 'message'
+  | 'user'
   | 'team'
   | 'tag'
   | 'calendar'
@@ -37,6 +37,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: '/analytics', label: 'Analytics', icon: 'chart', page: 'analytics', modes: ['admin', 'manager'] },
   { href: '/database', label: 'Database', icon: 'database', page: 'database', modes: ['admin'], roles: ['super'] },
   { href: '/application-templates', label: 'Template Review', icon: 'template', page: 'application-templates', modes: ['admin'], roles: ['super'] },
+  { href: '/prompts', label: 'Prompts', icon: 'message', page: 'prompts', modes: ['admin'], roles: ['super'] },
   { href: '/accounts', label: 'Account Profiles', icon: 'user', page: 'accounts', modes: ['manager'] },
   { href: '/pdfs', label: 'PDFs', icon: 'file', page: 'pdfs', modes: ['manager'] },
   { href: '/application-profile', label: 'Application Answers', icon: 'message', page: 'application-profile', modes: ['manager'] },
@@ -85,6 +86,7 @@ const PAGE_TITLES: Record<string, string> = {
   accounts: 'Custom GPT',
   database: 'Database Records',
   'application-templates': 'Template Review',
+  prompts: 'Scanner Prompts',
   people: 'People',
   categories: 'Categories',
   interviews: 'Interview Process',

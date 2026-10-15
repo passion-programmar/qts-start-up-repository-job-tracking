@@ -77,10 +77,13 @@ Manager Scanner uses regular ChatGPT and does not depend on a Custom GPT
 assignment or Action key.
 
 Super assigns Job-site Scanner and text-highlight management independently to
-each Manager from the People page. Scanner API operations check the assignment
-server-side. Shared text-highlight rules are stored in the database and read by
-all signed-in Managers; only Managers assigned text-highlight management can
-edit them in the extension.
+each Manager from the People page. Super manages Scanner prompt content and
+assignments from the Admin Prompts page: the same prompt may be shared, but
+each Manager has at most one; no assignment uses the built-in default.
+Scanner API operations check feature assignments server-side. Shared
+text-highlight rules are stored in the database and read by all signed-in
+Managers; only Managers assigned text-highlight management can edit them in the
+extension.
 
 ### Main code map
 
@@ -122,7 +125,7 @@ access-control boundary.
 
 | Role | Main responsibilities in the current web app |
 |---|---|
-| **Super** | Create/manage Admins, maintain categories and global settings, manage legacy Custom GPT integrations and Manager extension features, inspect the protected database browser, review/promote application templates, view broad analytics |
+| **Super** | Create/manage Admins, maintain categories and global settings, manage Scanner prompts and Manager extension features, inspect the protected database browser, review/promote application templates, view broad analytics |
 | **Admin** | Manage their organization’s Managers and Callers, jobs, categories, interviews, and scoped analytics |
 | **Manager** | Manage Account profiles, job rows, application answers, resume PDFs, bids, interviews, and explicit Scanner sessions |
 | **Caller** | View assigned interviews and record the interview outcome/comment |
@@ -340,7 +343,7 @@ sequenceDiagram
     A->>D: Save/reuse job-scoped task and resume text if available
     E->>A: Set current page, fields, and job description
     E->>A: Load authorized task context
-    A-->>E: Job, scoped profile, previous answers, fields
+    A-->>E: Job, scoped profile, assigned prompt, previous answers, fields
     E->>G: Send generated task prompt
     G-->>E: Return JSON answer/document package
     E->>A: Submit package with Manager bearer token
@@ -360,6 +363,14 @@ Important controls include:
   task ownership and Scanner assignment; no Custom GPT assignment or Action
   key is required. Legacy Custom GPT Action routes remain available only when
   the optional action key is configured.
+- Scanner includes the Manager's assigned prompt in the ChatGPT user message,
+  followed by the required QTS package/schema contract. It is not a ChatGPT
+  system-role instruction; without an assignment, the extension supplies its
+  built-in default. Candidate profile data takes precedence over sample
+  identity/contact details in an assigned prompt.
+- Resume experience bullets may contain `**bold**` keyword markup. The task
+  PDF renderer converts that markup to bold text rather than printing the
+  asterisks.
 - A task already active or closed cannot be overwritten by a new Scanner page.
 - Task answers must reference fields on the current page, and the package is
   validated before it is stored.
