@@ -834,7 +834,7 @@
 }
 
 .popup-app .page-highlight-form .page-highlight-term,
-.popup-app .page-highlight-form > .btn,
+.popup-app .page-highlight-form-actions,
 .popup-app .page-highlight-form > .page-highlight-preview {
   grid-column: 1 / -1;
 }
@@ -910,9 +910,17 @@
   outline-offset: 3px;
 }
 
-.popup-app .page-highlight-form > .btn {
+.popup-app .page-highlight-form-actions {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.popup-app .page-highlight-form-actions .btn {
   min-height: 36px;
-  justify-self: stretch;
+  flex: 1 1 auto;
 }
 
 .popup-app .page-highlight-preview {
@@ -954,42 +962,64 @@
 
 .popup-app .page-highlight-list {
   display: grid;
-  gap: 8px;
-  margin: 10px 0 0;
+  gap: 6px;
+  margin: 14px 0 0;
   padding: 0;
   list-style: none;
 }
 
 .popup-app .page-highlight-rule {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  align-items: end;
-  gap: 10px 8px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid #f1f5f9;
+  min-width: 0;
 }
 
-.popup-app .page-highlight-rule .page-highlight-term,
-.popup-app .page-highlight-rule > .page-highlight-preview,
-.popup-app .page-highlight-rule-actions {
-  grid-column: 1 / -1;
-}
-
-.popup-app .page-highlight-rule:last-child {
-  padding-bottom: 0;
-  border-bottom: 0;
-}
-
-.popup-app .page-highlight-rule-actions {
+.popup-app .page-highlight-rule-select {
   display: flex;
-  justify-content: flex-end;
-  gap: 4px;
+  width: 100%;
+  min-width: 0;
+  min-height: 38px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 9px;
+  border: 1px solid #dbe4ef;
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+  text-align: left;
 }
 
-.popup-app .page-highlight-rule-actions .btn {
-  min-height: 30px;
-  padding: 4px 6px;
+.popup-app .page-highlight-rule-select:hover {
+  border-color: #94a3b8;
+}
+
+.popup-app .page-highlight-rule-select.is-selected {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgb(37 99 235 / 12%);
+}
+
+.popup-app .page-highlight-rule-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  padding: 2px 4px;
+  border-radius: 3px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.popup-app .page-highlight-rule-edit-label {
+  flex: 0 0 auto;
+  color: #64748b;
   font-size: 10px;
+  font-weight: 600;
+}
+
+.popup-app .page-highlight-list-empty {
+  padding: 10px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 8px;
+  color: #64748b;
+  font-size: 12px;
+  text-align: center;
 }
 
 .popup-app .page-highlights-status:empty {
@@ -997,33 +1027,19 @@
 }
 
 @media (min-width: 560px) {
-  .popup-app .page-highlight-form,
-  .popup-app .page-highlight-rule {
+  .popup-app .page-highlight-form {
     grid-template-columns: minmax(120px, 1fr) minmax(112px, 0.8fr) minmax(112px, 0.8fr) auto;
     gap: 8px;
   }
 
   .popup-app .page-highlight-form .page-highlight-term,
-  .popup-app .page-highlight-rule .page-highlight-term,
-  .popup-app .page-highlight-form > .btn,
   .popup-app .page-highlight-form > .page-highlight-preview,
-  .popup-app .page-highlight-rule > .page-highlight-preview,
-  .popup-app .page-highlight-rule-actions {
-    grid-column: auto;
-  }
-
-  .popup-app .page-highlight-form > .page-highlight-preview,
-  .popup-app .page-highlight-rule > .page-highlight-preview {
+  .popup-app .page-highlight-form-actions {
     grid-column: 1 / -1;
   }
 
-  .popup-app .page-highlight-form > .btn {
-    grid-column: 1 / -1;
-    justify-self: end;
-  }
-
-  .popup-app .page-highlight-rule-actions {
-    grid-column: 1 / -1;
+  .popup-app .page-highlight-form-actions {
+    justify-content: flex-end;
   }
 }
 

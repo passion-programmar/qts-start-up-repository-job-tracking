@@ -20,6 +20,7 @@ let currentTabUrl = '';
 let pageHighlightStorageKey = '';
 let pageHighlightRules = [];
 let pageHighlightMigrationMessage = '';
+let selectedPageHighlightRuleId = null;
 let pageHighlightsReturnView = null;
 let managerExtensionFeatures = {
   canManageTextHighlights: false,
@@ -203,15 +204,16 @@ function initializePageHighlightColorPickers() {
 function initializePageHighlightPreview() {
   const previewSlot = document.getElementById('page-highlight-form-preview');
   const text = document.getElementById('page-highlight-text');
-  const textColor = document.getElementById('page-highlight-text-color');
-  const backgroundColor = document.getElementById('page-highlight-background-color');
-  if (!previewSlot || !text || !textColor || !backgroundColor) return;
-  const preview = createHighlightPreview(text.value, textColor.value, backgroundColor.value);
+  if (!previewSlot || !text) return;
+  const preview = createHighlightPreview(
+    text.value,
+    document.getElementById('page-highlight-text-color')?.value || '#111827',
+    document.getElementById('page-highlight-background-color')?.value || '#fef08a'
+  );
   previewSlot.replaceWith(preview);
-  const refreshPreview = () => updateHighlightPreview(preview, text, textColor, backgroundColor);
-  text.addEventListener('input', refreshPreview);
-  textColor.addEventListener('input', refreshPreview);
-  backgroundColor.addEventListener('input', refreshPreview);
+  document.getElementById('page-highlight-form')?.addEventListener('input', () => {
+    updatePageHighlightEditorPreview();
+  });
 }
 
 function createHighlightPreview(text, textColor, backgroundColor) {
@@ -248,6 +250,72 @@ function updateHighlightPreview(preview, text, textColor, backgroundColor) {
   sample.setAttribute('aria-label', `Live preview: ${phrase || 'Your text'}`);
 }
 
+function updatePageHighlightEditorPreview() {
+  const preview = document.querySelector('#page-highlight-form .page-highlight-preview');
+  const text = document.getElementById('page-highlight-text');
+  const textColor = document.getElementById('page-highlight-text-color');
+  const backgroundColor = document.getElementById('page-highlight-background-color');
+  if (!text || !textColor || !backgroundColor) return;
+  updateHighlightPreview(preview, text, textColor, backgroundColor);
+}
+
+function setPageHighlightColor(inputId, value) {
+  const input = document.getElementById(inputId);
+  const wrapper = input?.closest('.page-highlight-color-field');
+  if (!wrapper) return;
+  const label = wrapper.querySelector('legend')?.textContent || 'Color';
+  const picker = createHighlightColorInput(label, value, inputId);
+  wrapper.replaceWith(picker.wrapper);
+}
+
+function pageHighlightEditorHasUnsavedChanges() {
+  const selectedRule = pageHighlightRules.find((rule) => rule.id === selectedPageHighlightRuleId);
+  if (!selectedRule) return false;
+  return document.getElementById('page-highlight-text')?.value !== selectedRule.text ||
+    document.getElementById('page-highlight-text-color')?.value !== selectedRule.textColor ||
+    document.getElementById('page-highlight-background-color')?.value !== selectedRule.backgroundColor;
+}
+
+function confirmDiscardPageHighlightChanges() {
+  return !pageHighlightEditorHasUnsavedChanges() ||
+    window.confirm('Discard unsaved changes to this highlight rule?');
+}
+
+function syncPageHighlightEditor() {
+  let selectedRule = pageHighlightRules.find((rule) => rule.id === selectedPageHighlightRuleId);
+  if (!selectedRule) {
+    selectedPageHighlightRuleId = null;
+    selectedRule = null;
+  }
+  const textInput = document.getElementById('page-highlight-text');
+  const submitButton = document.getElementById('page-highlight-submit');
+  const cancelButton = document.getElementById('page-highlight-cancel');
+  const deleteButton = document.getElementById('page-highlight-delete');
+  if (!textInput || !submitButton || !cancelButton || !deleteButton) return;
+
+  if (selectedRule) {
+    textInput.value = selectedRule.text;
+    setPageHighlightColor('page-highlight-text-color', selectedRule.textColor);
+    setPageHighlightColor('page-highlight-background-color', selectedRule.backgroundColor);
+    submitButton.textContent = 'Save changes';
+    cancelButton.classList.remove('hidden');
+    deleteButton.classList.remove('hidden');
+  } else {
+    textInput.value = '';
+    setPageHighlightColor('page-highlight-text-color', '#111827');
+    setPageHighlightColor('page-highlight-background-color', '#fef08a');
+    submitButton.textContent = 'Add rule';
+    cancelButton.classList.add('hidden');
+    deleteButton.classList.add('hidden');
+  }
+  updatePageHighlightEditorPreview();
+  document.querySelectorAll('.page-highlight-rule-select').forEach((button) => {
+    const selected = button.dataset.ruleId === selectedPageHighlightRuleId;
+    button.setAttribute('aria-pressed', String(selected));
+    button.classList.toggle('is-selected', selected);
+  });
+}
+
 function renderPageHighlightRules() {
   const list = document.getElementById('page-highlight-list');
   if (!list) return;
@@ -255,50 +323,40 @@ function renderPageHighlightRules() {
   for (const rule of pageHighlightRules) {
     const item = document.createElement('li');
     item.className = 'page-highlight-rule';
-
-    const termField = document.createElement('label');
-    termField.className = 'page-highlight-field page-highlight-term';
-    const termLabel = document.createElement('span');
-    termLabel.textContent = 'Text or characters';
-    const termInput = document.createElement('input');
-    termInput.type = 'text';
-    termInput.maxLength = 500;
-    termInput.required = true;
-    termInput.value = rule.text;
-    termField.append(termLabel, termInput);
-
-    const textColor = createHighlightColorInput('Text color', rule.textColor);
-    const backgroundColor = createHighlightColorInput('Background', rule.backgroundColor);
-    const preview = createHighlightPreview(rule.text, rule.textColor, rule.backgroundColor);
-    const refreshPreview = () => updateHighlightPreview(preview, termInput, textColor.input, backgroundColor.input);
-    termInput.addEventListener('input', refreshPreview);
-    textColor.input.addEventListener('input', refreshPreview);
-    backgroundColor.input.addEventListener('input', refreshPreview);
-    const actions = document.createElement('div');
-    actions.className = 'page-highlight-rule-actions';
-    const save = document.createElement('button');
-    save.className = 'btn btn-ghost btn-sm';
-    save.type = 'button';
-    save.textContent = 'Save';
-    save.addEventListener('click', () => {
-      savePageHighlightRule(rule.id, {
-        id: rule.id,
-        text: termInput.value,
-        textColor: textColor.input.value,
-        backgroundColor: backgroundColor.input.value,
-      }).catch((error) => setPageHighlightStatus(error.message || 'Could not update this rule.', true));
+    const select = document.createElement('button');
+    select.type = 'button';
+    select.className = 'page-highlight-rule-select';
+    select.dataset.ruleId = rule.id;
+    select.setAttribute('aria-pressed', String(rule.id === selectedPageHighlightRuleId));
+    select.classList.toggle('is-selected', rule.id === selectedPageHighlightRuleId);
+    select.setAttribute('aria-label', `Edit highlight rule: ${rule.text}`);
+    const mark = document.createElement('mark');
+    mark.className = 'page-highlight-rule-text';
+    mark.textContent = rule.text;
+    mark.style.color = rule.textColor;
+    mark.style.backgroundColor = rule.backgroundColor;
+    const editLabel = document.createElement('span');
+    editLabel.className = 'page-highlight-rule-edit-label';
+    editLabel.textContent = 'Edit';
+    select.append(mark, editLabel);
+    select.addEventListener('click', () => {
+      if (selectedPageHighlightRuleId === rule.id) return;
+      if (!confirmDiscardPageHighlightChanges()) return;
+      selectedPageHighlightRuleId = rule.id;
+      syncPageHighlightEditor();
+      setPageHighlightStatus(`Editing “${rule.text}”. Preview changes, then save them.`);
+      document.getElementById('page-highlight-text')?.focus();
     });
-    const remove = document.createElement('button');
-    remove.className = 'btn btn-ghost btn-sm';
-    remove.type = 'button';
-    remove.textContent = 'Delete';
-    remove.addEventListener('click', () => {
-      deletePageHighlightRule(rule.id).catch((error) => setPageHighlightStatus(error.message || 'Could not delete this rule.', true));
-    });
-    actions.append(save, remove);
-    item.append(termField, textColor.wrapper, backgroundColor.wrapper, preview, actions);
+    item.append(select);
     list.append(item);
   }
+  if (!pageHighlightRules.length) {
+    const empty = document.createElement('li');
+    empty.className = 'page-highlight-list-empty';
+    empty.textContent = 'No shared highlight rules saved yet.';
+    list.append(empty);
+  }
+  syncPageHighlightEditor();
 }
 
 async function ensurePageHighlightContext() {
@@ -364,11 +422,14 @@ async function ensurePageHighlightContext() {
   renderPageHighlightRules();
 }
 
-async function persistPageHighlightRules(response, successMessage) {
+async function persistPageHighlightRules(response, successMessage, selectedRuleId = null) {
   if (!response.success || !Array.isArray(response.rules)) {
     throw new Error(response.message || 'Could not save shared text highlight rules.');
   }
   pageHighlightRules = window.__qtsTextHighlighting.normalizeRules(response.rules);
+  selectedPageHighlightRuleId = pageHighlightRules.some((rule) => rule.id === selectedRuleId)
+    ? selectedRuleId
+    : null;
   await chrome.storage.local.set({
     [pageHighlightStorageKey]: pageHighlightRules,
     [window.__qtsTextHighlighting.getGlobalStorageTimestampKey()]: Date.now(),
@@ -389,7 +450,7 @@ async function savePageHighlightRule(ruleId, updatedRule) {
   if (!pageHighlightStorageKey) await ensurePageHighlightContext();
   if (!pageHighlightRules.some((rule) => rule.id === ruleId)) throw new Error('This highlight rule no longer exists. Refresh the rule list.');
   const response = await window.api.updateGlobalTextHighlight(ruleId, updatedRule);
-  await persistPageHighlightRules(response, 'Shared highlight rule updated.');
+  await persistPageHighlightRules(response, 'Shared highlight rule updated.', ruleId);
 }
 
 async function deletePageHighlightRule(ruleId) {
@@ -1813,15 +1874,28 @@ document.addEventListener('DOMContentLoaded', async () => {
     const text = document.getElementById('page-highlight-text');
     const textColor = document.getElementById('page-highlight-text-color');
     const backgroundColor = document.getElementById('page-highlight-background-color');
+    const ruleId = selectedPageHighlightRuleId;
     const rule = {
-      id: crypto.randomUUID(),
+      id: ruleId || crypto.randomUUID(),
       text: text.value,
       textColor: textColor.value,
       backgroundColor: backgroundColor.value,
     };
-    addPageHighlightRule(rule)
-      .then(() => { text.value = ''; })
-      .catch((error) => setPageHighlightStatus(error.message || 'Could not add this rule.', true));
+    const save = ruleId
+      ? savePageHighlightRule(ruleId, rule)
+      : addPageHighlightRule(rule);
+    save.catch((error) => setPageHighlightStatus(error.message || 'Could not save this rule.', true));
+  });
+  document.getElementById('page-highlight-cancel')?.addEventListener('click', () => {
+    if (!confirmDiscardPageHighlightChanges()) return;
+    selectedPageHighlightRuleId = null;
+    syncPageHighlightEditor();
+    setPageHighlightStatus('Ready to add a new highlight rule.');
+  });
+  document.getElementById('page-highlight-delete')?.addEventListener('click', () => {
+    if (!selectedPageHighlightRuleId) return;
+    deletePageHighlightRule(selectedPageHighlightRuleId)
+      .catch((error) => setPageHighlightStatus(error.message || 'Could not delete this rule.', true));
   });
   document.getElementById('btn-change-team')?.addEventListener('click', async () => {
     if (currentUser?.role !== 'manager') return;

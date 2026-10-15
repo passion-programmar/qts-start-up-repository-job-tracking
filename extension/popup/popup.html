@@ -534,7 +534,7 @@
         <h2 id="page-highlights-title">Text highlights on all websites</h2>
         <button class="btn btn-ghost btn-sm" id="btn-close-page-highlights" type="button">Back</button>
       </div>
-      <p class="page-highlights-hint">Rules are shared from the database and automatically highlighted across supported HTTP and HTTPS websites. Only Managers assigned by Super can change them.</p>
+      <p class="page-highlights-hint">Rules are shared from the database and automatically highlighted across supported HTTP and HTTPS websites. Select a saved phrase below to edit it in the shared editor. Only Managers assigned by Super can change them.</p>
       <form id="page-highlight-form" class="page-highlight-form">
         <label class="page-highlight-field page-highlight-term">
           <span>Text or characters</span>
@@ -543,7 +543,11 @@
         <div id="page-highlight-text-color-picker"></div>
         <div id="page-highlight-background-color-picker"></div>
         <div id="page-highlight-form-preview"></div>
-        <button class="btn btn-primary btn-sm" type="submit">Add rule</button>
+        <div class="page-highlight-form-actions">
+          <button class="btn btn-primary btn-sm" id="page-highlight-submit" type="submit">Add rule</button>
+          <button class="btn btn-ghost btn-sm hidden" id="page-highlight-cancel" type="button">New rule</button>
+          <button class="btn btn-ghost btn-sm hidden" id="page-highlight-delete" type="button">Delete rule</button>
+        </div>
       </form>
       <p id="page-highlights-status" class="page-highlights-status" role="status" aria-live="polite"></p>
       <ul id="page-highlight-list" class="page-highlight-list"></ul>
