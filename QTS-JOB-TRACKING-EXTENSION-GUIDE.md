@@ -44,8 +44,10 @@ Managers can add, edit, or delete shared rules from the extension. Existing
 rules saved only in a Chrome profile can be imported into the shared database
 from that Manager's Text Highlight panel. Assigned Managers open rule
 management in a dedicated popup panel with the **Text Highlight** button; the
-shared rule list appears below the add-rule form. The button is not shown to
-other Managers. Chrome-restricted pages do not allow extension highlighting.
+shared rule list appears below the add-rule form. Choose text and background
+colors from the labeled, keyboard-accessible palette; the controls and saved
+rules reflow to fit narrower popup widths. The button is not shown to other
+Managers. Chrome-restricted pages do not allow extension highlighting.
 
 Super also assigns **Job-site Scanner** access separately from highlight
 management. Managers without Scanner access can still use the extension's

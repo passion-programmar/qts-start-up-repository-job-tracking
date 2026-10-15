@@ -57,6 +57,22 @@ const LEGACY_DEFAULT_CANDIDATE_KEY = 'qtsDefaultCandidateByBidder';
 const AUTO_APPLY_ENABLED_KEY = 'qtsAutoApplyEnabled';
 const SELECTED_ACTION_KEY = 'qtsSelectedAction';
 const ACTION_BUTTON_IDS = ['btn-get-jd', 'btn-custom-apply'];
+const HIGHLIGHT_COLOR_PALETTE = [
+  { name: 'Red', value: '#ef4444' },
+  { name: 'Orange', value: '#f97316' },
+  { name: 'Yellow', value: '#facc15' },
+  { name: 'Green', value: '#10b981' },
+  { name: 'Blue', value: '#2563eb' },
+  { name: 'Pink', value: '#ec4899' },
+  { name: 'Purple', value: '#8b5cf6' },
+  { name: 'Indigo', value: '#4f46e5' },
+  { name: 'Violet', value: '#a855f7' },
+  { name: 'Brown', value: '#8b5e34' },
+  { name: 'Gray', value: '#6b7280' },
+  { name: 'Black', value: '#111827' },
+  { name: 'White', value: '#ffffff' },
+  { name: 'Soft yellow', value: '#fef08a' },
+];
 
 function updateSelectedAction(actionId) {
   for (const buttonId of ACTION_BUTTON_IDS) {
@@ -101,16 +117,86 @@ function setPageHighlightStatus(message, isError = false) {
   status.classList.toggle('is-error', isError);
 }
 
-function createHighlightColorInput(label, value) {
-  const wrapper = document.createElement('label');
-  wrapper.className = 'page-highlight-field';
-  const caption = document.createElement('span');
+function createHighlightColorInput(label, value, inputId = '') {
+  const wrapper = document.createElement('fieldset');
+  wrapper.className = 'page-highlight-field page-highlight-color-field';
+  const caption = document.createElement('legend');
   caption.textContent = label;
   const input = document.createElement('input');
-  input.type = 'color';
-  input.value = value;
-  wrapper.append(caption, input);
+  input.type = 'hidden';
+  input.value = /^#[0-9a-f]{6}$/i.test(value) ? value : HIGHLIGHT_COLOR_PALETTE[0].value;
+  if (inputId) input.id = inputId;
+  const options = document.createElement('div');
+  options.className = 'page-highlight-color-options';
+  options.setAttribute('role', 'radiogroup');
+  options.setAttribute('aria-label', label);
+  const currentColor = input.value.toLowerCase();
+  const colors = HIGHLIGHT_COLOR_PALETTE.some((color) => color.value === currentColor)
+    ? HIGHLIGHT_COLOR_PALETTE
+    : [{ name: 'Current color', value: input.value }, ...HIGHLIGHT_COLOR_PALETTE];
+  const buttons = [];
+
+  function selectColor(button, focus = false) {
+    input.value = button.dataset.color;
+    for (const option of buttons) {
+      const selected = option === button;
+      option.setAttribute('aria-checked', String(selected));
+      option.tabIndex = selected ? 0 : -1;
+      option.classList.toggle('is-selected', selected);
+    }
+    if (focus) button.focus();
+  }
+
+  for (const color of colors) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'page-highlight-color-option';
+    button.dataset.color = color.value;
+    button.style.setProperty('--highlight-color', color.value);
+    button.setAttribute('role', 'radio');
+    button.setAttribute('aria-label', `${label}: ${color.name} (${color.value})`);
+    button.title = `${color.name} (${color.value})`;
+    const selected = color.value.toLowerCase() === currentColor;
+    button.setAttribute('aria-checked', String(selected));
+    button.tabIndex = selected ? 0 : -1;
+    button.classList.toggle('is-selected', selected);
+    button.addEventListener('click', () => selectColor(button));
+    button.addEventListener('keydown', (event) => {
+      const currentIndex = buttons.indexOf(button);
+      let nextIndex;
+      if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+        nextIndex = (currentIndex + 1) % buttons.length;
+      } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+        nextIndex = (currentIndex - 1 + buttons.length) % buttons.length;
+      } else if (event.key === 'Home') {
+        nextIndex = 0;
+      } else if (event.key === 'End') {
+        nextIndex = buttons.length - 1;
+      } else {
+        return;
+      }
+      event.preventDefault();
+      selectColor(buttons[nextIndex], true);
+    });
+    buttons.push(button);
+    options.append(button);
+  }
+
+  wrapper.append(caption, options, input);
   return { wrapper, input };
+}
+
+function initializePageHighlightColorPickers() {
+  const textColorSlot = document.getElementById('page-highlight-text-color-picker');
+  const backgroundColorSlot = document.getElementById('page-highlight-background-color-picker');
+  if (textColorSlot) {
+    const picker = createHighlightColorInput('Text color', '#111827', 'page-highlight-text-color');
+    textColorSlot.replaceWith(picker.wrapper);
+  }
+  if (backgroundColorSlot) {
+    const picker = createHighlightColorInput('Background color', '#fef08a', 'page-highlight-background-color');
+    backgroundColorSlot.replaceWith(picker.wrapper);
+  }
 }
 
 function renderPageHighlightRules() {
@@ -1620,6 +1706,7 @@ function applyGptDispatchResult(msg) {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
+  initializePageHighlightColorPickers();
   if (new URLSearchParams(window.location.search).get('embedded') === '1') {
     document.documentElement.style.width = '100%';
     document.documentElement.style.height = '100%';
