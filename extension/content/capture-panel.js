@@ -183,7 +183,9 @@
       const duration = Number.isFinite(message.durationMs) && message.durationMs >= 0
         ? message.durationMs
         : 3000;
-      setTimeout(() => toast.remove(), duration);
+      if (message.persistUntilCleared !== true) {
+        setTimeout(() => toast.remove(), duration);
+      }
       if (Number.isFinite(message.closeTabAfterMs) && message.closeTabAfterMs >= 0) {
         setTimeout(() => {
           chrome.runtime.sendMessage({ type: 'QTS_CLOSE_PAGE_TAB' }).catch((error) => {

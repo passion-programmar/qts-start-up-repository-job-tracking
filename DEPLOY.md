@@ -13,9 +13,10 @@ uses the new-schema tables only. The extension supports the new Manager login,
 job-posting capture, and Manager-triggered Scanner assistance on supported
 application sites, including Workable. Scanner is limited to the visible step,
 reports each major stage, asks the Manager before scanning a manually reached
-later step, and never navigates or submits the application. Super users can
-delete individual saved application templates; linked Manager field rules
-are deleted with their template while shared field semantics are retained.
+later step, keeps GPT sending/waiting alerts visible until the package arrives,
+and never navigates or submits the application. Other Scanner alerts are timed.
+Super users can delete individual saved application templates; linked Manager
+field rules are deleted with their template while shared field semantics are retained.
 The retired Manager Apply queue and
 Workable-specific application handler are not part of this workflow.
 

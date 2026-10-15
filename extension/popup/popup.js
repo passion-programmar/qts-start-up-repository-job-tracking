@@ -647,10 +647,9 @@ async function reviewScannerDocument(documentFile, documentType, account, fieldQ
   }
 }
 
-async function getScannerGptTaskResult(taskId, statusElement, tabId) {
+async function getScannerGptTaskResult(taskId) {
   const startedAt = Date.now();
   const timeoutMs = 180000;
-  let lastProgressNoticeAt = 0;
   while (Date.now() - startedAt < timeoutMs) {
     const response = await window.api.getManagerGptTaskStatus(taskId);
     if (!response.success) throw new Error(response.message || 'Could not read the Scanner GPT task status.');
@@ -662,16 +661,8 @@ async function getScannerGptTaskResult(taskId, statusElement, tabId) {
       || Array.isArray(packageData.unresolvedFields)
       || Boolean(packageData.documents?.resume)
       || Boolean(packageData.documents?.coverLetter);
-    if (response.status === 'ready' || submitted) return response;
-    if (Date.now() - lastProgressNoticeAt >= 15000) {
-      await notifyScannerStage(
-        tabId,
-        statusElement,
-        'Waiting for Custom GPT to prepare reviewed answers and requested documents…',
-        'info',
-        18000
-      );
-      lastProgressNoticeAt = Date.now();
+    if (response.status === 'ready' || submitted) {
+      return response;
     }
     await new Promise((resolve) => setTimeout(resolve, 2500));
   }
@@ -714,7 +705,15 @@ async function runManagerScannerGptTask({ job, account, tabId, generatedFields, 
     if (!samePage) {
       throw new Error('This job already has an active GPT request for a different page. Finish or review it before starting Scanner on another page.');
     }
-    result = await getScannerGptTaskResult(taskId, statusElement, tabId);
+    await notifyScannerStage(
+      tabId,
+      statusElement,
+      `A Custom GPT request is already active for task ${taskId}. Waiting to receive its package…`,
+      'info',
+      6000,
+      true
+    );
+    result = await getScannerGptTaskResult(taskId);
   } else if (currentTask.status === 'ready' && samePage) {
     result = currentTask;
   } else if (['waiting_for_page', 'ready'].includes(currentTask.status)) {
@@ -741,9 +740,10 @@ async function runManagerScannerGptTask({ job, account, tabId, generatedFields, 
     await notifyScannerStage(
       tabId,
       statusElement,
-      `Sending ${generatedFields.length} answer field(s) and ${documentFields.length} document request(s) to the assigned Custom GPT (task ${taskId}). The page context is saved; the GPT can also retrieve this task’s job description, Account profile/resume, and Manager answers. Existing page-field contents are not sent.`,
+      `Page context saved for task ${taskId}. Sending ${generatedFields.length} answer field(s) and ${documentFields.length} document request(s) to the assigned Custom GPT. Existing page-field contents are not sent.`,
       'info',
-      12000
+      6000,
+      true
     );
     const handoff = await sendGptTaskToBackground({
       taskId,
@@ -753,13 +753,33 @@ async function runManagerScannerGptTask({ job, account, tabId, generatedFields, 
     if (!handoff?.ok || handoff?.handoff?.sent === false) {
       throw new Error(handoff?.handoff?.error || handoff?.error || 'Custom GPT handoff failed.');
     }
-    result = await getScannerGptTaskResult(taskId, statusElement, tabId);
+    await notifyScannerStage(
+      tabId,
+      statusElement,
+      `PROCESS_TASK sent for task ${taskId}. Waiting for the Custom GPT to read the context and return its package…`,
+      'info',
+      6000,
+      true
+    );
+    result = await getScannerGptTaskResult(taskId);
   } else {
     throw new Error(`The selected job’s GPT task is ${currentTask.status}; Scanner will not overwrite an active or closed task.`);
   }
 
   if (generatedFields.length || documentFields.length) {
-    await notifyScannerStage(tabId, statusElement, 'Custom GPT returned its package. Review generated answers and documents before any use.');
+    const answerCount = Array.isArray(result.package?.answers) ? result.package.answers.length : 0;
+    const unresolvedCount = Array.isArray(result.package?.unresolvedFields) ? result.package.unresolvedFields.length : 0;
+    const resumeReady = Boolean(result.package?.documents?.resume);
+    const coverLetterReady = Boolean(result.package?.documents?.coverLetter);
+    const documentCount = Number(resumeReady) + Number(coverLetterReady);
+    const packageReceivedMessage = `Package received for task ${taskId}: ${answerCount} answer(s), ${documentCount} requested document(s), ${unresolvedCount} unresolved field(s). GPT transfer is complete.`;
+    if (statusElement) statusElement.textContent = packageReceivedMessage;
+    await clearPageNotice(tabId, 'scanner-progress');
+    await clearPageNotice(tabId, 'scanner-package-received');
+    await showPageNotice(tabId, packageReceivedMessage, 'success', {
+      durationMs: 10000,
+      alertId: 'scanner-package-received',
+    });
   }
   const answers = new Map(
     (Array.isArray(result.package?.answers) ? result.package.answers : [])
@@ -836,6 +856,7 @@ async function runManagerScannerGptTask({ job, account, tabId, generatedFields, 
 }
 
 async function runManagerScanner(tabId, statusElement, account, job) {
+  await clearPageNotice(tabId, 'scanner-package-received');
   await notifyScannerStage(tabId, statusElement, 'Reading the current application step. No page controls will be activated.');
   const response = await chrome.runtime.sendMessage({
     type: 'DISCOVER_APPLICATION_FORM',
@@ -1111,7 +1132,7 @@ async function runManagerScanner(tabId, statusElement, account, job) {
       statusElement,
       `Preparing reviewed job-specific assistance for ${generatedFields.length} generated answer(s) and ${documentFields.length} document field(s)…`,
       'info',
-      12000
+      6000
     );
   }
   const gptResult = await runManagerScannerGptTask({
@@ -1764,6 +1785,7 @@ async function showPageNotice(tabId, message, toastType = 'info', options = {}) 
     message,
     toastType,
     durationMs: options.durationMs,
+    persistUntilCleared: options.persistUntilCleared === true,
     closeTabAfterMs: options.closeTabAfterMs,
     alertId: options.alertId,
   });
@@ -1772,11 +1794,19 @@ async function showPageNotice(tabId, message, toastType = 'info', options = {}) 
   }
 }
 
-async function notifyScannerStage(tabId, statusElement, message, toastType = 'info', durationMs = 6000) {
+async function notifyScannerStage(
+  tabId,
+  statusElement,
+  message,
+  toastType = 'info',
+  durationMs = 6000,
+  persistUntilCleared = false
+) {
   if (statusElement) statusElement.textContent = message;
   await clearPageNotice(tabId, 'scanner-progress');
   await showPageNotice(tabId, message, toastType, {
     durationMs,
+    persistUntilCleared,
     alertId: 'scanner-progress',
   });
 }
