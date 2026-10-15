@@ -10,15 +10,18 @@ info:
     Where an application-task integration is enabled, it sends
     `PROCESS_TASK: task_<uuid>` to the assigned Custom GPT and may fill reliable
     Account-profile and saved Q&A answers before sending remaining page fields.
-    For each page, call getTaskContext, answer only from the supplied candidate/profile
-    facts, and call submitTaskPackage. Mark any unsupported or unclear fields as
-    unresolvedFields; do not invent candidate facts. When fields remain unresolved,
-    discuss the missing facts with the Manager in the same GPT chat and resubmit an
-    updated package for this task; the extension keeps waiting until the package has
-    no unresolved fields. Generate resume or cover-letter JSON only when the current
-    page contains the corresponding file field. The server renders requested documents
-    as PDFs; the extension polls its Manager-authenticated extension-status endpoint.
-    Job-site submission is always left to the Manager.
+    When processing PROCESS_TASK, immediately call the QTS Actions needed for the
+    current page without asking the Manager whether to use those Actions. Follow
+    any approval required by the Custom GPT platform. Call getTaskContext first,
+    answer only from the supplied candidate/profile facts, and call
+    submitTaskPackage. Mark unsupported or unclear fields as unresolvedFields;
+    do not invent candidate facts. When fields remain unresolved, discuss the
+    missing facts with the Manager in the same GPT chat and resubmit an updated
+    package for this task; the extension keeps waiting until the package has no
+    unresolved fields. Generate resume or cover-letter JSON only when the current
+    page contains the corresponding file field. The server renders requested
+    documents as PDFs; the extension polls its Manager-authenticated
+    extension-status endpoint. Job-site submission is always left to the Manager.
 servers:
   - url: https://qts-job-tracking.vercel.app
     description: Production API
@@ -264,9 +267,11 @@ paths:
       x-openai-isConsequential: false
       summary: Get the current application page and grounded candidate context
       description: |
-        For each PROCESS_TASK, read the current page. Use only supplied profile
-        facts and return answers with their exact stableFieldId. Report missing,
-        ambiguous, consent, or legal questions as unresolvedFields when submitting.
+        Automatically call this Action when starting a PROCESS_TASK; do not ask
+        the Manager whether to retrieve the task context. Read the current page.
+        Use only supplied profile facts and return answers with their exact
+        stableFieldId. Report missing, ambiguous, consent, or legal questions as
+        unresolvedFields when submitting.
       parameters:
         - name: taskId
           in: path
@@ -297,6 +302,8 @@ paths:
       operationId: submitTaskPackage
       summary: Submit grounded answers and any requested document data
       description: >
+        Automatically call this Action after processing the current page for
+        PROCESS_TASK; do not ask the Manager whether to submit the package.
         Submit answers using exact stableFieldIds. Report missing or unclear fields
         as unresolvedFields; discuss them with the Manager and resubmit this task.
         Include resume or coverLetter JSON only when requested; QTS renders PDFs.
