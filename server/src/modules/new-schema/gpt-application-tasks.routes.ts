@@ -152,6 +152,16 @@ function requireGptActionKey(req: Request, res: Response, next: NextFunction): v
   next();
 }
 
+function requireTaskPackageAuth(req: NewSchemaAuthRequest, res: Response, next: NextFunction): void {
+  const header = req.headers.authorization;
+  if (config.gptActionApiKey && header === `Bearer ${config.gptActionApiKey}`) {
+    res.locals.gptActionAuthorized = true;
+    next();
+    return;
+  }
+  requireNewSchemaAuth(req, res, next);
+}
+
 async function loadTask(taskId: string): Promise<TaskRow | null> {
   return queryOne<TaskRow>(
     `SELECT task.task_id, task.job_id, job.u_id AS manager_user_id, task.status,
@@ -192,7 +202,6 @@ function taskContextParts(context: Record<string, unknown>) {
 
 router.post('/jobs/:jobId', requireNewSchemaAuth, async (req: NewSchemaAuthRequest, res: Response) => {
   if (!(await isScannerManager(req, res))) return;
-  if (!actionKeyConfigured(res)) return;
   const jobId = Number.parseInt(req.params.jobId, 10);
   if (!Number.isSafeInteger(jobId) || jobId <= 0) {
     res.status(400).json({ success: false, message: 'Provide a valid Account-specific job row ID.' });
@@ -504,18 +513,24 @@ router.get('/:taskId/context', requireGptActionKey, async (req, res: Response) =
   });
 });
 
-router.post('/:taskId/package', requireGptActionKey, async (req, res: Response) => {
+router.post('/:taskId/package', requireTaskPackageAuth, async (req: NewSchemaAuthRequest, res: Response) => {
   const taskId = String(req.params.taskId || '');
   if (!taskIdSchema.safeParse(taskId).success) {
     res.status(400).json({ success: false, message: 'Provide a valid task ID.' });
     return;
   }
-  const task = await loadTask(taskId);
+  const actionAuthorized = res.locals.gptActionAuthorized === true;
+  if (!actionAuthorized && !(await isScannerManager(req, res))) return;
+  const task = actionAuthorized
+    ? await loadTask(taskId)
+    : await loadManagerTask(req, res, taskId);
   if (!task) {
-    res.status(404).json({ success: false, message: 'GPT application task not found.' });
+    if (actionAuthorized) {
+      res.status(404).json({ success: false, message: 'GPT application task not found.' });
+    }
     return;
   }
-  if (!(await requireScannerTaskAssignment(task, res))) return;
+  if (actionAuthorized && !(await requireScannerTaskAssignment(task, res))) return;
   const parsed = taskPackageSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({
@@ -703,6 +718,7 @@ router.get('/:taskId/extension-status', requireNewSchemaAuth, async (req: NewSch
   if (!(await isScannerManager(req, res))) return;
   const task = await loadManagerTask(req, res, req.params.taskId);
   if (!task) return;
+  const { candidate, managerAnswers } = taskContextParts(task.task_context);
   await execute(
     `UPDATE gpt_application_tasks
      SET last_activity_at = NOW(), updated_at = NOW(),
@@ -716,8 +732,13 @@ router.get('/:taskId/extension-status', requireNewSchemaAuth, async (req: NewSch
     status: task.status,
     pageNumber: task.page_number,
     jobContext: task.task_context.jobContext || {},
+    candidate,
+    managerAnswers,
+    resumeText: task.resume_text || '',
     page: task.task_context.page || null,
     answers: task.answers,
+    previousAnswers: task.answers,
+    previousUnresolvedFields: task.package.unresolvedFields || [],
     package: task.package,
   });
 });

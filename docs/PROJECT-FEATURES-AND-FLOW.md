@@ -30,8 +30,8 @@ Its main current product loop is:
    run Scanner for one Account and one visible form step.
 4. Scanner observes the form, asks the Manager to decide how fields should be
    handled, and may fill only confirmed fields on the current page.
-5. Custom GPT may generate requested answers or documents for that job task;
-   the Manager reviews those outputs before Scanner uses them.
+5. Regular ChatGPT may generate requested answers or documents for that
+   job-scoped task; the Manager reviews those outputs before Scanner uses them.
 6. QTS does **not** automatically move to another page or submit the
    application. The Manager records the outcome in the job-tracking workflow.
 7. If an application is confirmed as submitted, the job moves into Bids, where
@@ -56,7 +56,7 @@ flowchart LR
 API or database. Local development and database scripts exist, but they are
 not the public production request path.
 
-### Extension and GPT path
+### Extension and ChatGPT path
 
 ```mermaid
 flowchart LR
@@ -65,15 +65,16 @@ flowchart LR
     Worker --> Page[Current job or application tab]
     Popup -->|Authenticated API requests| API[Vercel API]
     API --> DB[(Neon)]
-    Popup -->|Assigned GPT handoff| GPT[Custom GPT]
-    GPT -->|Action: task context and answer package| API
+    Worker -->|Prompt with scoped task context| GPT[Regular ChatGPT]
+    GPT -->|Answer package via Manager-authenticated extension API| API
     Popup -->|Reviewed fill on visible step only| Page
 ```
 
 The extension is not deployed by deploying the web/API projects. Updating the
 extension means distributing or reloading the files in `extension/` separately.
-The Custom GPT Action is an external integration, assigned by Super and
-authorized to the API with a separate action key.
+Legacy Custom GPT Action routes remain an optional integration; the current
+Manager Scanner uses regular ChatGPT and does not depend on a Custom GPT
+assignment or Action key.
 
 Super assigns Job-site Scanner and text-highlight management independently to
 each Manager from the People page. Scanner API operations check the assignment
@@ -121,7 +122,7 @@ access-control boundary.
 
 | Role | Main responsibilities in the current web app |
 |---|---|
-| **Super** | Create/manage Admins, maintain categories and global settings, assign Custom GPTs and Manager extension features, inspect the protected database browser, review/promote application templates, view broad analytics |
+| **Super** | Create/manage Admins, maintain categories and global settings, manage legacy Custom GPT integrations and Manager extension features, inspect the protected database browser, review/promote application templates, view broad analytics |
 | **Admin** | Manage their organization’s Managers and Callers, jobs, categories, interviews, and scoped analytics |
 | **Manager** | Manage Account profiles, job rows, application answers, resume PDFs, bids, interviews, and explicit Scanner sessions |
 | **Caller** | View assigned interviews and record the interview outcome/comment |
@@ -309,7 +310,7 @@ flowchart TD
 |---|---|---|
 | **Profile** | Choose a value from the selected Account's profile. If missing, the Manager may enter a value for this application only. | Profile mapping is Manager/template-specific; one-time missing value is not saved to the Account or reusable answers. |
 | **Reusable** | Confirm or enter a Manager-owned reusable answer for the semantic question. | Stored in the Manager's reusable Q&A and linked to a field rule. |
-| **Generated** | Send selected fields and job description to the assigned Custom GPT for job-specific output. | Stored on the job-scoped GPT task; not added to reusable answers or Account profile. |
+| **Generated** | Send selected fields and job description to regular ChatGPT for job-specific output. | Stored on the job-scoped task; not added to reusable answers or Account profile. |
 | **Manual** | Leave the field for the Manager to complete outside Scanner. | A strategy may be stored; Scanner does not fill it. |
 
 Sensitive or candidate-specific matters should use the selected Account's
@@ -317,10 +318,10 @@ confirmed data or explicit Manager input, not a guessed global value. See
 [CURRENT-SYSTEM.md](CURRENT-SYSTEM.md) for the current restrictions and field
 handling contract.
 
-## 7. Feature category: Custom GPT tasks and generated documents
+## 7. Feature category: ChatGPT-assisted task packages and generated documents
 
-Custom GPT is used as a reviewed, job-scoped assistant in Scanner. It is not an
-unrestricted application submitter.
+Regular ChatGPT is used as a reviewed, job-scoped assistant in Scanner. It is
+not an unrestricted application submitter and does not have a QTS Action key.
 
 ### Task and response lifecycle
 
@@ -329,7 +330,7 @@ sequenceDiagram
     actor M as Manager
     participant E as Extension
     participant A as QTS API
-    participant G as Assigned Custom GPT
+    participant G as ChatGPT
     participant D as Task storage
 
     M->>E: Scan and choose generated fields/documents
@@ -338,10 +339,11 @@ sequenceDiagram
     A->>A: Build scoped context from job + Account + Manager answers
     A->>D: Save/reuse job-scoped task and resume text if available
     E->>A: Set current page, fields, and job description
-    E->>G: Hand off task prompt to assigned GPT
-    G->>A: Action GET task context (action key)
-    A-->>G: Job description, scoped profile, previous answers, fields
-    G->>A: Action POST answer/document package
+    E->>A: Load authorized task context
+    A-->>E: Job, scoped profile, previous answers, fields
+    E->>G: Send generated task prompt
+    G-->>E: Return JSON answer/document package
+    E->>A: Submit package with Manager bearer token
     A->>D: Validate fields, save package and task-scoped documents
     E->>A: Poll task status / retrieve approved task output
     A-->>E: Generated answers or document bytes
@@ -354,8 +356,10 @@ Important controls include:
 - The task must be associated with the Manager's exact processing job row.
 - Workable job rows may use the generic job-scoped task flow; task creation and
   subsequent task routes remain joined back to the Manager's job.
-- The Action must use the configured GPT Action key; the extension uses
-  authenticated Manager APIs.
+- Scanner package submission uses the authenticated Manager session and checks
+  task ownership and Scanner assignment; no Custom GPT assignment or Action
+  key is required. Legacy Custom GPT Action routes remain available only when
+  the optional action key is configured.
 - A task already active or closed cannot be overwritten by a new Scanner page.
 - Task answers must reference fields on the current page, and the package is
   validated before it is stored.
@@ -541,7 +545,8 @@ It must not be read as evidence that QTS itself submitted an application.
   staff/account records, handles temporary password requirements, blocks
   users, and supports account resume management.
 - Category management supports the job/Account matching workflow.
-- Super can maintain Custom GPT definitions and Manager assignments.
+- Super can maintain legacy Custom GPT definitions and Manager assignments;
+  these are not required for the current Scanner.
 - Super can inspect the new-schema database through a restricted browser. It
   excludes sensitive migration/password data and limits binary content to
   metadata.
@@ -614,7 +619,7 @@ The most important separation is:
 | Generic read-only site discovery | Available as a structural observation path |
 | Scanner fill on supported page, including Workable | Explicit Manager-triggered, visible-step-only, confirmation-gated assistance |
 | Saved site template | Not permission for automatic replay, navigation, or submission |
-| Custom GPT output | Must be task-scoped and reviewed before field/document use |
+| ChatGPT-generated output | Must be task-scoped and reviewed before field/document use |
 | Generated resume PDF | Returned/downloaded; not automatically persisted as the Account's uploaded resume |
 | Account profile | A candidate record; not a login |
 

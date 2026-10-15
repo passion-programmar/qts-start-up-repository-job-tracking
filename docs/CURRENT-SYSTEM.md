@@ -76,8 +76,9 @@ tables listed above are kept. Legacy tables are not recreated by migrations.
   navigation, zoom, and fit-width controls.
 - Super can configure the global application submission mode. It defaults to
   `manual`.
-- Super can manage Custom GPT assignments and reusable application profile
-  data; these records remain available for future supported workflows.
+- Existing Custom GPT definitions and assignments are retained for legacy
+  integrations. Manager Scanner no longer requires an assigned Custom GPT or
+  Action-key configuration.
 - The Manager Apply queue and Workable-specific application handler are not
   shipped. Workable rows support job tracking and the same generic Manager
   Scanner flow as other supported sites; claim, application-context, and
@@ -87,12 +88,13 @@ tables listed above are kept. Legacy tables are not recreated by migrations.
   loads job details through
   the Get JD flow, lets the Manager choose an Account, then saves or updates
   the job and starts that Account's exact `todo` row before using its
-  job-scoped GPT task. Scanner stores Manager-owned answer strategies separately from the
-  shared structural template. Confirmed Profile Answer values are read from
-  the selected Account; missing values can be entered for that application
-  only. Confirmed Reusable Answers are saved to the Manager's existing
-  reusable Q&A store. Matched Profile and Reusable fields can be filled on the
-  current step after Manager confirmation.
+  job-scoped task and sending its prompt to regular ChatGPT. Scanner stores
+  Manager-owned answer strategies separately from the shared structural
+  template. Confirmed Profile Answer values are read from the selected
+  Account; missing values can be entered for that application only. Confirmed
+  Reusable Answers are saved to the Manager's existing reusable Q&A store.
+  Matched Profile and Reusable fields can be filled on the current step after
+  Manager confirmation.
 - On first-time capture, Scanner automatically observes each visible step
   twice and reconciles its fields and bounded DOM/locator evidence, including
   weak class-name hints. Later unchanged steps use one observation and repeat
@@ -101,17 +103,19 @@ tables listed above are kept. Legacy tables are not recreated by migrations.
   untouched. Scanner never treats class names alone as field identity. These
   checkpoints store structural evidence, not entered field values.
 - Generated Answer fields and detected resume/cover-letter upload fields are
-  sent to the selected job's Custom GPT task with the job description from
-  Get JD; if it is missing there and on the task, Scanner asks the Manager to
-  provide it. The Manager reviews/edits generated answers and confirms each
+  sent to regular ChatGPT with the selected job's task context and description
+  from Get JD; if it is missing there and on the task, Scanner asks the Manager
+  to provide it. The Manager reviews/edits generated answers and confirms each
   document upload before Scanner fills the current step. Generated text and
   documents remain task-scoped; Scanner does not save them to reusable
   answers or Account profiles. Scanner does not advance pages or submit
-  applications. A GPT task that is already active or closed cannot be
-  overwritten. Scanner claims only the selected Account's exact `todo` row
-  through the existing Apply-run lock; later step scans resume that same
-  Scanner run rather than starting another one. These boundaries also apply to
-  Workable.
+  applications. A task that is already active or closed cannot be overwritten.
+  ChatGPT returns a JSON package to the API through the authenticated Manager
+  extension session; the API checks task ownership, validates fields and
+  documents, and stores accepted output. Scanner claims only the selected
+  Account's exact `todo` row through the existing Apply-run lock; later step
+  scans resume that same Scanner run rather than starting another one. These
+  boundaries also apply to Workable.
 - Generic read-only site-template discovery remains available to other
   extension users. It records structural field/step checkpoints only; it does
   not save typed answers, fill fields, navigate, or submit.

@@ -6,6 +6,7 @@ importScripts(
   '../shared/job-detect.js',
   '../shared/api-prefetch.js',
   '../shared/custom-gpt.js',
+  '../shared/scanner-chatgpt.js',
   '../shared/account-auth-storage.js',
   '../shared/apply-session-store.js',
   '../shared/api-worker.js',
@@ -1414,6 +1415,169 @@ async function resumePendingGptDispatchIfAny() {
   return result;
 }
 
+async function waitForScannerChatGptTab(tabId, timeoutMs = 45000) {
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        chrome.tabs.onUpdated.removeListener(onUpdated);
+        reject(new Error('Timed out waiting for the ChatGPT page to load.'));
+      }, timeoutMs);
+      const onUpdated = (updatedTabId, changeInfo, tab) => {
+        if (updatedTabId !== tabId || changeInfo.status !== 'complete') return;
+        clearTimeout(timeout);
+        chrome.tabs.onUpdated.removeListener(onUpdated);
+        resolve(tab);
+      };
+      chrome.tabs.onUpdated.addListener(onUpdated);
+      chrome.tabs.get(tabId)
+        .then((current) => {
+          if (current.status !== 'complete') return;
+          clearTimeout(timeout);
+          chrome.tabs.onUpdated.removeListener(onUpdated);
+          resolve(current);
+        })
+        .catch((error) => {
+          clearTimeout(timeout);
+          chrome.tabs.onUpdated.removeListener(onUpdated);
+          reject(error);
+        });
+    });
+  }
+
+  async function scannerChatGptSnapshot(tabId, baseline) {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: (initial) => {
+        const messages = [...document.querySelectorAll('[data-message-author-role="assistant"]')];
+        const last = messages[messages.length - 1];
+        const text = String(last?.innerText || last?.textContent || '').trim();
+        const generating = Boolean(
+          document.querySelector('[data-testid="stop-button"]')
+          || [...document.querySelectorAll('button')].some((button) =>
+            /stop generating|stop streaming/i.test(button.getAttribute('aria-label') || '')
+          )
+        );
+        return {
+          text,
+          messageCount: messages.length,
+          isNew: messages.length > initial.messageCount || text !== initial.lastText,
+          generating,
+        };
+      },
+      args: [baseline],
+    });
+    return results[0]?.result;
+  }
+
+  async function runScannerChatGptTask(msg) {
+    const taskId = String(msg?.taskId || '').trim();
+    const prompt = String(msg?.prompt || '').trim();
+    if (!/^task_[0-9a-f-]{36}$/i.test(taskId)) throw new Error('A valid Scanner task ID is required.');
+    if (!prompt) throw new Error('The Scanner prompt is empty.');
+    if (!self.__qtsScannerChatGpt?.extractPackage) {
+      throw new Error('The ChatGPT Scanner response parser is unavailable.');
+    }
+
+    const chatTab = await chrome.tabs.create({ url: 'https://chatgpt.com/', active: true });
+    if (chatTab?.id == null) throw new Error('Could not open a ChatGPT tab.');
+
+    const tabId = chatTab.id;
+    await waitForScannerChatGptTab(tabId);
+    if (chatTab.windowId != null) {
+      await chrome.windows.update(chatTab.windowId, { focused: true, drawAttention: true });
+    }
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ['shared/chatgpt-composer-handoff.js'],
+    });
+    const handoffResults = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: async (message) => {
+        const composer = globalThis.__qtsChatGptComposerHandoff;
+        if (!composer?.runUnifiedComposerHandoff) {
+          return { ok: false, error: 'The ChatGPT composer helper is unavailable.' };
+        }
+        const startedAt = Date.now();
+        while (Date.now() - startedAt < 45000) {
+          const editor = composer.findUnifiedComposerEditor?.();
+          if (!editor) {
+            await new Promise((resolve) => setTimeout(resolve, 300));
+            continue;
+          }
+          if (composer.readEditorText?.(editor).trim()) {
+            return { ok: false, error: 'The ChatGPT message box already contains unsent text. Clear or send it, then try again.' };
+          }
+          const generating = Boolean(
+            document.querySelector('[data-testid="stop-button"]')
+            || [...document.querySelectorAll('button')].some((button) =>
+              /stop generating|stop streaming/i.test(button.getAttribute('aria-label') || '')
+            )
+          );
+          if (generating) {
+            return { ok: false, error: 'ChatGPT is already generating a response. Wait for it to finish, then retry.' };
+          }
+          const assistantMessages = [...document.querySelectorAll('[data-message-author-role="assistant"]')];
+          const baseline = {
+            messageCount: assistantMessages.length,
+            lastText: String(assistantMessages[assistantMessages.length - 1]?.innerText || '').trim(),
+          };
+          const result = composer.runUnifiedComposerHandoff(message);
+          if (result.phase === 'no_editor') {
+            await new Promise((resolve) => setTimeout(resolve, 300));
+            continue;
+          }
+          return { ...result, baseline };
+        }
+        return { ok: false, error: 'Timed out waiting for the ChatGPT message box.' };
+      },
+      args: [prompt],
+    });
+    const handoff = handoffResults[0]?.result;
+    if (!handoff?.ok || !handoff.sent) {
+      throw new Error(handoff?.error || 'ChatGPT did not send the Scanner prompt.');
+    }
+
+    const startedAt = Date.now();
+    const timeoutMs = 240000;
+    let previousText = '';
+    let stableSince = 0;
+    let responseText = '';
+    while (Date.now() - startedAt < timeoutMs) {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      const snapshot = await scannerChatGptSnapshot(tabId, handoff.baseline);
+      if (!snapshot?.isNew || !snapshot.text || snapshot.generating) {
+        previousText = '';
+        stableSince = 0;
+        continue;
+      }
+      if (snapshot.text !== previousText) {
+        previousText = snapshot.text;
+        stableSince = Date.now();
+        continue;
+      }
+      if (Date.now() - stableSince >= 5000) {
+        responseText = snapshot.text;
+        break;
+      }
+    }
+    if (!responseText) throw new Error('Timed out waiting for ChatGPT to finish its Scanner response.');
+
+    const packageData = self.__qtsScannerChatGpt.extractPackage(responseText);
+    const submission = await workerApiRequest(
+      'POST',
+      `/api/v2/gpt-application-tasks/${encodeURIComponent(taskId)}/package`,
+      packageData
+    );
+    if (!submission.success) {
+      throw new Error(submission.message || "The server rejected ChatGPT's Scanner package.");
+    }
+    return {
+      ok: true,
+      taskId,
+      handoff: { ok: true, sent: true, accepted: true, status: submission.status },
+      package: submission,
+    };
+  }
+
 async function runSendGptTask(msg) {
   const taskId = String(msg?.taskId || '').trim();
   if (!taskId) throw new Error('Missing task id');
@@ -1917,6 +2081,26 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       .then(() => sendResponse({ ok: true }))
       .catch((error) => sendResponse({ ok: false, error: error.message || 'Could not close the page tab.' }));
     return true;
+  }
+  if (msg.type === 'SEND_SCANNER_CHATGPT_TASK') {
+    const keepalive = setInterval(() => {
+      chrome.runtime.getPlatformInfo(() => {});
+    }, 3000);
+    runScannerChatGptTask(msg)
+      .then((result) => notifyGptDispatchFinished(result))
+      .catch((error) => notifyGptDispatchFinished({
+        taskId: msg.taskId,
+        ok: false,
+        error: error?.message || 'Could not complete the ChatGPT Scanner handoff.',
+        handoff: {
+          ok: false,
+          sent: false,
+          error: error?.message || 'Could not complete the ChatGPT Scanner handoff.',
+        },
+      }))
+      .finally(() => clearInterval(keepalive));
+    sendResponse({ ok: true, started: true });
+    return false;
   }
   if (msg.type === 'EXTRACT_JOB') {
     (async () => {

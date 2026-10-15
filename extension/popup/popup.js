@@ -1124,9 +1124,9 @@ async function getScannerGptTaskResult(taskId) {
   const timeoutMs = 180000;
   while (Date.now() - startedAt < timeoutMs) {
     const response = await window.api.getManagerGptTaskStatus(taskId);
-    if (!response.success) throw new Error(response.message || 'Could not read the Scanner GPT task status.');
+    if (!response.success) throw new Error(response.message || 'Could not read the Scanner task status.');
     if (response.status === 'failed' || response.status === 'completed') {
-      throw new Error(`Scanner GPT task is ${response.status}; choose a different processing job row or restart it.`);
+      throw new Error(`Scanner task is ${response.status}; choose a different processing job row or restart it.`);
     }
     const packageData = response.package || {};
     const submitted = Array.isArray(packageData.answers)
@@ -1138,7 +1138,7 @@ async function getScannerGptTaskResult(taskId) {
     }
     await new Promise((resolve) => setTimeout(resolve, 2500));
   }
-  throw new Error('Timed out waiting for Custom GPT. Check the assigned Custom GPT tab and try again.');
+  throw new Error('Timed out waiting for ChatGPT to return the Scanner package. Check the ChatGPT tab and try again.');
 }
 
 async function runManagerScannerGptTask({ job, account, tabId, generatedFields, documentFields, statusElement }) {
@@ -1147,21 +1147,20 @@ async function runManagerScannerGptTask({ job, account, tabId, generatedFields, 
     ...documentFields.map((field) => scannerTaskField(field, scannerFieldDocumentSlot(field))),
   ];
   if (!pageFields.length) return { fillFields: [], outcomes: [] };
-  if (!window.__qtsCustomGpt?.buildPrompt) throw new Error('Custom GPT helper is not loaded.');
-  requireManagerCustomGpt();
+  if (!window.__qtsScannerChatGpt?.buildPrompt) throw new Error('ChatGPT Scanner helper is not loaded.');
 
-  await notifyScannerStage(tabId, statusElement, 'Preparing a job-specific GPT task for the selected application…');
+  await notifyScannerStage(tabId, statusElement, 'Preparing a job-specific Scanner task for the selected application…');
   const createResponse = await window.api.createManagerGptTaskForJob(job.id, {
     sourcePlatform: job.application_type,
     jobDescription: document.getElementById('f-desc')?.value?.trim() || undefined,
   });
   const activeTaskReturned = createResponse._httpStatus === 409 && Boolean(createResponse.taskId);
   if ((!createResponse.success && !activeTaskReturned) || !createResponse.taskId) {
-    throw new Error(createResponse.message || 'Could not create a GPT task for the selected processing job row.');
+    throw new Error(createResponse.message || 'Could not create a Scanner task for the selected processing job row.');
   }
   const taskId = createResponse.taskId;
   const currentTask = await window.api.getManagerGptTaskStatus(taskId);
-  if (!currentTask.success) throw new Error(currentTask.message || 'Could not verify the selected job’s GPT task.');
+  if (!currentTask.success) throw new Error(currentTask.message || 'Could not verify the selected job’s Scanner task.');
 
   const tab = await chrome.tabs.get(tabId);
   const pageUrl = String(tab?.url || '');
@@ -1169,18 +1168,18 @@ async function runManagerScannerGptTask({ job, account, tabId, generatedFields, 
   try {
     normalizedPageUrl = new URL(pageUrl).href;
   } catch {
-    throw new Error('Could not read the current application page URL for the GPT task.');
+    throw new Error('Could not read the current application page URL for the Scanner task.');
   }
   const samePage = scannerTaskPageMatches(currentTask.page, normalizedPageUrl, pageFields);
   let result;
   if (currentTask.status === 'waiting_for_gpt') {
     if (!samePage) {
-      throw new Error('This job already has an active GPT request for a different page. Finish or review it before starting Scanner on another page.');
+      throw new Error('This job already has an active ChatGPT request for a different page. Finish or review it before starting Scanner on another page.');
     }
     await notifyScannerStage(
       tabId,
       statusElement,
-      `A Custom GPT request is already active for task ${taskId}. Waiting to receive its package…`,
+      `A ChatGPT request is already active for task ${taskId}. Waiting to receive its package…`,
       'info',
       6000,
       true
@@ -1194,7 +1193,7 @@ async function runManagerScannerGptTask({ job, account, tabId, generatedFields, 
     ).trim();
     if (!jobDescription) {
       jobDescription = (window.prompt(
-        `Enter or paste the job description for ${job.title || 'this job'} at ${job.company || 'the selected company'}. Custom GPT needs it to generate job-specific answers and documents.`
+        `Enter or paste the job description for ${job.title || 'this job'} at ${job.company || 'the selected company'}. ChatGPT needs it to generate job-specific answers and documents.`
       ) || '').trim();
     }
     if (!jobDescription) throw new Error('A job description is required for Generated Answers, resume, or cover-letter generation.');
@@ -1206,36 +1205,41 @@ async function runManagerScannerGptTask({ job, account, tabId, generatedFields, 
       fields: pageFields,
       jobDescription,
     });
-    if (!pageResponse.success) throw new Error(pageResponse.message || 'Could not add the scanned fields to the GPT task.');
+    if (!pageResponse.success) throw new Error(pageResponse.message || 'Could not add the scanned fields to the Scanner task.');
 
     await chrome.storage.local.set({ qtsJobSourceTabId: tabId });
     await notifyScannerStage(
       tabId,
       statusElement,
-      `Page context saved for task ${taskId}. Sending ${generatedFields.length} answer field(s) and ${documentFields.length} document request(s) to the assigned Custom GPT. Existing page-field contents are not sent.`,
+      `Page context saved for task ${taskId}. Sending ${generatedFields.length} answer field(s) and ${documentFields.length} document request(s) to ChatGPT. Existing page-field contents are not sent.`,
       'info',
       6000,
       true
     );
-    const handoff = await sendGptTaskToBackground({
+    const promptContext = await window.api.getManagerGptTaskStatus(taskId);
+    if (!promptContext.success) {
+      throw new Error(promptContext.message || 'Could not load the saved Scanner context for ChatGPT.');
+    }
+    const prompt = window.__qtsScannerChatGpt.buildPrompt(promptContext);
+    const handoff = await sendScannerChatGptTask({
       taskId,
       jobTabId: tabId,
-      pollAndApply: false,
+      prompt,
     });
     if (!handoff?.ok || handoff?.handoff?.sent === false) {
-      throw new Error(handoff?.handoff?.error || handoff?.error || 'Custom GPT handoff failed.');
+      throw new Error(handoff?.handoff?.error || handoff?.error || 'ChatGPT handoff failed.');
     }
     await notifyScannerStage(
       tabId,
       statusElement,
-      `PROCESS_TASK sent for task ${taskId}. Waiting for the Custom GPT to read the context and return its package…`,
+      `Scanner context sent to ChatGPT for task ${taskId}. Waiting for its answer package…`,
       'info',
       6000,
       true
     );
     result = await getScannerGptTaskResult(taskId);
   } else {
-    throw new Error(`The selected job’s GPT task is ${currentTask.status}; Scanner will not overwrite an active or closed task.`);
+    throw new Error(`The selected job’s Scanner task is ${currentTask.status}; Scanner will not overwrite an active or closed task.`);
   }
 
   if (generatedFields.length || documentFields.length) {
@@ -1244,7 +1248,7 @@ async function runManagerScannerGptTask({ job, account, tabId, generatedFields, 
     const resumeReady = Boolean(result.package?.documents?.resume);
     const coverLetterReady = Boolean(result.package?.documents?.coverLetter);
     const documentCount = Number(resumeReady) + Number(coverLetterReady);
-    const packageReceivedMessage = `Package received for task ${taskId}: ${answerCount} answer(s), ${documentCount} requested document(s), ${unresolvedCount} unresolved field(s). GPT transfer is complete.`;
+    const packageReceivedMessage = `Package received from ChatGPT for task ${taskId}: ${answerCount} answer(s), ${documentCount} requested document(s), ${unresolvedCount} unresolved field(s).`;
     if (statusElement) statusElement.textContent = packageReceivedMessage;
     await clearPageNotice(tabId, 'scanner-progress');
     await clearPageNotice(tabId, 'scanner-package-received');
@@ -1675,7 +1679,7 @@ function waitForGptDispatchFinished(taskId, timeoutMs = 120000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       gptDispatchWaiters.delete(taskId);
-      reject(new Error('Timed out waiting for Custom GPT handoff. Check the GPT tab or click Send PROCESS_TASK.'));
+      reject(new Error('Timed out waiting for the GPT handoff to finish.'));
     }, timeoutMs);
     gptDispatchWaiters.set(taskId, { resolve, reject, timer });
   });
@@ -1771,6 +1775,31 @@ async function sendGptTaskToBackground({ taskId, jobTabId, applicationId, pollAn
     } catch (portErr) {
       throw new Error(portErr?.message || messageErr?.message || 'Could not start GPT handoff.');
     }
+  }
+}
+
+async function sendScannerChatGptTask({ taskId, jobTabId, prompt }) {
+  const dispatchWaiter = waitForGptDispatchFinished(taskId, 300000);
+  dispatchWaiter.catch(() => {});
+  try {
+    const started = await chrome.runtime.sendMessage({
+      type: 'SEND_SCANNER_CHATGPT_TASK',
+      taskId,
+      jobTabId,
+      prompt,
+      async: true,
+    });
+    if (!started?.started) {
+      throw new Error(started?.error || 'Could not start the ChatGPT Scanner handoff.');
+    }
+    return await dispatchWaiter;
+  } catch (error) {
+    const waiter = gptDispatchWaiters.get(taskId);
+    if (waiter) {
+      clearTimeout(waiter.timer);
+      gptDispatchWaiters.delete(taskId);
+    }
+    throw error;
   }
 }
 
@@ -2248,11 +2277,7 @@ async function bootstrapPopupFast() {
       name: user.name,
       role: user.role,
     };
-    const assignedGpt = await window.api.getAssignedCustomGpt();
-    if (!assignedGpt.success) {
-      throw new Error(assignedGpt.message || 'Could not check the Custom GPT assigned by your Admin.');
-    }
-    await applyWorkspaceCustomGpt(assignedGpt.customGpt, sessionUser);
+    await applyOptionalWorkspaceCustomGpt(sessionUser);
     await storeSessionUser(sessionUser);
     await resumeSelectedMode(sessionUser);
   } finally {
@@ -2600,17 +2625,13 @@ async function selectManagerTeam() {
       showAlert('login-alert', workspace.message || 'Could not load that Account team.', 'error');
       return;
     }
-    const assignedGpt = await window.api.getAssignedCustomGpt();
-    if (!assignedGpt.success) {
-      throw new Error(assignedGpt.message || 'Could not check the Custom GPT assigned by your Admin.');
-    }
     managerTeams = workspace.teams || managerTeams;
     const sessionSnapshot = workspace.user;
     await global.__qtsAccountAuth.storePopupAuth(workspace.token, sessionSnapshot, workspace.expiresAt);
     window.api.setCachedToken(workspace.token);
     await storeSessionUser(sessionSnapshot);
     applyCandidatesData(workspace.candidates || [], workspace.stacks || []);
-    await applyWorkspaceCustomGpt(assignedGpt.customGpt, sessionSnapshot);
+    await applyOptionalWorkspaceCustomGpt(sessionSnapshot);
     await writeCandidateCache(workspace.candidates || [], workspace.stacks || [], sessionSnapshot);
     document.getElementById('login-team-step')?.classList.add('hidden');
     document.getElementById('login-candidate-step')?.classList.add('hidden');
@@ -2932,11 +2953,7 @@ async function doLogin() {
       };
       await global.__qtsAccountAuth.storePopupAuth(r.token, sessionSnapshot, r.expiresAt);
       window.api.setCachedToken(r.token);
-      const assignedGpt = await window.api.getAssignedCustomGpt();
-      if (!assignedGpt.success) {
-        throw new Error(assignedGpt.message || 'Could not check the Custom GPT assigned by your Admin.');
-      }
-      await applyWorkspaceCustomGpt(assignedGpt.customGpt, sessionSnapshot);
+      await applyOptionalWorkspaceCustomGpt(sessionSnapshot);
       document.getElementById('login-pass').value = '';
       clearAlert('login-alert');
       await showActionScreen(sessionSnapshot);
@@ -3042,6 +3059,20 @@ async function applyWorkspaceCustomGpt(customGpt, user) {
   });
 }
 
+async function applyOptionalWorkspaceCustomGpt(user) {
+  const assignedGpt = await window.api.getAssignedCustomGpt();
+  if (!assignedGpt.success) {
+    await applyWorkspaceCustomGpt(null, user);
+    console.warn(
+      '[QTS_Startup] Legacy Custom GPT assignment could not be loaded:',
+      assignedGpt.message || 'Unknown API error.'
+    );
+    return false;
+  }
+  await applyWorkspaceCustomGpt(assignedGpt.customGpt, user);
+  return true;
+}
+
 function requireManagerCustomGpt() {
   if (!managerCustomGptAssigned) {
     throw new Error('No Custom GPT is assigned to your Manager account. Contact your Admin.');
@@ -3098,20 +3129,12 @@ async function fetchWorkspaceData(forceRefresh = false) {
   if (!workspace.success) return workspace;
 
   if (workspace.user?.role === 'manager') {
-    const assignedGpt = await window.api.getAssignedCustomGpt();
-    if (!assignedGpt.success) {
-      return {
-        success: false,
-        message: assignedGpt.message || 'Could not check the Custom GPT assigned by your Admin.',
-      };
-    }
-    workspace.customGpt = assignedGpt.customGpt || null;
+    await applyOptionalWorkspaceCustomGpt(workspace.user);
   }
   managerTeams = workspace.teams || managerTeams;
   lastWorkspaceFetchAt = Date.now();
   applyCandidatesData(workspace.candidates, workspace.stacks);
   if (workspace.user) await storeSessionUser(workspace.user);
-  if (workspace.customGpt) await applyWorkspaceCustomGpt(workspace.customGpt, workspace.user);
   if (workspace.candidates.length) {
     await writeCandidateCache(workspace.candidates, workspace.stacks, workspace.user);
   } else {

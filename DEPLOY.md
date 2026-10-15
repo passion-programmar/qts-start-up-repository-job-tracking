@@ -56,8 +56,12 @@ separate deliverable; update or reload the unpacked extension from the
    | `AUTO_OPEN_BROWSER` | `false` |
    | `HOST` | `0.0.0.0` |
    | `APPLICATION_SESSION_PERSIST_DB` | `true` |
-   | `GPT_ACTION_API_KEY` | A strong random secret shared only with the Custom GPT Action |
    | `CRON_SECRET` | A separate strong random secret for Vercel scheduled cleanup |
+
+   The current Manager Scanner uses regular ChatGPT and the Manager's
+   authenticated extension session; it does not require a Custom GPT or
+   `GPT_ACTION_API_KEY`. Keep the key only if you use the legacy Action
+   integration below.
 
    Enable `APPLICATION_SESSION_PERSIST_DB=true` when application sessions and
    learned field policies must survive serverless invocations or server
@@ -71,7 +75,7 @@ separate deliverable; update or reload the unpacked extension from the
 
 4. Deploy. The first API request initializes the Neon schema and seeds accounts.
 5. Test `https://YOUR-API-PROJECT.vercel.app/api/health`.
-6. Configure the Custom GPT Action using
+6. (Legacy integration only.) Configure the Custom GPT Action using
    [docs/openapi/custom-gpt-application-actions.yaml](docs/openapi/custom-gpt-application-actions.yaml)
    and the same `GPT_ACTION_API_KEY` as Bearer authentication. The GPT
    instructions and setup checklist are in
