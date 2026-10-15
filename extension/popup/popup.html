@@ -510,13 +510,12 @@
           <p class="application-disabled-note hidden" id="application-disabled-note">
             The Manager Apply queue and final submission are disabled. Scanner assist requires your confirmation and never submits an application.
           </p>
-          <section class="site-discovery" aria-labelledby="site-discovery-title">
+          <section class="site-discovery" id="site-discovery" aria-labelledby="site-discovery-title">
             <h3 id="site-discovery-title">Scanner</h3>
             <p>Managers click Scan for the current step, review job details extracted through Get JD, and choose an Account. Save Job &amp; Scan saves or updates the job, starts that Account's row, then scans the form. New steps are checked twice automatically; later unchanged scans use one check, and differences pause for Manager review. Profile and Reusable answers require confirmation; generated answers and resume or cover-letter uploads use the job's GPT task and require Manager review. Scanner never advances pages or submits.</p>
             <div class="site-discovery-actions">
               <button class="btn btn-ghost btn-sm" id="btn-discover-site-step" type="button">Scan current step</button>
             </div>
-            <p class="site-discovery-status hidden" id="scanner-access-note" role="status" aria-live="polite"></p>
             <p class="site-discovery-status" id="site-discovery-status" role="status" aria-live="polite">Scanner has not scanned this step yet.</p>
           </section>
         </div>

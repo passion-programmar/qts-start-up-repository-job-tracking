@@ -1694,6 +1694,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('btn-save-and-scan')?.addEventListener('click', () => {
     saveJobAndStartScanner().catch((error) => {
       const errorMessage = error?.message || 'Could not save and start Scanner.';
+      if (currentUser?.role === 'manager' && !managerExtensionFeatures.canUseScanner) {
+        showAlert('main-alert', errorMessage, 'error');
+        return;
+      }
       const status = document.getElementById('site-discovery-status');
       if (status) status.textContent = errorMessage;
       const saveStatus = document.getElementById('scanner-save-status');
@@ -5062,17 +5066,30 @@ function showLogin() {
 
 function updateFeatureGatedControls(user) {
   const managerMode = user?.role === 'manager';
+  const scannerUnavailable = managerMode && !managerExtensionFeatures.canUseScanner;
+  const scannerSection = document.getElementById('site-discovery');
+  scannerSection?.classList.toggle('hidden', scannerUnavailable);
   const scannerButton = document.getElementById('btn-discover-site-step');
-  scannerButton?.classList.toggle('hidden', managerMode && !managerExtensionFeatures.canUseScanner);
-  const scannerAccessNote = document.getElementById('scanner-access-note');
-  if (scannerAccessNote) {
-    const showNote = managerMode && !managerExtensionFeatures.canUseScanner;
-    scannerAccessNote.classList.toggle('hidden', !showNote);
-    scannerAccessNote.textContent = showNote
-      ? managerExtensionFeaturesError
-        ? 'Scanner is unavailable because permissions could not be verified. Other extension actions remain available.'
-        : 'Scanner access must be assigned to this Manager by Super. Other extension actions remain available.'
-      : '';
+  scannerButton?.classList.toggle('hidden', scannerUnavailable);
+  const saveAndScanButton = document.getElementById('btn-save-and-scan');
+  if (scannerUnavailable) {
+    saveAndScanButton?.classList.add('hidden');
+    if (saveAndScanButton) saveAndScanButton.disabled = true;
+    scannerSetupPending = false;
+    scannerSelectedAccountId = null;
+    document.getElementById('scanner-save-status')?.classList.add('hidden');
+  }
+  document.getElementById('application-disabled-note')?.classList.toggle(
+    'hidden',
+    !managerMode || scannerUnavailable
+  );
+  const subtitle = document.querySelector('.action-subtitle');
+  if (subtitle) {
+    subtitle.textContent = managerMode
+      ? managerExtensionFeatures.canUseScanner
+        ? 'Get JD saves a job to your Manager job list. Scanner can save a job and start one Account row for a confirmed, manual-review application assist.'
+        : 'Get JD saves a job to your Manager job list.'
+      : 'Select an action for the current job page.';
   }
 }
 
@@ -5083,12 +5100,14 @@ async function refreshManagerExtensionFeatures() {
   const result = await window.api.getManagerExtensionFeatures();
   if (!result.success || !result.features) {
     managerExtensionFeaturesError = result.message || 'Could not verify this Manager’s extension permissions.';
+    updateFeatureGatedControls(currentUser);
     return managerExtensionFeatures;
   }
   managerExtensionFeatures = {
     canManageTextHighlights: result.features.canManageTextHighlights === true,
     canUseScanner: result.features.canUseScanner === true,
   };
+  updateFeatureGatedControls(currentUser);
   return managerExtensionFeatures;
 }
 
@@ -5128,13 +5147,6 @@ async function showActionScreen(user) {
   if (scannerSaveStatus) scannerSaveStatus.textContent = '';
   const managerMode = user?.role === 'manager';
   document.getElementById('btn-custom-apply')?.classList.toggle('hidden', managerMode);
-  document.getElementById('application-disabled-note')?.classList.toggle('hidden', !managerMode);
-  const subtitle = document.querySelector('.action-subtitle');
-  if (subtitle) {
-    subtitle.textContent = managerMode
-      ? 'Get JD saves a job to your Manager job list. Scanner can save a job and start one Account row for a confirmed, manual-review application assist.'
-      : 'Select an action for the current job page.';
-  }
   updateDefaultCandidateUi();
   updateAutoApplyBarUi();
   document.getElementById('session-bar')?.classList.add('hidden');
