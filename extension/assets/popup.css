@@ -778,6 +778,123 @@
   width: 100%;
 }
 
+.popup-app .page-highlights {
+  margin: 0 20px 16px;
+  padding: 14px;
+  border: 1px solid #cbd5e1;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.popup-app .page-highlights.hidden {
+  display: none;
+}
+
+.popup-app .page-highlights h2 {
+  margin: 0 0 5px;
+  color: #0f172a;
+  font-size: 15px;
+}
+
+.popup-app .page-highlights-hint,
+.popup-app .page-highlights-url,
+.popup-app .page-highlights-status {
+  margin: 0 0 8px;
+  color: #64748b;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.popup-app .page-highlights-url {
+  overflow: hidden;
+  color: #475569;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.popup-app .page-highlight-form,
+.popup-app .page-highlight-rule {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 44px 44px auto;
+  align-items: end;
+  gap: 7px;
+}
+
+.popup-app .page-highlight-form {
+  padding-bottom: 10px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.popup-app .page-highlight-field {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+  color: #475569;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.popup-app .page-highlight-field input[type="text"] {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 32px;
+  padding: 5px 7px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  color: #0f172a;
+  font: inherit;
+  font-size: 12px;
+}
+
+.popup-app .page-highlight-field input[type="color"] {
+  box-sizing: border-box;
+  width: 44px;
+  height: 32px;
+  padding: 2px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.popup-app .page-highlight-form > .btn {
+  min-height: 32px;
+  padding: 5px 8px;
+}
+
+.popup-app .page-highlight-list {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.popup-app .page-highlight-rule {
+  padding-bottom: 8px;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.popup-app .page-highlight-rule:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.popup-app .page-highlight-rule-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.popup-app .page-highlight-rule-actions .btn {
+  min-height: 30px;
+  padding: 4px 6px;
+  font-size: 10px;
+}
+
+.popup-app .page-highlights-status:empty {
+  display: none;
+}
+
 .popup-app .cand-card {
   display: flex;
   flex-direction: column;

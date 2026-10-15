@@ -38,6 +38,14 @@
         "content/chatgpt-handoff.js"
       ],
       "run_at": "document_idle"
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": [
+        "shared/text-highlighting.js",
+        "content/text-highlighter.js"
+      ],
+      "run_at": "document_idle"
     }
   ],
   "web_accessible_resources": [

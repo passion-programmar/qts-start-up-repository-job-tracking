@@ -68,6 +68,7 @@
     }
     #login-alert:empty,
     #main-alert:empty { display: none; }
+    #page-highlights-status.is-error { color: #b91c1c; }
     .existing-job-notice {
       background: #fef3c7;
       border: 1px solid #fde68a;
@@ -684,6 +685,28 @@
       </div>
       <p class="site-discovery-status hidden" id="scanner-save-status" role="status" aria-live="polite"></p>
     </div>
+    <section id="page-highlights" class="page-highlights hidden" aria-labelledby="page-highlights-title">
+      <h2 id="page-highlights-title">Text highlights on this page</h2>
+      <p class="page-highlights-hint">Rules are saved for this page URL only. Matching text is highlighted automatically.</p>
+      <p id="page-highlights-url" class="page-highlights-url"></p>
+      <form id="page-highlight-form" class="page-highlight-form">
+        <label class="page-highlight-field page-highlight-term">
+          <span>Text or characters</span>
+          <input id="page-highlight-text" type="text" maxlength="500" required>
+        </label>
+        <label class="page-highlight-field">
+          <span>Text color</span>
+          <input id="page-highlight-text-color" type="color" value="#111827">
+        </label>
+        <label class="page-highlight-field">
+          <span>Background</span>
+          <input id="page-highlight-background-color" type="color" value="#fef08a">
+        </label>
+        <button class="btn btn-primary btn-sm" type="submit">Add rule</button>
+      </form>
+      <p id="page-highlights-status" class="page-highlights-status" role="status" aria-live="polite"></p>
+      <ul id="page-highlight-list" class="page-highlight-list"></ul>
+    </section>
     </div>
   </div>
 
@@ -714,6 +737,7 @@
   <script src="../shared/application-flow.js"></script>
   <script src="../shared/application-preview-render.js"></script>
   <script src="../shared/page-url.js"></script>
+  <script src="../shared/text-highlighting.js"></script>
   <script src="../shared/job-detect.js"></script>
   <script src="../shared/api-prefetch.js"></script>
   <script src="../shared/candidate-colors.js"></script>

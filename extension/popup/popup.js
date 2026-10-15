@@ -17,6 +17,9 @@ let existingJobId = null;
 let scannerSetupPending = false;
 let scannerSelectedAccountId = null;
 let currentTabUrl = '';
+let pageHighlightUrl = '';
+let pageHighlightStorageKey = '';
+let pageHighlightRules = [];
 let currentSource = '';
 let targetTabId = null;
 let sourceWindowId = null;
@@ -83,6 +86,145 @@ async function restoreSelectedAction() {
   const selectedAction = ACTION_BUTTON_IDS.includes(actionId) ? actionId : null;
   updateSelectedAction(selectedAction);
   return selectedAction;
+}
+
+function setPageHighlightStatus(message, isError = false) {
+  const status = document.getElementById('page-highlights-status');
+  if (!status) return;
+  status.textContent = message;
+  status.classList.toggle('is-error', isError);
+}
+
+function createHighlightColorInput(label, value) {
+  const wrapper = document.createElement('label');
+  wrapper.className = 'page-highlight-field';
+  const caption = document.createElement('span');
+  caption.textContent = label;
+  const input = document.createElement('input');
+  input.type = 'color';
+  input.value = value;
+  wrapper.append(caption, input);
+  return { wrapper, input };
+}
+
+function renderPageHighlightRules() {
+  const list = document.getElementById('page-highlight-list');
+  if (!list) return;
+  list.replaceChildren();
+  for (const rule of pageHighlightRules) {
+    const item = document.createElement('li');
+    item.className = 'page-highlight-rule';
+
+    const termField = document.createElement('label');
+    termField.className = 'page-highlight-field page-highlight-term';
+    const termLabel = document.createElement('span');
+    termLabel.textContent = 'Text or characters';
+    const termInput = document.createElement('input');
+    termInput.type = 'text';
+    termInput.maxLength = 500;
+    termInput.required = true;
+    termInput.value = rule.text;
+    termField.append(termLabel, termInput);
+
+    const textColor = createHighlightColorInput('Text color', rule.textColor);
+    const backgroundColor = createHighlightColorInput('Background', rule.backgroundColor);
+    const actions = document.createElement('div');
+    actions.className = 'page-highlight-rule-actions';
+    const save = document.createElement('button');
+    save.className = 'btn btn-ghost btn-sm';
+    save.type = 'button';
+    save.textContent = 'Save';
+    save.addEventListener('click', () => {
+      savePageHighlightRule(rule.id, {
+        id: rule.id,
+        text: termInput.value,
+        textColor: textColor.input.value,
+        backgroundColor: backgroundColor.input.value,
+      }).catch((error) => setPageHighlightStatus(error.message || 'Could not update this rule.', true));
+    });
+    const remove = document.createElement('button');
+    remove.className = 'btn btn-ghost btn-sm';
+    remove.type = 'button';
+    remove.textContent = 'Delete';
+    remove.addEventListener('click', () => {
+      deletePageHighlightRule(rule.id).catch((error) => setPageHighlightStatus(error.message || 'Could not delete this rule.', true));
+    });
+    actions.append(save, remove);
+    item.append(termField, textColor.wrapper, backgroundColor.wrapper, actions);
+    list.append(item);
+  }
+}
+
+async function ensurePageHighlightContext() {
+  if (!targetTabId) {
+    throw new Error('No current web page is selected. Open the extension from a web page and try again.');
+  }
+  const tab = await chrome.tabs.get(targetTabId);
+  const pageUrl = new URL(tab.url || '');
+  if (pageUrl.protocol !== 'http:' && pageUrl.protocol !== 'https:') {
+    throw new Error('Text highlights are available on HTTP and HTTPS pages only.');
+  }
+  pageUrl.hash = '';
+  pageHighlightUrl = pageUrl.href;
+  pageHighlightStorageKey = window.__qtsTextHighlighting.getPageStorageKey(pageHighlightUrl);
+  const urlDisplay = document.getElementById('page-highlights-url');
+  if (urlDisplay) {
+    urlDisplay.textContent = pageUrl.host + pageUrl.pathname + pageUrl.search;
+    urlDisplay.title = pageHighlightUrl;
+  }
+  const stored = await chrome.storage.local.get(pageHighlightStorageKey);
+  pageHighlightRules = window.__qtsTextHighlighting.normalizeRules(stored[pageHighlightStorageKey] || []);
+  renderPageHighlightRules();
+}
+
+async function persistPageHighlightRules(nextRules, successMessage) {
+  if (!pageHighlightStorageKey) await ensurePageHighlightContext();
+  pageHighlightRules = window.__qtsTextHighlighting.normalizeRules(nextRules);
+  await chrome.storage.local.set({ [pageHighlightStorageKey]: pageHighlightRules });
+  renderPageHighlightRules();
+  setPageHighlightStatus(successMessage);
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId: targetTabId },
+      files: ['shared/text-highlighting.js', 'content/text-highlighter.js'],
+    });
+  } catch (error) {
+    throw new Error(`Rule saved, but it could not be applied to this page: ${error.message || 'page access was denied.'}`);
+  }
+}
+
+async function savePageHighlightRule(ruleId, updatedRule) {
+  const rules = pageHighlightRules.map((rule) => (rule.id === ruleId ? updatedRule : rule));
+  if (!rules.some((rule) => rule.id === ruleId)) throw new Error('This highlight rule no longer exists. Refresh the rule list.');
+  await persistPageHighlightRules(rules, 'Highlight rule updated for this page.');
+}
+
+async function deletePageHighlightRule(ruleId) {
+  if (!pageHighlightRules.some((rule) => rule.id === ruleId)) throw new Error('This highlight rule no longer exists. Refresh the rule list.');
+  await persistPageHighlightRules(pageHighlightRules.filter((rule) => rule.id !== ruleId), 'Highlight rule deleted from this page.');
+}
+
+async function showPageHighlights() {
+  const panel = document.getElementById('page-highlights');
+  if (!panel) return;
+  panel.classList.remove('hidden');
+  setPageHighlightStatus('Loading rules for this page…');
+  try {
+    await ensurePageHighlightContext();
+    await chrome.scripting.executeScript({
+      target: { tabId: targetTabId },
+      files: ['shared/text-highlighting.js', 'content/text-highlighter.js'],
+    });
+    setPageHighlightStatus(pageHighlightRules.length
+      ? `${pageHighlightRules.length} rule(s) loaded for this page.`
+      : 'No highlight rules saved for this page yet.');
+  } catch (error) {
+    setPageHighlightStatus(error.message || 'Could not load highlights for this page.', true);
+  }
+}
+
+function hidePageHighlights() {
+  document.getElementById('page-highlights')?.classList.add('hidden');
 }
 
 function confirmGetJobDetails() {
@@ -1389,6 +1531,21 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
   document.getElementById('btn-login').addEventListener('click', doLogin);
+  document.getElementById('page-highlight-form')?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const text = document.getElementById('page-highlight-text');
+    const textColor = document.getElementById('page-highlight-text-color');
+    const backgroundColor = document.getElementById('page-highlight-background-color');
+    const rule = {
+      id: crypto.randomUUID(),
+      text: text.value,
+      textColor: textColor.value,
+      backgroundColor: backgroundColor.value,
+    };
+    persistPageHighlightRules([...pageHighlightRules, rule], 'Highlight rule added to this page.')
+      .then(() => { text.value = ''; })
+      .catch((error) => setPageHighlightStatus(error.message || 'Could not add this rule.', true));
+  });
   document.getElementById('btn-change-team')?.addEventListener('click', async () => {
     if (currentUser?.role !== 'manager') return;
     if (!managerTeams.length) {
@@ -4821,6 +4978,7 @@ async function doRefresh() {
 
 // ---- UI helpers ----
 function showLogin() {
+  hidePageHighlights();
   document.getElementById('login-section').classList.remove('hidden');
   document.getElementById('action-section').classList.add('hidden');
   document.getElementById('job-section').classList.add('hidden');
@@ -4831,6 +4989,7 @@ function showLogin() {
 }
 
 async function showActionScreen(user) {
+  await showPageHighlights();
   await restoreSelectedAction();
   setSession(user);
   scannerSetupPending = false;
@@ -4875,6 +5034,7 @@ function showJobSection() {
   document.getElementById('login-section').classList.add('hidden');
   document.getElementById('action-section').classList.add('hidden');
   document.getElementById('job-section').classList.remove('hidden');
+  showPageHighlights();
   document.getElementById('action-bar').classList.remove('hidden');
   showJobAccountAssignment();
   scheduleFitPopup();
