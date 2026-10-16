@@ -26,6 +26,19 @@ import {
 const router = Router();
 const taskIdSchema = z.string().regex(/^task_[0-9a-f-]{36}$/i);
 
+const pageFieldValidationSchema = z.object({
+  inputType: z.string().max(100),
+  inputMode: z.string().max(40),
+  numericOnly: z.boolean(),
+  hint: z.string().max(1000).optional(),
+  min: z.string().max(500).optional(),
+  max: z.string().max(500).optional(),
+  step: z.string().max(500).optional(),
+  pattern: z.string().max(500).optional(),
+  minLength: z.number().int().min(0).max(100000).optional(),
+  maxLength: z.number().int().min(0).max(100000).optional(),
+}).strict();
+
 const pageFieldSchema = z.object({
   stableFieldId: z.string().min(1).max(300),
   label: z.string().max(1000),
@@ -37,6 +50,11 @@ const pageFieldSchema = z.object({
   jobSpecific: z.boolean().optional(),
   required: z.boolean(),
   options: z.array(z.string().max(500)).max(100).optional(),
+  validation: pageFieldValidationSchema.optional(),
+  reusableAnswerContext: z.object({
+    question: z.string().max(1000),
+    answer: z.string().max(4000),
+  }).strict().optional(),
   placeholder: z.string().max(1000).optional(),
   currentValue: z.string().max(5000).optional(),
   manualReview: z.boolean().optional(),

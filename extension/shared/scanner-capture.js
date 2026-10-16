@@ -76,6 +76,132 @@
     return Boolean(fieldLocatorKey(field));
   }
 
+  function hasManagerConfirmedFieldIdentity(field, rule) {
+    return Boolean(rule && (
+      field?.scannerCapture?.fieldIdentityConfirmed === true
+      || rule?.field_snapshot?.fieldIdentityConfirmed === true
+    ));
+  }
+
+  function captureValidation(field) {
+    const constraints = field?.constraints || {};
+    const inputType = String(field?.validation?.inputType || field?.fieldType || '').slice(0, 100);
+    const inputMode = String(field?.validation?.inputMode || field?.inputMode || '').slice(0, 40);
+    const hint = String(
+      field?.validation?.hint
+      || field?.validationHint
+      || [field?.validationMessage, field?.titleAttr, field?.placeholder].filter(Boolean).join(' ')
+    ).replace(/\s+/g, ' ').trim().slice(0, 1000);
+    const numericOnly = field?.validation?.numericOnly === true
+      || /\b(?:numeric|numbers?|digits?)\s+only\b|\bonly\s+(?:numbers?|digits?)\b|\b(?:enter|provide|must be|requires?)\s+(?:a\s+)?(?:valid\s+)?(?:numeric|number|digits?)\b/i.test(hint);
+    const validation = { inputType, inputMode, numericOnly };
+    if (hint) validation.hint = hint;
+    for (const key of ['min', 'max', 'step', 'pattern']) {
+      const value = field?.validation?.[key] ?? constraints[key];
+      if (value != null && String(value).trim()) validation[key] = String(value).slice(0, 500);
+    }
+    for (const key of ['minLength', 'maxLength']) {
+      const value = Number(field?.validation?.[key] ?? constraints[key]);
+      if (Number.isInteger(value) && value >= 0) validation[key] = value;
+    }
+    return validation;
+  }
+
+  function validateAnswerForField(field, answer) {
+    const value = String(answer ?? '').trim();
+    if (!value) {
+      return field?.required
+        ? { status: 'invalid', reason: 'a value is required' }
+        : { status: 'valid' };
+    }
+
+    const validation = captureValidation(field);
+    const type = String(validation.inputType || '').toLowerCase();
+    const inputMode = String(validation.inputMode || '').toLowerCase();
+    const minLength = validation.minLength;
+    const maxLength = validation.maxLength;
+    if (Number.isInteger(minLength) && value.length < minLength) {
+      return { status: 'invalid', reason: `minimum length is ${minLength}` };
+    }
+    if (Number.isInteger(maxLength) && value.length > maxLength) {
+      return { status: 'invalid', reason: `maximum length is ${maxLength}` };
+    }
+    if (validation.pattern) {
+      try {
+        if (!new RegExp(`^(?:${validation.pattern})$`).test(value)) {
+          return { status: 'invalid', reason: 'value does not match the page pattern' };
+        }
+      } catch {
+        return { status: 'unknown', reason: 'the page pattern could not be interpreted safely' };
+      }
+    }
+
+    const numericType = ['number', 'range'].includes(type);
+    const numericInput = validation.numericOnly || inputMode === 'numeric' || inputMode === 'decimal';
+    if (numericType || numericInput) {
+      const numberPattern = numericType || inputMode === 'decimal'
+        ? /^[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/i
+        : /^\d+$/;
+      if (!numberPattern.test(value)) {
+        return {
+          status: 'invalid',
+          reason: numericInput && !numericType
+            ? 'page accepts digits only'
+            : 'page requires a numeric value without units or other text',
+        };
+      }
+      const numericValue = Number(value);
+      if (!Number.isFinite(numericValue)) {
+        return { status: 'invalid', reason: 'value is not a finite number' };
+      }
+      const minimum = validation.min === undefined ? null : Number(validation.min);
+      const maximum = validation.max === undefined ? null : Number(validation.max);
+      if ((validation.min !== undefined && !Number.isFinite(minimum))
+        || (validation.max !== undefined && !Number.isFinite(maximum))) {
+        return { status: 'unknown', reason: 'the page numeric range could not be interpreted safely' };
+      }
+      if (minimum !== null && Number.isFinite(minimum) && numericValue < minimum) {
+        return { status: 'invalid', reason: `value is below the minimum ${minimum}` };
+      }
+      if (maximum !== null && Number.isFinite(maximum) && numericValue > maximum) {
+        return { status: 'invalid', reason: `value is above the maximum ${maximum}` };
+      }
+      const step = validation.step === undefined || validation.step === 'any'
+        ? null
+        : Number(validation.step);
+      if (validation.step !== undefined && validation.step !== 'any'
+        && (!Number.isFinite(step) || step <= 0)) {
+        return { status: 'unknown', reason: 'the page numeric step could not be interpreted safely' };
+      }
+      if (step !== null && Number.isFinite(step) && step > 0) {
+        const base = minimum !== null && Number.isFinite(minimum) ? minimum : 0;
+        const offset = (numericValue - base) / step;
+        if (Math.abs(offset - Math.round(offset)) > 1e-8) {
+          return { status: 'invalid', reason: `value must follow the page step ${step}` };
+        }
+      }
+      return { status: 'valid' };
+    }
+
+    if (type === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
+      return { status: 'invalid', reason: 'value is not a valid email address' };
+    }
+    if (type === 'url') {
+      try {
+        const url = new URL(value);
+        if (!['http:', 'https:'].includes(url.protocol)) {
+          return { status: 'invalid', reason: 'page requires an HTTP or HTTPS URL' };
+        }
+      } catch {
+        return { status: 'invalid', reason: 'value is not a valid URL' };
+      }
+    }
+    if (['date', 'datetime-local', 'month', 'time', 'week'].includes(type)) {
+      return { status: 'unknown', reason: `page requires ${type} formatting that is not yet verified` };
+    }
+    return { status: 'valid' };
+  }
+
   function getDomStructure(field) {
     const evidence = field?.domEvidence || {};
     const node = (item) => ({
@@ -104,6 +230,9 @@
     if (clean(first?.label || first?.question) !== clean(second?.label || second?.question)) changes.push('label');
     if (clean(first?.fieldType) !== clean(second?.fieldType)) changes.push('field type');
     if (Boolean(first?.required) !== Boolean(second?.required)) changes.push('required state');
+    if (JSON.stringify(captureValidation(first)) !== JSON.stringify(captureValidation(second))) {
+      changes.push('input validation');
+    }
     if (JSON.stringify((first?.options || []).map(clean)) !== JSON.stringify((second?.options || []).map(clean))) {
       changes.push('options');
     }
@@ -157,6 +286,7 @@
       fieldType: String(field?.fieldType || 'unknown').slice(0, 64),
       required: Boolean(field?.required),
       options: (Array.isArray(field?.options) ? field.options : []).slice(0, 100).map((value) => String(value).slice(0, 300)),
+      validation: captureValidation(field),
       section: String(field?.sectionHeading || '').slice(0, 200),
       selectorHints: evidence.selectorHints,
       domEvidence: evidence.domEvidence,
@@ -173,6 +303,7 @@
       fieldType: snapshot.fieldType,
       required: snapshot.required,
       options: snapshot.options,
+      validation: snapshot.validation,
       sectionHeading: snapshot.section,
       selectorHints: snapshot.selectorHints,
       domEvidence: snapshot.domEvidence,
@@ -291,10 +422,13 @@
   return {
     captureEvidence,
     captureFieldSnapshot,
+    captureValidation,
     deriveStepKey,
     findMatchingRule,
     getRuleFieldId,
+    hasManagerConfirmedFieldIdentity,
     meaningfulFieldChanges,
+    validateAnswerForField,
     requiresSecondCapture,
     reconcileCaptures,
     acceptReviewedObservation,

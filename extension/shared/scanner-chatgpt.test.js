@@ -48,6 +48,29 @@ test('Manager-assigned prompt takes precedence over the Super-managed default', 
   assert.doesNotMatch(prompt, /Use the global QTS writing style\./);
 });
 
+test('prompt tells GPT to normalize reusable answers to observed field validation', () => {
+  const prompt = scannerChatGpt.buildPrompt({
+    page: {
+      fields: [{
+        stableFieldId: 'field-salary',
+        label: 'What are your compensation requirements?',
+        fieldType: 'number',
+        validation: { inputType: 'number', min: '1000', max: '10000', step: '500' },
+        reusableAnswerContext: {
+          question: 'Compensation requirements',
+          answer: '5000 EUR per month',
+        },
+      }],
+    },
+  });
+
+  assert.match(prompt, /page\.fields\[\]\.validation/);
+  assert.match(prompt, /numeric inputs or numeric-only input modes/);
+  assert.match(prompt, /reusableAnswerContext/);
+  assert.match(prompt, /5000 EUR per month/);
+  assert.match(prompt, /do not invent currency conversions/);
+});
+
 test('extracts raw and fenced JSON packages, including braces inside strings', () => {
   const raw = scannerChatGpt.extractPackage(
     '{"answers":[{"stableFieldId":"field-1","answer":"Use { braces } safely"}]}'

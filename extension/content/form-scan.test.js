@@ -168,12 +168,119 @@ test('native select matches the option label and confirms the selected value', a
     set value(next) { this._value = String(next); },
     get value() { return this._value || ''; },
     dispatchEvent(event) { this.events.push(event.type); return true; },
+    closest: () => null,
     events: [],
   });
 
   const result = await setup.fill([scannerField("Bachelor's degree", 'select', 'education')]);
   assert.equal(result.results[0].ok, true);
   assert.equal(result.results[0].stableFieldId, 'field-education');
+});
+
+test('stale locators recover only when one field matches the captured label and options', async () => {
+  const control = {
+    tagName: 'INPUT',
+    type: 'tel',
+    value: '',
+    isConnected: true,
+    getAttribute(name) {
+      if (name === 'id') return 'phone-current';
+      if (name === 'name') return 'phone-current';
+      if (name === 'aria-label') return 'Phone';
+      return null;
+    },
+    dispatchEvent() { return true; },
+    getBoundingClientRect() { return { width: 100, height: 24 }; },
+    closest() { return null; },
+  };
+  const setup = loadFormScanner(control);
+  const result = await setup.fill([{
+    ...scannerField('+40 262 275 024', 'tel', 'phone-old'),
+    label: 'Phone',
+    nameAttr: 'phone-old',
+  }]);
+
+  assert.equal(result.results[0].ok, true);
+  assert.equal(control.value, '+40 262 275 024');
+});
+
+test('stale locators are not recovered when matching fields are ambiguous', async () => {
+  const makeControl = (id) => ({
+    tagName: 'INPUT',
+    type: 'tel',
+    value: '',
+    isConnected: true,
+    getAttribute(name) {
+      if (name === 'id') return id;
+      if (name === 'aria-label') return 'Phone';
+      return null;
+    },
+    dispatchEvent() { return true; },
+    getBoundingClientRect() { return { width: 100, height: 24 }; },
+    closest() { return null; },
+  });
+  const first = makeControl('phone-one');
+  const second = makeControl('phone-two');
+  const setup = loadFormScanner(first, [second]);
+  const result = await setup.fill([{
+    ...scannerField('+40 262 275 024', 'tel', 'phone-old'),
+    label: 'Phone',
+    nameAttr: 'phone-old',
+  }]);
+
+  assert.equal(result.results[0].ok, false);
+  assert.equal(result.results[0].reason, 'element_not_found');
+  assert.equal(first.value, '');
+  assert.equal(second.value, '');
+});
+
+test('phone input formatting is accepted when the underlying digits are retained', async () => {
+  const control = {
+    tagName: 'INPUT',
+    type: 'tel',
+    value: '',
+    isConnected: true,
+    getAttribute(name) {
+      if (name === 'id') return 'phone';
+      return null;
+    },
+    dispatchEvent(event) {
+      if (event.type === 'input') this.value = '+40 (262) 275-024';
+      return true;
+    },
+    getBoundingClientRect() { return { width: 100, height: 24 }; },
+    closest() { return null; },
+  };
+  const setup = loadFormScanner(control);
+  const result = await setup.fill([scannerField('+40 262 275 024', 'tel', 'phone')]);
+
+  assert.equal(result.results[0].ok, true);
+});
+
+test('native browser constraints reject a value before input events are dispatched', async () => {
+  const control = {
+    tagName: 'INPUT',
+    type: 'number',
+    value: '',
+    isConnected: true,
+    validity: { valid: false },
+    events: [],
+    getAttribute(name) {
+      if (name === 'id') return 'salary';
+      if (name === 'aria-label') return 'Salary';
+      return null;
+    },
+    dispatchEvent(event) { this.events.push(event.type); return true; },
+    getBoundingClientRect() { return { width: 100, height: 24 }; },
+    closest() { return null; },
+  };
+  const setup = loadFormScanner(control);
+  const result = await setup.fill([scannerField('5000 EUR per month', 'number', 'salary')]);
+
+  assert.equal(result.results[0].ok, false);
+  assert.equal(result.results[0].reason, 'constraint_validation_failed');
+  assert.equal(control.value, '');
+  assert.deepEqual(control.events, []);
 });
 
 test('custom accessible dropdown opens and selects a matching option', async () => {
@@ -307,8 +414,10 @@ test('unselected accessible radio groups are scanned once and the chosen option 
 
   const filled = await setup.fill([{
     stableFieldId: scan.fields[0].stableFieldId,
-    selectorHints: { id: 'authorized-yes' },
+    selectorHints: { id: 'stale-authorized-id' },
     fieldType: 'radio',
+    label: scan.fields[0].label,
+    options: Array.from(scan.fields[0].options),
     fillValue: 'Yes',
   }]);
   assert.equal(filled.results[0].ok, true);

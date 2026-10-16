@@ -171,3 +171,77 @@ test('Manager review records a second observation without claiming it was stable
   assert.equal(reviewed.scannerCapture.captureVerified, false);
   assert.equal(reviewed.scannerCapture.managerReviewed, true);
 });
+
+test('uncertain field identity is trusted only after explicit Manager confirmation', () => {
+  const rule = savedRule();
+  assert.equal(scannerCapture.hasManagerConfirmedFieldIdentity(field(), rule), false);
+  assert.equal(scannerCapture.hasManagerConfirmedFieldIdentity({
+    ...field(),
+    scannerCapture: { captureCount: 2, captureVerified: true },
+  }, rule), false);
+  assert.equal(scannerCapture.hasManagerConfirmedFieldIdentity({
+    ...field(),
+    scannerCapture: { fieldIdentityConfirmed: true },
+  }, rule), true);
+  assert.equal(scannerCapture.hasManagerConfirmedFieldIdentity(field(), savedRule({
+    field_snapshot: { ...savedRule().field_snapshot, fieldIdentityConfirmed: true },
+  })), true);
+  assert.equal(scannerCapture.hasManagerConfirmedFieldIdentity({
+    ...field(),
+    scannerCapture: { fieldIdentityConfirmed: true },
+  }, null), false);
+});
+
+test('captures native validation metadata and detects changed constraints', () => {
+  const numeric = field({
+    fieldType: 'number',
+    inputMode: 'numeric',
+    constraints: { min: '1000', max: '10000', step: '500', pattern: '', minLength: -1, maxLength: -1 },
+  });
+  assert.deepEqual(scannerCapture.captureValidation(numeric), {
+    inputType: 'number',
+    inputMode: 'numeric',
+    numericOnly: false,
+    min: '1000',
+    max: '10000',
+    step: '500',
+  });
+  assert.ok(scannerCapture.meaningfulFieldChanges(
+    numeric,
+    field({
+      ...numeric,
+      constraints: { ...numeric.constraints, min: '2000' },
+    })
+  ).changes.includes('input validation'));
+});
+
+test('reusable answers must fit detected number, pattern, and length validation', () => {
+  const numeric = field({
+    fieldType: 'number',
+    constraints: { min: '1000', max: '10000', step: '500' },
+  });
+  assert.deepEqual(scannerCapture.validateAnswerForField(numeric, '5000'), { status: 'valid' });
+  assert.equal(scannerCapture.validateAnswerForField(numeric, '5000 EUR per month').status, 'invalid');
+  assert.equal(scannerCapture.validateAnswerForField(numeric, '5200').status, 'invalid');
+  assert.equal(scannerCapture.validateAnswerForField(numeric, '12000').status, 'invalid');
+
+  assert.equal(scannerCapture.validateAnswerForField(field({
+    fieldType: 'text',
+    constraints: { pattern: '[0-9]+' },
+  }), '5000 EUR per month').status, 'invalid');
+  assert.equal(scannerCapture.validateAnswerForField(field({
+    fieldType: 'text',
+    validationMessage: 'Please enter numbers only.',
+  }), '5000 EUR per month').status, 'invalid');
+  assert.equal(scannerCapture.validateAnswerForField(field({
+    fieldType: 'text',
+    constraints: { maxLength: 5 },
+  }), '5000 EUR').status, 'invalid');
+});
+
+test('unsupported date formats are marked uncertain for GPT review', () => {
+  assert.equal(scannerCapture.validateAnswerForField(
+    field({ fieldType: 'date' }),
+    'October 15, 2026'
+  ).status, 'unknown');
+});

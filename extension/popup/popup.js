@@ -778,12 +778,14 @@ function scannerFieldSnapshot(field) {
     fieldType: String(field.fieldType || 'unknown'),
     required: Boolean(field.required),
     options: Array.isArray(field.options) ? field.options.map((item) => String(item).slice(0, 300)).slice(0, 100) : [],
+    validation: window.__qtsScannerCapture.captureValidation(field),
     section: String(field.sectionHeading || '').slice(0, 200),
     selectorHints: window.__qtsScannerCapture?.captureEvidence(field)?.selectorHints || {},
     domEvidence: window.__qtsScannerCapture?.captureEvidence(field)?.domEvidence || null,
     captureCount: Number(capture.captureCount || 1),
     captureVerified: capture.captureVerified === true,
     managerReviewed: capture.managerReviewed === true,
+    fieldIdentityConfirmed: capture.fieldIdentityConfirmed === true,
     observations: Array.isArray(capture.observations) ? capture.observations : [],
     fieldSnapshots: Array.isArray(capture.fieldSnapshots) ? capture.fieldSnapshots : [],
   };
@@ -799,6 +801,7 @@ function scannerRuleChanged(rule, field) {
     fieldType: oldSnapshot.fieldType,
     required: oldSnapshot.required,
     options: oldSnapshot.options,
+    validation: oldSnapshot.validation,
     sectionHeading: oldSnapshot.section,
     selectorHints: oldSnapshot.selectorHints,
     domEvidence: oldSnapshot.domEvidence,
@@ -810,6 +813,7 @@ function scannerRuleChanged(rule, field) {
     || String(oldSnapshot.fieldType || '') !== newSnapshot.fieldType
     || Boolean(oldSnapshot.required) !== newSnapshot.required
     || JSON.stringify(oldSnapshot.options || []) !== JSON.stringify(newSnapshot.options)
+    || JSON.stringify(oldSnapshot.validation || {}) !== JSON.stringify(newSnapshot.validation)
     || String(oldSnapshot.section || '') !== newSnapshot.section
     || locatorChanged;
 }
@@ -1058,14 +1062,40 @@ function scannerTaskField(field, documentSlot) {
     stableFieldId: String(field.stableFieldId || field.fieldId || '').slice(0, 300),
     label: String(field.label || field.question || 'Application field').slice(0, 1000),
     fieldType: String(field.fieldType || 'text').slice(0, 100),
+    validation: window.__qtsScannerCapture.captureValidation(field),
     fieldKey: String(field.nameAttr || field.fieldKey || '').slice(0, 300) || undefined,
     section: String(field.sectionHeading || '').slice(0, 200) || undefined,
     ...(documentSlot ? { documentSlot } : {}),
     required: Boolean(field.required),
     options: Array.isArray(field.options) ? field.options.map((item) => String(item).slice(0, 500)).slice(0, 100) : [],
+    ...(field.reusableAnswerContext ? {
+      reusableAnswerContext: {
+        question: String(field.reusableAnswerContext.question || '').slice(0, 1000),
+        answer: String(field.reusableAnswerContext.answer || '').slice(0, 4000),
+      },
+    } : {}),
     placeholder: String(field.placeholder || '').slice(0, 1000) || undefined,
     manualReview: true,
   };
+}
+
+function scannerValidationSummary(field) {
+  const validation = window.__qtsScannerCapture.captureValidation(field);
+  const requirements = [
+    validation.inputType ? `type=${validation.inputType}` : '',
+    validation.inputMode ? `input mode=${validation.inputMode}` : '',
+    validation.numericOnly ? 'digits only' : '',
+    validation.min !== undefined ? `minimum=${validation.min}` : '',
+    validation.max !== undefined ? `maximum=${validation.max}` : '',
+    validation.step !== undefined ? `step=${validation.step}` : '',
+    validation.pattern ? `pattern=${validation.pattern}` : '',
+    validation.minLength !== undefined ? `minimum length=${validation.minLength}` : '',
+    validation.maxLength !== undefined ? `maximum length=${validation.maxLength}` : '',
+    validation.hint ? `page hint=${validation.hint}` : '',
+  ].filter(Boolean);
+  return requirements.length
+    ? `Detected page input requirements: ${requirements.join('; ')}.`
+    : 'No explicit input-format constraints were detected.';
 }
 
 function scannerTaskPageMatches(existingPage, pageUrl, fields) {
@@ -1075,6 +1105,8 @@ function scannerTaskPageMatches(existingPage, pageUrl, fields) {
       stableFieldId: String(field.stableFieldId || ''),
       label: String(field.label || ''),
       fieldType: String(field.fieldType || ''),
+      validation: field.validation || {},
+      reusableAnswerContext: field.reusableAnswerContext || null,
       documentSlot: field.documentSlot || null,
       required: Boolean(field.required),
       options: Array.isArray(field.options) ? field.options.map(String) : [],
@@ -1104,7 +1136,7 @@ function scannerIsChoiceField(field) {
   return ['select', 'combobox', 'listbox', 'radio'].includes(String(field?.fieldType || '').toLowerCase());
 }
 
-async function reviewScannerAnswer(question, generated, currentValue = '', options = []) {
+async function reviewScannerAnswer(question, generated, currentValue = '', options = [], validationSummary = '') {
   const dialog = document.getElementById('scanner-answer-review');
   const description = document.getElementById('scanner-answer-review-description');
   const answerInput = document.getElementById('scanner-answer-review-value');
@@ -1139,9 +1171,11 @@ async function reviewScannerAnswer(question, generated, currentValue = '', optio
   const exactChoices = choices.filter((choice) => choice.toLowerCase() === normalizedGenerated);
   if (exactChoices.length === 1) choiceInput.value = exactChoices[0];
 
-  description.textContent = currentValue
-    ? `${question} — this field already has a value. Approving will replace it.`
-    : question;
+  const reviewDetails = [
+    currentValue ? 'This field already has a value. Approving will replace it.' : '',
+    validationSummary,
+  ].filter(Boolean).join(' ');
+  description.textContent = `${question}${reviewDetails ? ` — ${reviewDetails}` : ''}`;
   answerLabel.textContent = choices.length
     ? 'Choose one of the options found on the application page, then approve it.'
     : 'Edit the answer if needed, then approve it to fill this field.';
@@ -1518,7 +1552,9 @@ async function runManagerScannerGptTask({ job, account, tabId, generatedFields, 
     ...generatedFields.map((field) => scannerTaskField(field)),
     ...documentFields.map((field) => scannerTaskField(field, scannerFieldDocumentSlot(field))),
   ];
-  if (!pageFields.length) return { fillFields: [], outcomes: [] };
+  if (!pageFields.length) {
+    return { fillFields: [], fillOutcomeByFieldId: new Map(), outcomes: [] };
+  }
   if (!window.__qtsScannerChatGpt?.buildPrompt) throw new Error('ChatGPT Scanner helper is not loaded.');
 
   let jobContext = await resolveScannerJobContext(
@@ -1698,6 +1734,7 @@ async function runManagerScannerGptTask({ job, account, tabId, generatedFields, 
   );
   const outcomes = [];
   const fillFields = [];
+  const fillOutcomeByFieldId = new Map();
 
   let generatedAnswerNumber = 0;
   for (const field of generatedFields) {
@@ -1706,22 +1743,19 @@ async function runManagerScannerGptTask({ job, account, tabId, generatedFields, 
     const options = scannerChoiceOptions(field);
     const generated = answers.get(fieldId);
     if (field.status !== 'matched') {
-      const selectTypes = new Set(['select', 'combobox', 'listbox']);
-      const canConfirmDropdown = selectTypes.has(String(field.fieldType || '').toLowerCase())
-        && Boolean(field.selectorHints?.id)
-        && Array.isArray(field.options)
-        && field.options.length > 0;
-      const confirmedDropdown = canConfirmDropdown && window.confirm(
-        `Scanner found a dropdown for:\n${question}\n\nIts label/locator confidence is uncertain, but it has a stable element ID (${field.selectorHints.id}) and detected options. Verify that this is the exact dropdown shown for this question. If you continue, Scanner will review your answer and select only a unique matching option. Continue?`
-      );
-      if (!confirmedDropdown) {
-        outcomes.push(`${question}: field locator is uncertain; left unresolved.`);
-        continue;
-      }
+      outcomes.push(`${question}: field locator is uncertain; left unresolved.`);
+      continue;
     }
     if (!generated && !(field.required && options.length)) {
       outcomes.push(`${question}: GPT did not return an answer; left unresolved.`);
       continue;
+    }
+    if (generated) {
+      const answerValidation = window.__qtsScannerCapture.validateAnswerForField(field, generated);
+      if (answerValidation.status === 'invalid') {
+        outcomes.push(`${question}: GPT answer does not meet page validation (${answerValidation.reason}); left unresolved.`);
+        continue;
+      }
     }
     if (scannerIsChoiceField(field) && !options.length) {
       outcomes.push(`${question}: available choices were not captured; left unresolved rather than guessing.`);
@@ -1740,14 +1774,21 @@ async function runManagerScannerGptTask({ job, account, tabId, generatedFields, 
       question,
       generated || '',
       String(field.currentValue || '').trim(),
-      options
+      options,
+      scannerValidationSummary(field)
     );
     if (reviewed == null || !reviewed.trim()) {
       outcomes.push(`${question}: answer was skipped or left blank.`);
       continue;
     }
-    fillFields.push({ ...field, fillValue: reviewed.trim(), fillStatus: 'ready_to_fill' });
+    const reviewedValidation = window.__qtsScannerCapture.validateAnswerForField(field, reviewed);
+    if (reviewedValidation.status === 'invalid') {
+      outcomes.push(`${question}: reviewed answer does not meet page validation (${reviewedValidation.reason}); left unresolved.`);
+      continue;
+    }
     outcomes.push(`${question}: ${generated ? 'Manager-reviewed GPT answer' : 'Manager-selected required option'} queued.`);
+    fillFields.push({ ...field, fillValue: reviewed.trim(), fillStatus: 'ready_to_fill' });
+    fillOutcomeByFieldId.set(fieldId, outcomes.length - 1);
   }
 
   const returnedDocuments = result.package?.documents || {};
@@ -1775,6 +1816,7 @@ async function runManagerScannerGptTask({ job, account, tabId, generatedFields, 
       outcomes.push(`${question}: generated document was not approved.`);
       continue;
     }
+    outcomes.push(`${question}: Manager-approved generated document queued for upload.`);
     fillFields.push({
       ...field,
       category: 'document_upload',
@@ -1786,9 +1828,9 @@ async function runManagerScannerGptTask({ job, account, tabId, generatedFields, 
         base64: document.base64,
       },
     });
-    outcomes.push(`${question}: Manager-approved generated document queued for upload.`);
+    fillOutcomeByFieldId.set(String(field.stableFieldId || field.fieldId || ''), outcomes.length - 1);
   }
-  return { fillFields, outcomes, taskId };
+  return { fillFields, fillOutcomeByFieldId, outcomes, taskId };
 }
 
 async function runManagerScanner(tabId, statusElement, account, job) {
@@ -1887,10 +1929,12 @@ async function runManagerScanner(tabId, statusElement, account, job) {
   const generatedFields = [];
   const documentFields = [];
   const outcomes = [...captureVerification.outcomes];
+  const fillOutcomeByFieldId = new Map();
   for (const field of fields) {
     const fieldId = String(field.stableFieldId || field.fieldId || '');
     const question = String(field.label || field.question || 'Application field').trim();
     const detectedOptions = scannerChoiceOptions(field);
+    let reusableDelegatedToGpt = false;
     if (!fieldId) {
       outcomes.push(`${question}: skipped (no stable field identifier).`);
       continue;
@@ -1905,6 +1949,7 @@ async function runManagerScanner(tabId, statusElement, account, job) {
     }
 
     let rule = window.__qtsScannerCapture.findMatchingRule(field, rules);
+    let matchedExactRule = Boolean(rule);
     let semanticKey = rule?.semantic_key || scannerSemanticKey(question);
     let isNewRule = !rule;
     let changed = Boolean(rule && scannerRuleChanged(rule, field));
@@ -1928,6 +1973,7 @@ async function runManagerScanner(tabId, statusElement, account, job) {
       if (groupAnswer !== '0') {
         semanticKey = groups[groupIndex][0];
         rule = groups[groupIndex][1];
+        matchedExactRule = false;
       }
     }
 
@@ -1937,10 +1983,40 @@ async function runManagerScanner(tabId, statusElement, account, job) {
       );
       if (!sameMeaning) {
         rule = null;
+        matchedExactRule = false;
         isNewRule = true;
         changed = false;
         semanticKey = scannerSemanticKey(question);
       }
+    }
+
+    if (matchedExactRule && rule && !changed
+      && window.__qtsScannerCapture.hasManagerConfirmedFieldIdentity(field, rule)) {
+      field.status = 'matched';
+      field.scannerCapture = {
+        ...(field.scannerCapture || {}),
+        fieldIdentityConfirmed: true,
+      };
+    }
+    const selectTypes = new Set(['select', 'combobox', 'listbox']);
+    const canConfirmDropdown = field.status !== 'matched'
+      && selectTypes.has(String(field.fieldType || '').toLowerCase())
+      && Boolean(field.selectorHints?.id)
+      && Array.isArray(field.options)
+      && field.options.length > 0;
+    if (canConfirmDropdown) {
+      const confirmedDropdown = window.confirm(
+        `Scanner found a dropdown for:\n${question}\n\nIts label association is uncertain, but the control has a stable element ID (${field.selectorHints.id}) and detected options. Confirm that this is the exact question shown on the page. Scanner will then review your answer and select only a unique matching option. Continue?`
+      );
+      if (!confirmedDropdown) {
+        outcomes.push(`${question}: field identity was not confirmed; left unresolved.`);
+        continue;
+      }
+      field.status = 'matched';
+      field.scannerCapture = {
+        ...(field.scannerCapture || {}),
+        fieldIdentityConfirmed: true,
+      };
     }
 
     let strategy = rule?.strategy || '';
@@ -1949,7 +2025,7 @@ async function runManagerScanner(tabId, statusElement, account, job) {
         ? `\n\nChoices detected on the page:\n${detectedOptions.map((option) => `• ${option}`).join('\n')}`
         : '';
       const selected = window.prompt(
-        `Choose how to handle:\n${question}${choiceContext}\n\n1 = Profile Answer (selected Account)\n2 = Reusable Answer (save Manager Q&A)\n3 = Generated Answer (GPT)\n4 = Manual / leave unresolved`,
+        `Choose how to handle:\n${question}\n${scannerValidationSummary(field)}${choiceContext}\n\n1 = Profile Answer (selected Account)\n2 = Reusable Answer (save Manager Q&A)\n3 = Generated Answer (GPT)\n4 = Manual / leave unresolved`,
         '1'
       );
       if (selected == null || !['1', '2', '3', '4'].includes(selected.trim())) {
@@ -1998,7 +2074,7 @@ async function runManagerScanner(tabId, statusElement, account, job) {
     } else if (strategy === 'reusable') {
       if (isNewRule || !reusableAnswer) {
         reusableAnswer = window.prompt(
-          `Enter or confirm the reusable answer for:\n${question}\n\nThis will be saved to the Manager’s reusable Q&A for this semantic field.`
+          `Enter or confirm the reusable answer for:\n${question}\n\n${scannerValidationSummary(field)}\n\nThis will be saved to the Manager’s reusable Q&A for this semantic field. If it does not fit the detected format, Scanner will send it to GPT as context and request a compliant answer.`
         ) || '';
       }
       if (!reusableAnswer) {
@@ -2006,13 +2082,30 @@ async function runManagerScanner(tabId, statusElement, account, job) {
         continue;
       }
       if (detectedOptions.length) {
-        const reviewed = await reviewScannerAnswer(question, reusableAnswer, String(field.currentValue || '').trim(), detectedOptions);
+        const reviewed = await reviewScannerAnswer(
+          question,
+          reusableAnswer,
+          String(field.currentValue || '').trim(),
+          detectedOptions,
+          scannerValidationSummary(field)
+        );
         if (reviewed == null || !reviewed.trim()) {
           outcomes.push(`${question}: reusable answer was skipped or left blank.`);
           continue;
         }
         reusableAnswer = reviewed.trim();
         optionReviewed = true;
+      }
+      const answerValidation = window.__qtsScannerCapture.validateAnswerForField(field, reusableAnswer);
+      if (answerValidation.status !== 'valid') {
+        generatedFields.push({
+          ...field,
+          reusableAnswerContext: {
+            question: rule?.question || question,
+            answer: reusableAnswer,
+          },
+        });
+        reusableDelegatedToGpt = true;
       }
     } else if (strategy === 'generated') {
       generatedFields.push(field);
@@ -2055,10 +2148,17 @@ async function runManagerScanner(tabId, statusElement, account, job) {
 
     if (strategy === 'manual') {
       if (field.required && detectedOptions.length && field.status === 'matched') {
-        const reviewed = await reviewScannerAnswer(question, '', String(field.currentValue || '').trim(), detectedOptions);
+        const reviewed = await reviewScannerAnswer(
+          question,
+          '',
+          String(field.currentValue || '').trim(),
+          detectedOptions,
+          scannerValidationSummary(field)
+        );
         if (reviewed && reviewed.trim()) {
-          fillFields.push({ ...field, fillValue: reviewed.trim(), fillStatus: 'ready_to_fill' });
           outcomes.push(`${question}: Manager-selected required option queued.`);
+          fillFields.push({ ...field, fillValue: reviewed.trim(), fillStatus: 'ready_to_fill' });
+          fillOutcomeByFieldId.set(fieldId, outcomes.length - 1);
         } else {
           outcomes.push(`${question}: required field left unresolved (no option selected).`);
         }
@@ -2068,14 +2168,27 @@ async function runManagerScanner(tabId, statusElement, account, job) {
       continue;
     }
 
+    if (reusableDelegatedToGpt) continue;
+
     if (!['profile', 'reusable'].includes(strategy) || !fillValue && strategy === 'profile') {
       if (strategy === 'profile') outcomes.push(`${question}: profile value unavailable; used no persistent fallback.`);
       continue;
     }
     if (strategy === 'reusable' && !fillValue) fillValue = reusableAnswer;
     if (!fillValue) continue;
+    const fillValidation = window.__qtsScannerCapture.validateAnswerForField(field, fillValue);
+    if (fillValidation.status === 'invalid') {
+      outcomes.push(`${question}: selected answer does not meet page validation (${fillValidation.reason}); left unresolved.`);
+      continue;
+    }
     if (detectedOptions.length && !optionReviewed) {
-      const reviewed = await reviewScannerAnswer(question, fillValue, String(field.currentValue || '').trim(), detectedOptions);
+      const reviewed = await reviewScannerAnswer(
+        question,
+        fillValue,
+        String(field.currentValue || '').trim(),
+        detectedOptions,
+        scannerValidationSummary(field)
+      );
       if (reviewed == null || !reviewed.trim()) {
         outcomes.push(`${question}: answer was skipped or left blank.`);
         continue;
@@ -2096,12 +2209,13 @@ async function runManagerScanner(tabId, statusElement, account, job) {
       outcomes.push(`${question}: mapping confirmed but field locator is uncertain; left unresolved.`);
       continue;
     }
+    outcomes.push(`${question}: ${optionReviewed ? 'Manager-approved available option' : `queued from ${strategy === 'profile' ? 'Account profile' : 'reusable answer'}`}.`);
     fillFields.push({
       ...field,
       fillValue,
       fillStatus: 'ready_to_fill',
     });
-    outcomes.push(`${question}: ${optionReviewed ? 'Manager-approved available option' : `queued from ${strategy === 'profile' ? 'Account profile' : 'reusable answer'}`}.`);
+    fillOutcomeByFieldId.set(fieldId, outcomes.length - 1);
   }
 
   if (generatedFields.length || documentFields.length) {
@@ -2122,6 +2236,10 @@ async function runManagerScanner(tabId, statusElement, account, job) {
     statusElement,
   });
   fillFields.push(...gptResult.fillFields);
+  const gptOutcomeOffset = outcomes.length;
+  for (const [fieldId, outcomeIndex] of gptResult.fillOutcomeByFieldId) {
+    fillOutcomeByFieldId.set(fieldId, gptOutcomeOffset + outcomeIndex);
+  }
   outcomes.push(...gptResult.outcomes);
 
   let fillSummary = 'No fields were filled.';
@@ -2147,13 +2265,14 @@ async function runManagerScanner(tabId, statusElement, account, job) {
       const fieldId = String(field.stableFieldId || field.fieldId || '');
       const result = resultByFieldId.get(fieldId);
       const question = String(field.label || field.question || 'Application field').trim();
-      const outcomeIndex = outcomes.findIndex((outcome) => outcome.startsWith(`${question}: `));
-      if (outcomeIndex < 0) continue;
+      const outcomeIndex = fillOutcomeByFieldId.get(fieldId);
+      if (!Number.isInteger(outcomeIndex)) continue;
       if (!result?.ok) {
         const reason = {
           option_not_found: 'no matching option was available',
           option_disabled: 'the matching option is disabled',
           selection_not_applied: 'the page did not confirm the selected value',
+          constraint_validation_failed: 'the browser rejected the value against this field’s constraints',
           value_not_applied: 'the page did not retain the value',
           element_not_found: 'the field could not be located',
         }[result?.reason] || 'the field could not be filled';

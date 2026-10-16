@@ -183,6 +183,7 @@ it('saves reusable question/answers with Manager-scoped template rules and keeps
     fieldType: 'select',
     required: true,
     options: ['Yes', 'No'],
+    validation: { inputType: 'select', inputMode: '', numericOnly: false },
     section: 'Location',
     selectorHints: { tag: 'select', name: 'relocation' },
     domEvidence: {
@@ -208,6 +209,7 @@ it('saves reusable question/answers with Manager-scoped template rules and keeps
         fieldType: 'select',
         required: true,
         options: ['Yes', 'No'],
+        validation: { inputType: 'select', inputMode: '', numericOnly: false },
         section: 'Location',
         selectorHints: { tag: 'select', name: 'relocation' },
         domEvidence: {
@@ -240,10 +242,15 @@ it('saves reusable question/answers with Manager-scoped template rules and keeps
   assert.equal(createResponse.status, 200);
   const created = await createResponse.json() as {
     success: boolean;
-    rule: { reusable_answer_id: number; semantic_key: string };
+    rule: {
+      reusable_answer_id: number;
+      semantic_key: string;
+      field_snapshot: { validation?: { inputType: string } };
+    };
   };
   assert.equal(created.success, true);
   assert.ok(created.rule.reusable_answer_id > 0);
+  assert.equal(created.rule.field_snapshot.validation?.inputType, 'select');
 
   const updateResponse = await fetch(`${serverUrl}/api/v2/manager-application-profile/scanner-rules`, {
     method: 'POST',
@@ -399,6 +406,24 @@ it('keeps Scanner GPT generation scoped to the selected job and accepts document
       fieldType: 'textarea',
       required: true,
       manualReview: true,
+    }, {
+      stableFieldId: 'scanner-numeric-answer',
+      label: 'What are your compensation requirements?',
+      fieldType: 'number',
+      required: true,
+      validation: {
+        inputType: 'number',
+        inputMode: 'numeric',
+        numericOnly: false,
+        min: '1000',
+        max: '10000',
+        step: '500',
+      },
+      reusableAnswerContext: {
+        question: 'What are your compensation requirements?',
+        answer: '5000 EUR per month',
+      },
+      manualReview: true,
     }],
     jobDescription: 'A test role description.',
   };
@@ -425,6 +450,13 @@ it('keeps Scanner GPT generation scoped to the selected job and accepts document
   assert.equal(activeStatus.status, 'waiting_for_gpt');
   assert.equal(activeStatus.page.pageUrl, page.pageUrl);
   assert.equal(activeStatus.page.fields[0].stableFieldId, 'scanner-generated-answer');
+  const numericField = activeStatus.page.fields[2] as {
+    validation?: { inputType: string; min?: string };
+    reusableAnswerContext?: { answer: string };
+  };
+  assert.equal(numericField.validation?.inputType, 'number');
+  assert.equal(numericField.validation?.min, '1000');
+  assert.equal(numericField.reusableAnswerContext?.answer, '5000 EUR per month');
 
   const refreshWhileActive = await fetch(`${serverUrl}/api/v2/gpt-application-tasks/jobs/${processingJobId}`, {
     method: 'POST',

@@ -738,6 +738,8 @@
       options: getOptions(el),
       currentValue: getCurrentValue(el),
       placeholder: cleanText(el.getAttribute('placeholder')),
+      titleAttr: cleanText(el.getAttribute('title')),
+      inputMode: cleanText(el.getAttribute('inputmode')),
       sectionHeading: getSectionHeading(el),
       pageStep,
       pageUrl,
@@ -796,24 +798,64 @@
     };
   }
 
+  function matchesCapturedField(el, field, requireExactLabel = false) {
+    if (!el?.isConnected) return false;
+    const expectedType = cleanText(field.fieldType).toLowerCase();
+    if (expectedType && inferFieldType(el) !== expectedType) return false;
+
+    const expectedLabel = normalizeOptionValue(field.label || field.question || field.placeholder);
+    const actualLabel = expectedLabel ? normalizeOptionValue(resolveLabel(el)) : '';
+    if (expectedLabel && actualLabel && expectedLabel !== actualLabel) return false;
+    if (requireExactLabel && (!expectedLabel || actualLabel !== expectedLabel)) return false;
+
+    const expectedOptions = (Array.isArray(field.options) ? field.options : [])
+      .map(normalizeOptionValue)
+      .filter(Boolean)
+      .sort();
+    if (expectedOptions.length) {
+      const actualOptions = getOptions(el)
+        .map(normalizeOptionValue)
+        .filter(Boolean)
+        .sort();
+      if (JSON.stringify(actualOptions) !== JSON.stringify(expectedOptions)) return false;
+    }
+    return true;
+  }
+
   function findTargetElement(field) {
     const hints = field.selectorHints || {};
     if (hints.id) {
       const byId = document.getElementById(hints.id);
-      if (byId) return byId;
+      if (matchesCapturedField(byId, field)) return byId;
     }
     if (hints.role && hints.testId) {
       const byTest = document.querySelector(`[role="${CSS.escape(hints.role)}"][data-testid="${CSS.escape(hints.testId)}"]`);
-      if (byTest) return byTest;
+      if (matchesCapturedField(byTest, field)) return byTest;
     }
     if (hints.name) {
       const selector = `${hints.tag || 'input'}[name="${CSS.escape(hints.name)}"]`;
       const byName = document.querySelector(selector);
-      if (byName) return byName;
+      if (matchesCapturedField(byName, field)) return byName;
     }
     if (field.nameAttr) {
       const byName = document.querySelector(`[name="${CSS.escape(field.nameAttr)}"]`);
-      if (byName) return byName;
+      if (matchesCapturedField(byName, field)) return byName;
+    }
+
+    const expectedLabel = normalizeOptionValue(field.label || field.question || field.placeholder);
+    if (expectedLabel) {
+      const roots = getScanRoots();
+      const matches = new Set();
+      roots.forEach((root) => {
+        root.querySelectorAll(INTERACTIVE_SELECTOR).forEach((candidate) => {
+          if (!isVisible(candidate) || !matchesCapturedField(candidate, field, true)) return;
+          if (field.fieldType === 'radio' && [...matches].some((existing) => (
+            getRadioGroupMembers(existing).includes(candidate)
+          ))) return;
+          matches.add(candidate);
+        });
+      });
+      if (matches.size === 1) return matches.values().next().value;
     }
 
     if (field.fieldType === 'file' || field.category === 'document_upload') {
@@ -866,6 +908,16 @@
   function dispatchInputEvents(el) {
     el.dispatchEvent(new Event('input', { bubbles: true }));
     el.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  function fieldValueMatches(el, expectedValue) {
+    const currentValue = cleanText(getCurrentValue(el));
+    const expected = cleanText(expectedValue);
+    if (currentValue === expected) return true;
+    if (inferFieldType(el) !== 'tel') return false;
+    const currentDigits = currentValue.replace(/\D/g, '');
+    const expectedDigits = expected.replace(/\D/g, '');
+    return Boolean(currentDigits && currentDigits === expectedDigits);
   }
 
   function normalizeOptionValue(value) {
@@ -1027,9 +1079,14 @@
       }
     }
 
+    const previousValue = el.value;
     setNativeValue(el, String(value));
+    if (el.validity && !el.validity.valid) {
+      setNativeValue(el, previousValue);
+      return { ok: false, reason: 'constraint_validation_failed' };
+    }
     dispatchInputEvents(el);
-    return cleanText(getCurrentValue(el)) === cleanText(value)
+    return fieldValueMatches(el, value)
       ? { ok: true }
       : { ok: false, reason: 'value_not_applied' };
   }
