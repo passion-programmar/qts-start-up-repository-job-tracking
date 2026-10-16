@@ -213,6 +213,41 @@ test('captures native validation metadata and detects changed constraints', () =
       constraints: { ...numeric.constraints, min: '2000' },
     })
   ).changes.includes('input validation'));
+  assert.equal(scannerCapture.captureValidation({
+    fieldType: 'textbox',
+    inputType: 'number',
+  }).inputType, 'number');
+});
+
+test('treats input modes as advisory and applies the native default number step', () => {
+  const numericMode = field({
+    fieldType: 'text',
+    inputMode: 'numeric',
+  });
+  assert.equal(
+    scannerCapture.validateAnswerForField(numericMode, '5000 EUR per month').status,
+    'unknown'
+  );
+
+  const number = field({
+    fieldType: 'number',
+    constraints: { min: '', max: '', step: '', pattern: '', minLength: -1, maxLength: -1 },
+  });
+  assert.deepEqual(scannerCapture.validateAnswerForField(number, '5000'), { status: 'valid' });
+  assert.equal(scannerCapture.validateAnswerForField(number, '5000.5').status, 'invalid');
+  assert.deepEqual(scannerCapture.validateAnswerForField(field({
+    fieldType: 'number',
+    constraints: { pattern: '[0-9]{1,4}' },
+  }), '12345'), { status: 'valid' });
+
+  const decimalNumber = field({
+    fieldType: 'number',
+    constraints: { min: '', max: '', step: 'any', pattern: '', minLength: -1, maxLength: -1 },
+  });
+  assert.deepEqual(scannerCapture.validateAnswerForField(decimalNumber, '5000.5'), { status: 'valid' });
+  assert.deepEqual(scannerCapture.validateAnswerForField(field({
+    fieldType: 'email',
+  }), 'user@localhost'), { status: 'valid' });
 });
 
 test('reusable answers must fit detected number, pattern, and length validation', () => {

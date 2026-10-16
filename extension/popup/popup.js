@@ -1083,7 +1083,7 @@ function scannerValidationSummary(field) {
   const validation = window.__qtsScannerCapture.captureValidation(field);
   const requirements = [
     validation.inputType ? `type=${validation.inputType}` : '',
-    validation.inputMode ? `input mode=${validation.inputMode}` : '',
+    validation.inputMode ? `input mode hint=${validation.inputMode}` : '',
     validation.numericOnly ? 'digits only' : '',
     validation.min !== undefined ? `minimum=${validation.min}` : '',
     validation.max !== undefined ? `maximum=${validation.max}` : '',

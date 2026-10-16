@@ -48,6 +48,13 @@ script verifies the browser retained the value. This does not eliminate
 platform-specific validation or formatting gaps; uncertain cases remain
 unresolved for Manager review rather than being treated as verified.
 
+The `inputmode` attribute is advisory: by itself it must not be treated as a
+browser-enforced numeric constraint. Scanner now marks numeric/decimal
+input-mode-only cases uncertain so reusable answers go through GPT review.
+Native `number` and `range` controls also default to a step of `1` when the
+page omits an explicit `step`; Scanner applies that default in pre-fill checks
+to match the browser's constraint validation.
+
 ## What the current extension actually does
 
 ### Architecture at a glance

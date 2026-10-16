@@ -65,7 +65,8 @@ test('prompt tells GPT to normalize reusable answers to observed field validatio
   });
 
   assert.match(prompt, /page\.fields\[\]\.validation/);
-  assert.match(prompt, /numeric inputs or numeric-only input modes/);
+  assert.match(prompt, /inputMode such as numeric or decimal is only a keyboard hint/);
+  assert.match(prompt, /demonstrably numeric/);
   assert.match(prompt, /reusableAnswerContext/);
   assert.match(prompt, /5000 EUR per month/);
   assert.match(prompt, /do not invent currency conversions/);

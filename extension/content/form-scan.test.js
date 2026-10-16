@@ -153,6 +153,33 @@ test('scanner captures required select choices without disabled or placeholder o
   assert.deepEqual(Array.from(scan.fields[0].options), ['High school diploma']);
 });
 
+test('scanner preserves native input type when an ARIA role changes the field type', () => {
+  const attributes = new Map([
+    ['id', 'salary'],
+    ['type', 'number'],
+    ['role', 'textbox'],
+    ['aria-label', 'Salary expectation'],
+    ['min', '1000'],
+  ]);
+  const control = {
+    tagName: 'INPUT',
+    type: 'number',
+    min: '1000',
+    isConnected: true,
+    getAttribute: (name) => attributes.get(name) || null,
+    setAttribute: (name, value) => attributes.set(name, String(value)),
+    getBoundingClientRect: () => ({ width: 100, height: 24 }),
+    closest: () => null,
+    dispatchEvent: () => true,
+  };
+  const setup = loadFormScanner(control);
+  const field = setup.scan().fields[0];
+
+  assert.equal(field.fieldType, 'textbox');
+  assert.equal(field.inputType, 'number');
+  assert.equal(field.constraints.min, '1000');
+});
+
 test('native select matches the option label and confirms the selected value', async () => {
   const options = [
     { textContent: 'Select an option', value: '' },

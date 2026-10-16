@@ -85,7 +85,7 @@
 
   function captureValidation(field) {
     const constraints = field?.constraints || {};
-    const inputType = String(field?.validation?.inputType || field?.fieldType || '').slice(0, 100);
+    const inputType = String(field?.validation?.inputType || field?.inputType || field?.fieldType || '').slice(0, 100);
     const inputMode = String(field?.validation?.inputMode || field?.inputMode || '').slice(0, 40);
     const hint = String(
       field?.validation?.hint
@@ -103,6 +103,10 @@
     for (const key of ['minLength', 'maxLength']) {
       const value = Number(field?.validation?.[key] ?? constraints[key]);
       if (Number.isInteger(value) && value >= 0) validation[key] = value;
+    }
+    if (['number', 'range'].includes(inputType.toLowerCase())
+      && (validation.step === undefined || !String(validation.step).trim())) {
+      validation.step = '1';
     }
     return validation;
   }
@@ -126,9 +130,13 @@
     if (Number.isInteger(maxLength) && value.length > maxLength) {
       return { status: 'invalid', reason: `maximum length is ${maxLength}` };
     }
-    if (validation.pattern) {
+
+    const patternApplies = ['email', 'password', 'search', 'tel', 'text', 'url'].includes(type);
+    const patternEnforced = Boolean(validation.pattern && patternApplies);
+    if (patternEnforced) {
       try {
-        if (!new RegExp(`^(?:${validation.pattern})$`).test(value)) {
+        const patternMatch = new RegExp(`^(?:${validation.pattern})$`).exec(value);
+        if (!patternMatch || patternMatch[0] !== value) {
           return { status: 'invalid', reason: 'value does not match the page pattern' };
         }
       } catch {
@@ -137,9 +145,9 @@
     }
 
     const numericType = ['number', 'range'].includes(type);
-    const numericInput = validation.numericOnly || inputMode === 'numeric' || inputMode === 'decimal';
+    const numericInput = validation.numericOnly;
     if (numericType || numericInput) {
-      const numberPattern = numericType || inputMode === 'decimal'
+      const numberPattern = numericType
         ? /^[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/i
         : /^\d+$/;
       if (!numberPattern.test(value)) {
@@ -183,7 +191,8 @@
       return { status: 'valid' };
     }
 
-    if (type === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
+    const emailPattern = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)*$/;
+    if (type === 'email' && !emailPattern.test(value)) {
       return { status: 'invalid', reason: 'value is not a valid email address' };
     }
     if (type === 'url') {
@@ -198,6 +207,11 @@
     }
     if (['date', 'datetime-local', 'month', 'time', 'week'].includes(type)) {
       return { status: 'unknown', reason: `page requires ${type} formatting that is not yet verified` };
+    }
+    if (['numeric', 'decimal'].includes(inputMode)
+      && !patternEnforced
+      && !['email', 'url'].includes(type)) {
+      return { status: 'unknown', reason: 'input mode is a keyboard hint, not an enforced constraint' };
     }
     return { status: 'valid' };
   }

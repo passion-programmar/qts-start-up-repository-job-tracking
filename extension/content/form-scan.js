@@ -734,6 +734,7 @@
       stableFieldId: buildStableFieldId(el, fingerprint),
       label,
       fieldType,
+      inputType: el.tagName?.toLowerCase() === 'input' ? cleanText(el.type || 'text') : fieldType,
       required: detectRequired(el, label),
       options: getOptions(el),
       currentValue: getCurrentValue(el),
