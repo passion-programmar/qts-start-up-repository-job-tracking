@@ -98,6 +98,16 @@ it('authorizes reviewers and persists failed and successful template validation 
   const unauthenticated = await request('/1/validate', undefined, {});
   assert.equal(unauthenticated.status, 401);
 
+  const invalidCaptureResponse = await request('/from-discovery', reviewerToken, {
+    fields: [{
+      fieldId: 'invalid-capture',
+      scannerCapture: { captureCount: 3 },
+    }],
+  });
+  assert.equal(invalidCaptureResponse.status, 400);
+  const invalidCapture = await invalidCaptureResponse.json() as { message: string };
+  assert.match(invalidCapture.message, /fields\.0\.scannerCapture\.captureCount/);
+
   const evidence = {
     observationSignatures: ['step-one', 'step-two'],
     validatedFieldIds: ['full-name'],
@@ -169,7 +179,7 @@ it('authorizes reviewers and persists failed and successful template validation 
               max: '100000',
               step: '1',
               minLength: 1,
-              maxLength: 8,
+              maxLength: 524288,
             },
             section: '',
             selectorHints: { tag: 'input', name: 'fullName' },

@@ -16,6 +16,13 @@ import {
 const router = Router();
 router.use(requireAuth);
 
+function formatValidationMessage(issues: z.ZodIssue[]): string {
+  const details = issues.slice(0, 3).map((issue) => (
+    `${issue.path.join('.') || 'request'}: ${issue.message}`
+  ));
+  return details.length ? `Validation error: ${details.join('; ')}` : 'Validation error.';
+}
+
 const DomEvidenceNodeSchema = z.object({
   tag: z.string().max(40).optional(),
   role: z.string().max(80).optional(),
@@ -48,8 +55,8 @@ const ScannerInputValidationSchema = z.object({
   max: z.string().max(500).optional(),
   step: z.string().max(500).optional(),
   pattern: z.string().max(500).optional(),
-  minLength: z.number().int().min(0).max(100000).optional(),
-  maxLength: z.number().int().min(0).max(100000).optional(),
+  minLength: z.number().int().min(0).max(2147483647).optional(),
+  maxLength: z.number().int().min(0).max(2147483647).optional(),
 }).strict();
 
 const ScannerFieldObservationSchema = z.object({
@@ -276,10 +283,11 @@ router.post('/', async (req: AuthRequest, res: Response, next: NextFunction) => 
   try {
     const parsed = TemplatePayloadSchema.safeParse(req.body);
     if (!parsed.success) {
+      const errors = parsed.error.errors.map((error) => ({ field: error.path.join('.'), message: error.message }));
       res.status(400).json({
         success: false,
-        message: 'Validation error.',
-        errors: parsed.error.errors.map((error) => ({ field: error.path.join('.'), message: error.message })),
+        message: formatValidationMessage(parsed.error.errors),
+        errors,
       });
       return;
     }
@@ -305,10 +313,11 @@ router.post('/from-discovery', async (req: AuthRequest, res: Response, next: Nex
     }
     const parsed = TemplatePayloadSchema.safeParse(req.body);
     if (!parsed.success) {
+      const errors = parsed.error.errors.map((error) => ({ field: error.path.join('.'), message: error.message }));
       res.status(400).json({
         success: false,
-        message: 'Validation error.',
-        errors: parsed.error.errors.map((error) => ({ field: error.path.join('.'), message: error.message })),
+        message: formatValidationMessage(parsed.error.errors),
+        errors,
       });
       return;
     }
