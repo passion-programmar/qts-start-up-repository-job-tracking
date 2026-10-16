@@ -41,6 +41,7 @@ You can ask for this directly after making a code change:
 
 ## Entries
 
+- [Scanner validation evidence persistence — 2026-10-16](2026-10-16-scanner-validation-evidence.md)
 - [Scanner prompt management — 2026-10-15](2026-10-15-scanner-prompt-management.md)
 - [Scanner capture reliability — 2026-10-11](2026-10-11-scanner-capture-reliability.md)
 - [QTS Resume 2 template — 2026-10-11](2026-10-11-qts-resume-2-template.md)

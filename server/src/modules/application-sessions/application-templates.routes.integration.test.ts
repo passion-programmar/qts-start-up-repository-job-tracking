@@ -122,6 +122,64 @@ it('authorizes reviewers and persists failed and successful template validation 
       confidence: 0.95,
       status: 'matched',
       selectorHints: { name: 'fullName' },
+      scannerCapture: {
+        captureCount: 2,
+        captureVerified: true,
+        managerReviewed: false,
+        observations: [
+          {
+            selectorHints: { tag: 'input', name: 'fullName' },
+            domEvidence: {
+              control: { tag: 'input', role: 'textbox', classNames: [], testId: '', automationId: '' },
+              ancestors: [],
+            },
+          },
+          {
+            selectorHints: { tag: 'input', name: 'fullName' },
+            domEvidence: {
+              control: { tag: 'input', role: 'textbox', classNames: [], testId: '', automationId: '' },
+              ancestors: [],
+            },
+          },
+        ],
+        fieldSnapshots: [
+          {
+            label: 'Full name',
+            fieldType: 'text',
+            required: true,
+            options: [],
+            validation: { inputType: 'text', inputMode: '', numericOnly: false },
+            section: '',
+            selectorHints: { tag: 'input', name: 'fullName' },
+            domEvidence: {
+              control: { tag: 'input', role: 'textbox', classNames: [], testId: '', automationId: '' },
+              ancestors: [],
+            },
+          },
+          {
+            label: 'Full name',
+            fieldType: 'text',
+            required: true,
+            options: [],
+            validation: {
+              inputType: 'number',
+              inputMode: 'numeric',
+              numericOnly: true,
+              min: '0',
+              max: '100000',
+              step: '1',
+              minLength: 1,
+              maxLength: 8,
+            },
+            section: '',
+            selectorHints: { tag: 'input', name: 'fullName' },
+            domEvidence: {
+              control: { tag: 'input', role: 'textbox', classNames: [], testId: '', automationId: '' },
+              ancestors: [],
+            },
+          },
+        ],
+      },
     }],
     navigation: {
       discoveryCheckpoint: {

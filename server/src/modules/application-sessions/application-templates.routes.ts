@@ -39,11 +39,25 @@ const LocatorEvidenceSchema = z.object({
   }).strict(),
 }).strict();
 
+const ScannerInputValidationSchema = z.object({
+  inputType: z.string().max(100),
+  inputMode: z.string().max(40),
+  numericOnly: z.boolean(),
+  hint: z.string().max(1000).optional(),
+  min: z.string().max(500).optional(),
+  max: z.string().max(500).optional(),
+  step: z.string().max(500).optional(),
+  pattern: z.string().max(500).optional(),
+  minLength: z.number().int().min(0).max(100000).optional(),
+  maxLength: z.number().int().min(0).max(100000).optional(),
+}).strict();
+
 const ScannerFieldObservationSchema = z.object({
   label: z.string().max(1000),
   fieldType: z.string().max(64),
   required: z.boolean(),
   options: z.array(z.string().max(300)).max(100),
+  validation: ScannerInputValidationSchema.optional(),
   section: z.string().max(200),
   selectorHints: z.object({
     tag: z.string().max(40).optional(),
