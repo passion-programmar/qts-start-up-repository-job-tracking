@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { NextFunction, Request, Response, Router } from 'express';
 import { z } from 'zod';
-import { execute, queryAll, queryOne } from '../../database/connection';
+import { execute, queryAll, queryOne, withTransaction } from '../../database/connection';
 import {
   renderCoverLetterPdfBuffer,
   renderResumePdfBuffer,
@@ -103,17 +103,41 @@ function packageMetadataMatches(
   current: Record<string, unknown>,
   incoming: {
     answers: Array<{ stableFieldId: string; answer: string }>;
-    unresolvedFields: Array<{ stableFieldId: string; question: string; reason: string }>;
-    notes: string;
-    documents: { resume: boolean; coverLetter: boolean };
+    unresolvedFields?: Array<{ stableFieldId: string; question: string; reason: string }>;
+    notes?: string;
+    resume?: unknown;
+    coverLetter?: unknown;
   }
 ): boolean {
   return canonicalJson({
     answers: current.answers || [],
     unresolvedFields: current.unresolvedFields || [],
     notes: current.notes || '',
-    documents: current.documents || { resume: false, coverLetter: false },
-  }) === canonicalJson(incoming);
+    resume: current.resume,
+    coverLetter: current.coverLetter,
+  }) === canonicalJson({
+    answers: incoming.answers,
+    unresolvedFields: incoming.unresolvedFields || [],
+    notes: incoming.notes || '',
+    resume: incoming.resume,
+    coverLetter: incoming.coverLetter,
+  });
+}
+
+function packageHasSubmission(current: Record<string, unknown>): boolean {
+  const documents = current.documents;
+  return typeof current.submissionHash === 'string'
+    || Array.isArray(current.answers)
+    || Array.isArray(current.unresolvedFields)
+    || Boolean(
+      documents
+      && typeof documents === 'object'
+      && !Array.isArray(documents)
+      && (
+        ('resume' in documents && documents.resume)
+        || ('coverLetter' in documents && documents.coverLetter)
+      )
+    );
 }
 
 function isManager(req: NewSchemaAuthRequest, res: Response): boolean {
@@ -429,6 +453,7 @@ router.put('/:taskId/page', requireNewSchemaAuth, async (req: NewSchemaAuthReque
     ...previousContext,
     jobContext: { ...previousJob, jobDescription },
     page: { ...page, jobDescription: undefined },
+    previousUnresolvedFields: task.package.unresolvedFields || [],
   };
   const updated = await execute(
     `UPDATE gpt_application_tasks
@@ -512,7 +537,9 @@ router.get('/:taskId/context', requireGptActionKey, async (req, res: Response) =
     managerAnswers,
     resumeText: task.resume_text || '',
     previousAnswers: task.answers,
-    previousUnresolvedFields: task.package.unresolvedFields || [],
+    previousUnresolvedFields: task.task_context.previousUnresolvedFields
+      || task.package.unresolvedFields
+      || [],
     page,
   });
 });
@@ -558,16 +585,16 @@ router.post('/:taskId/package', requireTaskPackageAuth, async (req: NewSchemaAut
     },
   };
   const submissionHash = packageSubmissionHash(parsed.data);
-  if (task.status === 'ready') {
+  if (packageHasSubmission(task.package)) {
     const storedHash = task.package.submissionHash;
     const sameSubmission = typeof storedHash === 'string'
       ? storedHash === submissionHash
-      : packageMetadataMatches(task.package, submittedPackage);
+      : packageMetadataMatches(task.package, parsed.data);
     if (sameSubmission) {
       res.json({
         success: true,
         taskId,
-        status: 'ready',
+        status: task.status,
         pageNumber: task.page_number,
         answersStored: parsed.data.answers.length,
         unresolvedCount: unresolved.length,
@@ -605,6 +632,31 @@ router.post('/:taskId/package', requireTaskPackageAuth, async (req: NewSchemaAut
       return;
     }
     answerIds.add(answer.stableFieldId);
+  }
+  const unresolvedIds = new Set<string>();
+  for (const unresolvedField of unresolved) {
+    if (!validFieldIds.has(unresolvedField.stableFieldId)) {
+      res.status(400).json({
+        success: false,
+        message: `Unresolved field references a field that is not on the current page: ${unresolvedField.stableFieldId}`,
+      });
+      return;
+    }
+    if (answerIds.has(unresolvedField.stableFieldId)) {
+      res.status(400).json({
+        success: false,
+        message: `Answer package marks the same field as answered and unresolved: ${unresolvedField.stableFieldId}`,
+      });
+      return;
+    }
+    if (unresolvedIds.has(unresolvedField.stableFieldId)) {
+      res.status(400).json({
+        success: false,
+        message: `Answer package contains a duplicate unresolved field: ${unresolvedField.stableFieldId}`,
+      });
+      return;
+    }
+    unresolvedIds.add(unresolvedField.stableFieldId);
   }
 
   const mergedAnswers = new Map(
@@ -653,24 +705,88 @@ router.post('/:taskId/package', requireTaskPackageAuth, async (req: NewSchemaAut
     });
   }
 
-  for (const document of documents) {
-    await execute(
-      `INSERT INTO gpt_application_task_documents (task_id, document_type, file_name, content)
-       VALUES ($1, $2, $3, $4)
-       ON CONFLICT (task_id, document_type)
-       DO UPDATE SET file_name = EXCLUDED.file_name, content = EXCLUDED.content, updated_at = NOW()`,
-      [taskId, document.type, document.fileName, document.content]
-    );
-  }
   const nextStatus = unresolved.length ? 'waiting_for_gpt' : 'ready';
-  await execute(
-    `UPDATE gpt_application_tasks
-     SET package = $2::jsonb, answers = $3::jsonb, status = $4,
-         last_activity_at = NOW(), updated_at = NOW(),
-         resume_text_expires_at = CASE WHEN resume_text IS NULL THEN NULL ELSE NOW() + INTERVAL '30 days' END
-     WHERE task_id = $1 AND status = 'waiting_for_gpt'`,
-    [taskId, JSON.stringify(packageData), JSON.stringify(allAnswers), nextStatus]
-  );
+  const saveResult = await withTransaction(async (client) => {
+    const lockedRows = await client.query(
+      `SELECT status, page_number, task_context, package
+       FROM gpt_application_tasks
+       WHERE task_id = $1
+       FOR UPDATE`,
+      [taskId]
+    );
+    const currentTask = lockedRows.rows[0] as {
+      status: string;
+      page_number: number;
+      task_context: Record<string, unknown>;
+      package: Record<string, unknown>;
+    } | undefined;
+    if (!currentTask) return { kind: 'changed' as const, reason: 'state' as const };
+
+    if (packageHasSubmission(currentTask.package)) {
+      const storedHash = currentTask.package.submissionHash;
+      const sameSubmission = typeof storedHash === 'string'
+        ? storedHash === submissionHash
+        : packageMetadataMatches(currentTask.package, parsed.data);
+      return sameSubmission
+        ? { kind: 'replay' as const, status: currentTask.status, pageNumber: currentTask.page_number }
+        : { kind: 'conflict' as const };
+    }
+    if (currentTask.status !== 'waiting_for_gpt' || currentTask.page_number !== task.page_number) {
+      return { kind: 'changed' as const, reason: 'state' as const };
+    }
+    if (canonicalJson((currentTask.task_context || {}).page) !== canonicalJson(task.task_context.page)) {
+      return { kind: 'changed' as const, reason: 'page' as const };
+    }
+
+    const updated = await client.query(
+      `UPDATE gpt_application_tasks
+       SET package = $2::jsonb, answers = $3::jsonb, status = $4,
+           last_activity_at = NOW(), updated_at = NOW(),
+           resume_text_expires_at = CASE WHEN resume_text IS NULL THEN NULL ELSE NOW() + INTERVAL '30 days' END
+       WHERE task_id = $1 AND status = 'waiting_for_gpt' AND page_number = $5
+       RETURNING task_id`,
+      [taskId, JSON.stringify(packageData), JSON.stringify(allAnswers), nextStatus, task.page_number]
+    );
+    if (!updated.rows.length) return { kind: 'changed' as const, reason: 'state' as const };
+
+    for (const document of documents) {
+      await client.query(
+        `INSERT INTO gpt_application_task_documents (task_id, document_type, file_name, content)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (task_id, document_type)
+         DO UPDATE SET file_name = EXCLUDED.file_name, content = EXCLUDED.content, updated_at = NOW()`,
+        [taskId, document.type, document.fileName, document.content]
+      );
+    }
+    return { kind: 'saved' as const };
+  });
+  if (saveResult.kind === 'changed') {
+    res.status(409).json({
+      success: false,
+      message: `The Scanner ${saveResult.reason === 'page' ? 'page context' : 'task status'} changed while its answer package was being saved. Reload the task status before retrying.`,
+    });
+    return;
+  }
+  if (saveResult.kind === 'conflict') {
+    res.status(409).json({
+      success: false,
+      message: 'A different answer package has already been saved for this task.',
+    });
+    return;
+  }
+  if (saveResult.kind === 'replay') {
+    res.json({
+      success: true,
+      taskId,
+      status: saveResult.status,
+      pageNumber: saveResult.pageNumber,
+      answersStored: parsed.data.answers.length,
+      unresolvedCount: unresolved.length,
+      documents: submittedPackage.documents,
+      idempotentReplay: true,
+    });
+    return;
+  }
   res.json({
     success: true,
     taskId,
@@ -750,7 +866,9 @@ router.get('/:taskId/extension-status', requireNewSchemaAuth, async (req: NewSch
     page: task.task_context.page || null,
     answers: task.answers,
     previousAnswers: task.answers,
-    previousUnresolvedFields: task.package.unresolvedFields || [],
+    previousUnresolvedFields: task.task_context.previousUnresolvedFields
+      || task.package.unresolvedFields
+      || [],
     package: task.package,
   });
 });

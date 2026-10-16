@@ -393,6 +393,12 @@ it('keeps Scanner GPT generation scoped to the selected job and accepts document
       fieldType: 'textarea',
       required: true,
       manualReview: true,
+    }, {
+      stableFieldId: 'scanner-unresolved-answer',
+      label: 'How do your skills fit this position?',
+      fieldType: 'textarea',
+      required: true,
+      manualReview: true,
     }],
     jobDescription: 'A test role description.',
   };
@@ -443,31 +449,104 @@ it('keeps Scanner GPT generation scoped to the selected job and accepts document
   });
   assert.equal(overwritePage.status, 409);
 
+  const packagePayload = {
+    answers: [{ stableFieldId: 'scanner-generated-answer', answer: 'Reviewed test response.' }],
+    unresolvedFields: [{
+      stableFieldId: 'scanner-unresolved-answer',
+      question: 'How do your skills fit this position?',
+      reason: 'The response needs additional candidate-specific detail.',
+    }],
+    notes: 'Generated for the selected processing job.',
+    resume: {
+      candidate: { fullName: 'Scanner Test Account', email: 'scanner-test@example.invalid' },
+      targetRole: 'Scanner Test Role',
+      targetCompany: 'Scanner Test Company',
+      sections: [{ title: 'Experience', items: [{ heading: 'Test Employer', bullets: ['Delivered test work.'] }] }],
+    },
+    coverLetter: {
+      candidate: { fullName: 'Scanner Test Account', email: 'scanner-test@example.invalid' },
+      targetRole: 'Scanner Test Role',
+      targetCompany: 'Scanner Test Company',
+      bodyParagraphs: ['I am interested in the Scanner Test Role.'],
+    },
+  };
+  const invalidUnresolvedResponse = await fetch(
+    `${serverUrl}/api/v2/gpt-application-tasks/${created.taskId}/package`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${managerToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        ...packagePayload,
+        unresolvedFields: [{
+          ...packagePayload.unresolvedFields[0],
+          stableFieldId: 'scanner-field-from-another-page',
+        }],
+      }),
+    }
+  );
+  assert.equal(invalidUnresolvedResponse.status, 400);
+
   const packageResponse = await fetch(`${serverUrl}/api/v2/gpt-application-tasks/${created.taskId}/package`, {
     method: 'POST',
     headers: {
       Authorization: 'Bearer isolated-scanner-rules-action-secret',
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      answers: [{ stableFieldId: 'scanner-generated-answer', answer: 'Reviewed test response.' }],
-      unresolvedFields: [],
-      notes: 'Generated for the selected processing job.',
-      resume: {
-        candidate: { fullName: 'Scanner Test Account', email: 'scanner-test@example.invalid' },
-        targetRole: 'Scanner Test Role',
-        targetCompany: 'Scanner Test Company',
-        sections: [{ title: 'Experience', items: [{ heading: 'Test Employer', bullets: ['Delivered test work.'] }] }],
-      },
-      coverLetter: {
-        candidate: { fullName: 'Scanner Test Account', email: 'scanner-test@example.invalid' },
-        targetRole: 'Scanner Test Role',
-        targetCompany: 'Scanner Test Company',
-        bodyParagraphs: ['I am interested in the Scanner Test Role.'],
-      },
-    }),
+    body: JSON.stringify(packagePayload),
   });
-  assert.equal(packageResponse.status, 200);
+  const acceptedPackage = await packageResponse.json() as { status?: string; message?: string };
+  assert.equal(packageResponse.status, 200, acceptedPackage.message);
+  assert.equal(acceptedPackage.status, 'waiting_for_gpt');
+
+  const unchangedPackageResponse = await fetch(
+    `${serverUrl}/api/v2/gpt-application-tasks/${created.taskId}/package`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${managerToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(packagePayload),
+    }
+  );
+  assert.equal(unchangedPackageResponse.status, 200);
+  const unchangedPackage = await unchangedPackageResponse.json() as { idempotentReplay: boolean };
+  assert.equal(unchangedPackage.idempotentReplay, true);
+
+  const conflictingReplayResponse = await fetch(
+    `${serverUrl}/api/v2/gpt-application-tasks/${created.taskId}/package`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${managerToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ ...packagePayload, notes: 'Conflicting package.' }),
+    }
+  );
+  assert.equal(conflictingReplayResponse.status, 409);
+
+  const idempotentReplayResponse = await fetch(
+    `${serverUrl}/api/v2/gpt-application-tasks/${created.taskId}/package`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${managerToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(packagePayload),
+    }
+  );
+  assert.equal(idempotentReplayResponse.status, 200);
+  const replayedPackage = await idempotentReplayResponse.json() as {
+    idempotentReplay: boolean;
+    status: string;
+  };
+  assert.equal(replayedPackage.idempotentReplay, true);
+  assert.equal(replayedPackage.status, 'waiting_for_gpt');
 
   for (const documentType of ['resume', 'cover_letter']) {
     const documentResponse = await fetch(
@@ -487,4 +566,41 @@ it('keeps Scanner GPT generation scoped to the selected job and accepts document
   const acknowledged = await acknowledgeResponse.json() as { success: boolean; status: string };
   assert.equal(acknowledged.success, true);
   assert.equal(acknowledged.status, 'waiting_for_page');
+
+  const nextPageResponse = await fetch(
+    `${serverUrl}/api/v2/gpt-application-tasks/${created.taskId}/page`,
+    {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${managerToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        ...page,
+        pageNumber: 2,
+        fields: [{
+          stableFieldId: 'scanner-generated-answer-page-two',
+          label: 'What interests you about this company?',
+          fieldType: 'textarea',
+          required: true,
+          manualReview: true,
+        }],
+      }),
+    }
+  );
+  assert.equal(nextPageResponse.status, 200);
+  const nextPageStatusResponse = await fetch(
+    `${serverUrl}/api/v2/gpt-application-tasks/${created.taskId}/extension-status`,
+    { headers: { Authorization: `Bearer ${managerToken}` } }
+  );
+  const nextPageStatus = await nextPageStatusResponse.json() as {
+    success: boolean;
+    pageNumber: number;
+    package: Record<string, unknown>;
+    previousUnresolvedFields: Array<{ stableFieldId: string; question: string; reason: string }>;
+  };
+  assert.equal(nextPageStatus.success, true);
+  assert.equal(nextPageStatus.pageNumber, 2);
+  assert.deepEqual(nextPageStatus.package, {});
+  assert.deepEqual(nextPageStatus.previousUnresolvedFields, packagePayload.unresolvedFields);
 });

@@ -111,11 +111,15 @@ tables listed above are kept. Legacy tables are not recreated by migrations.
   answers or Account profiles. Scanner does not advance pages or submit
   applications. A task that is already active or closed cannot be overwritten.
   ChatGPT returns a JSON package to the API through the authenticated Manager
-  extension session; the API checks task ownership, validates fields and
-  documents, and stores accepted output. Scanner claims only the selected
-  Account's exact `todo` row through the existing Apply-run lock; later step
-  scans resume that same Scanner run rather than starting another one. These
-  boundaries also apply to Workable.
+  extension session; the API checks task ownership, validates answer and
+  unresolved-field IDs against the current page, validates documents, and
+  atomically stores one accepted package per page. Identical retries are
+  acknowledged; conflicting packages are rejected. When Scanner advances to
+  another manually reached step, it clears the prior package while carrying
+  its unresolved-field notes into the new page context. Scanner claims only
+  the selected Account's exact `todo` row through the existing Apply-run lock;
+  later step scans resume that same Scanner run rather than starting another
+  one. These boundaries also apply to Workable.
 - Generic read-only site-template discovery remains available to other
   extension users. It records structural field/step checkpoints only; it does
   not save typed answers, fill fields, navigate, or submit.
