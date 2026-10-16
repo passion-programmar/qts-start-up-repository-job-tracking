@@ -558,18 +558,11 @@ it('keeps Scanner GPT generation scoped to the selected job and accepts document
     assert.ok((await documentResponse.arrayBuffer()).byteLength > 0);
   }
 
-  const downloadPaths = [
-    {
-      documentType: 'resume',
-      fileName: 'Scanner_Test_Account_Resume.pdf',
-      localPath: 'C:\\Users\\Scanner\\Downloads\\QTS_Startup\\Scanner Generated Documents\\Scanner_Test_Account_Resume.pdf',
-    },
-    {
-      documentType: 'cover_letter',
-      fileName: 'Scanner_Test_Account_Cover_Letter.pdf',
-      localPath: 'C:\\Users\\Scanner\\Downloads\\QTS_Startup\\Scanner Generated Documents\\Scanner_Test_Account_Cover_Letter.pdf',
-    },
-  ];
+  const downloadPaths = [{
+    documentType: 'resume',
+    fileName: 'Scanner_Test_Account.pdf',
+    localPath: 'Downloads/QTS_Startup/Scanner Manager/Scanner Test Account/2026-10-15_Test Job_Test Company/Scanner_Test_Account.pdf',
+  }];
   const saveDownloadPathsResponse = await fetch(
     `${serverUrl}/api/v2/gpt-application-tasks/${created.taskId}/downloads`,
     {
@@ -582,6 +575,24 @@ it('keeps Scanner GPT generation scoped to the selected job and accepts document
     }
   );
   assert.equal(saveDownloadPathsResponse.status, 200);
+  const coverLetterPathResponse = await fetch(
+    `${serverUrl}/api/v2/gpt-application-tasks/${created.taskId}/downloads`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${managerToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        documents: [{
+          documentType: 'cover_letter',
+          fileName: 'Scanner_Test_Account_Cover_Letter.pdf',
+          localPath: 'Downloads/QTS_Startup/Scanner Manager/Scanner Test Account/Cover_Letter.pdf',
+        }],
+      }),
+    }
+  );
+  assert.equal(coverLetterPathResponse.status, 400);
   const savedDownloadPathsResponse = await fetch(
     `${serverUrl}/api/v2/gpt-application-tasks/${created.taskId}/downloads`,
     { headers: { Authorization: `Bearer ${managerToken}` } }

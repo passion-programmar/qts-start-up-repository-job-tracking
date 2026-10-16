@@ -72,16 +72,17 @@ const taskPackageSchema = z.object({
 
 const taskDocumentDownloadsSchema = z.object({
   documents: z.array(z.object({
-    documentType: z.enum(['resume', 'cover_letter']),
+    documentType: z.literal('resume'),
     fileName: z.string().trim().min(1).max(500)
       .refine((value) => value.toLowerCase().endsWith('.pdf') && !/[\\/]/.test(value)),
     localPath: z.string().trim().min(1).max(2048)
       .refine((value) => !/[\r\n\0]/.test(value)
-        && (/^[a-zA-Z]:\\/.test(value) || value.startsWith('\\\\') || value.startsWith('/'))),
-  }).strict()).length(2).refine(
-    (documents) => new Set(documents.map((document) => document.documentType)).size === 2,
-    'Provide one downloaded path for each generated document.'
-  ),
+        && !/(^|[\\/])\.\.([\\/]|$)/.test(value)
+        && (/^[a-zA-Z]:\\/.test(value)
+          || value.startsWith('\\\\')
+          || value.startsWith('/')
+          || /^[^\\/]+[\\/]/.test(value))),
+  }).strict()).length(1),
 }).strict();
 
 type TaskRow = {
@@ -915,15 +916,14 @@ router.get('/:taskId/downloads', requireNewSchemaAuth, async (req: NewSchemaAuth
   const task = await loadManagerTask(req, res, req.params.taskId);
   if (!task) return;
   const downloads = await queryAll<{
-    document_type: 'resume' | 'cover_letter';
+    document_type: 'resume';
     file_name: string;
     local_path: string;
     downloaded_at: Date | string;
   }>(
     `SELECT document_type, file_name, local_path, downloaded_at
      FROM gpt_application_task_document_downloads
-     WHERE task_id = $1
-     ORDER BY CASE document_type WHEN 'resume' THEN 1 ELSE 2 END`,
+     WHERE task_id = $1 AND document_type = 'resume'`,
     [task.task_id]
   );
   res.json({ success: true, taskId: task.task_id, downloads });
@@ -937,7 +937,7 @@ router.post('/:taskId/downloads', requireNewSchemaAuth, async (req: NewSchemaAut
   if (!parsed.success) {
     res.status(400).json({
       success: false,
-      message: 'Provide the downloaded resume and cover-letter file paths.',
+      message: 'Provide only the downloaded resume file path.',
       errors: parsed.error.issues.map((issue) => ({
         field: issue.path.join('.'),
         message: issue.message,
@@ -947,26 +947,22 @@ router.post('/:taskId/downloads', requireNewSchemaAuth, async (req: NewSchemaAut
   }
   const documentFlags = task.package.documents;
   if (!documentFlags || typeof documentFlags !== 'object'
-      || !('resume' in documentFlags) || !documentFlags.resume
-      || !('coverLetter' in documentFlags) || !documentFlags.coverLetter) {
-    res.status(409).json({ success: false, message: 'Both generated documents must be ready before recording download paths.' });
+      || !('resume' in documentFlags) || !documentFlags.resume) {
+    res.status(409).json({ success: false, message: 'The generated resume must be ready before recording its local path.' });
     return;
   }
-  await withTransaction(async (tx) => {
-    for (const document of parsed.data.documents) {
-      await tx.query(
-        `INSERT INTO gpt_application_task_document_downloads
-           (task_id, document_type, file_name, local_path, downloaded_at)
-         VALUES ($1, $2, $3, $4, NOW())
-         ON CONFLICT (task_id, document_type)
-         DO UPDATE SET file_name = EXCLUDED.file_name,
-                       local_path = EXCLUDED.local_path,
-                       downloaded_at = NOW()`,
-        [task.task_id, document.documentType, document.fileName, document.localPath]
-      );
-    }
-  });
-  res.json({ success: true, taskId: task.task_id, saved: parsed.data.documents.length });
+  const resume = parsed.data.documents[0];
+  await execute(
+    `INSERT INTO gpt_application_task_document_downloads
+       (task_id, document_type, file_name, local_path, downloaded_at)
+     VALUES ($1, 'resume', $2, $3, NOW())
+     ON CONFLICT (task_id, document_type)
+     DO UPDATE SET file_name = EXCLUDED.file_name,
+                   local_path = EXCLUDED.local_path,
+                   downloaded_at = NOW()`,
+    [task.task_id, resume.fileName, resume.localPath]
+  );
+  res.json({ success: true, taskId: task.task_id, saved: 1 });
 });
 
 router.delete('/:taskId/documents/:documentType', requireNewSchemaAuth, async (req: NewSchemaAuthRequest, res: Response) => {

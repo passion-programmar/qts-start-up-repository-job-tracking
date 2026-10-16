@@ -913,7 +913,8 @@ async function verifyManagerScannerCapture(tabId, fields, rules, statusElement) 
   return { fields: acceptedFields, outcomes, evidenceFields, verifiedSecondCapture: true };
 }
 
-function selectScannerAccountForJob() {
+async function selectScannerAccountForJob() {
+  await loadJobAssignmentOptions();
   const accounts = managerJobAccounts.filter((account) => account && Number.isSafeInteger(Number(account.id)) && account.id > 0);
   if (!accounts.length) throw new Error('No active Accounts are assigned to this Manager.');
   const options = accounts.map((account, index) => (
@@ -930,6 +931,7 @@ function selectScannerAccountForJob() {
 
 async function prepareManagerScannerJob(tabId, statusElement) {
   if (currentUser?.role !== 'manager') throw new Error('Only Managers can start Scanner.');
+  await assertScannerOutputDirectoryReady();
   await requireScannerFeatureAccess();
   await selectAction('btn-get-jd');
   showJobSection();
@@ -938,9 +940,9 @@ async function prepareManagerScannerJob(tabId, statusElement) {
   await notifyScannerStage(tabId, statusElement, 'Loading job details using Get JD…');
   if (scanStatus) scanStatus.textContent = 'Loading job details using Get JD…';
   await loadCurrentTab({ preferCache: false, allowExtract: true });
-  await notifyScannerStage(tabId, statusElement, 'Job details loaded. Choose the Account for this application.');
+  await notifyScannerStage(tabId, statusElement, 'Job details loaded. Checking this Manager’s active Accounts…');
 
-  const account = selectScannerAccountForJob();
+  const account = await selectScannerAccountForJob();
   scannerSelectedAccountId = Number(account.id);
   selectedJobAccountIds = new Set([
     ...existingJobAccountIds,
@@ -994,6 +996,11 @@ async function saveJobAndStartScanner() {
     }
     const account = managerJobAccounts.find((item) => item.id === scannerSelectedAccountId);
     if (!account) throw new Error('The selected Account is no longer active for this Manager.');
+    await saveScannerJobContext(
+      saveResult.job,
+      account,
+      document.getElementById('f-desc')?.value?.trim() || ''
+    );
     let jobId = Number(assignedRow.job_id);
     let applyRunId;
     if (assignedRow.status === 'todo') {
@@ -1080,6 +1087,86 @@ function scannerFieldDocumentSlot(field) {
   return inferFileDocumentType(field) === 'cover-letter' ? 'cover_letter' : 'resume';
 }
 
+function scannerChoiceOptions(field) {
+  if (!Array.isArray(field?.options)) return [];
+  const seen = new Set();
+  return field.options
+    .map((option) => String(option || '').trim())
+    .filter((option) => {
+      const key = option.toLowerCase();
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+function scannerIsChoiceField(field) {
+  return ['select', 'combobox', 'listbox', 'radio'].includes(String(field?.fieldType || '').toLowerCase());
+}
+
+async function reviewScannerAnswer(question, generated, currentValue = '', options = []) {
+  const dialog = document.getElementById('scanner-answer-review');
+  const description = document.getElementById('scanner-answer-review-description');
+  const answerInput = document.getElementById('scanner-answer-review-value');
+  const choiceInput = document.getElementById('scanner-answer-review-options');
+  const answerLabel = document.getElementById('scanner-answer-review-label');
+  const approveButton = dialog?.querySelector('button[value="approve"]');
+  if (!dialog || !description || !answerInput || !choiceInput || !answerLabel || !approveButton
+    || typeof dialog.showModal !== 'function') {
+    throw new Error('Generated answer review dialog is unavailable. Reload the extension and try again.');
+  }
+
+  const choices = scannerChoiceOptions({ options });
+  answerInput.hidden = choices.length > 0;
+  choiceInput.hidden = choices.length === 0;
+  answerLabel.htmlFor = choices.length ? choiceInput.id : answerInput.id;
+  choiceInput.replaceChildren();
+  if (choices.length) {
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = 'Choose an available answer';
+    placeholder.disabled = true;
+    placeholder.selected = true;
+    choiceInput.append(placeholder);
+    choices.forEach((choice) => {
+      const option = document.createElement('option');
+      option.value = choice;
+      option.textContent = choice;
+      choiceInput.append(option);
+    });
+  }
+  const normalizedGenerated = String(generated || '').trim().toLowerCase();
+  const exactChoices = choices.filter((choice) => choice.toLowerCase() === normalizedGenerated);
+  if (exactChoices.length === 1) choiceInput.value = exactChoices[0];
+
+  description.textContent = currentValue
+    ? `${question} — this field already has a value. Approving will replace it.`
+    : question;
+  answerLabel.textContent = choices.length
+    ? 'Choose one of the options found on the application page, then approve it.'
+    : 'Edit the answer if needed, then approve it to fill this field.';
+  answerInput.value = generated;
+  approveButton.textContent = choices.length ? 'Approve selection' : 'Approve answer';
+  dialog.returnValue = 'skip';
+
+  const approved = await new Promise((resolve) => {
+    const onClose = () => {
+      dialog.removeEventListener('close', onClose);
+      resolve(dialog.returnValue === 'approve');
+    };
+    dialog.addEventListener('close', onClose);
+    try {
+      dialog.showModal();
+      (choices.length ? choiceInput : answerInput).focus();
+    } catch (error) {
+      dialog.removeEventListener('close', onClose);
+      throw error;
+    }
+  });
+
+  return approved ? (choices.length ? choiceInput.value : answerInput.value) : null;
+}
+
 async function reviewScannerDocument(documentFile, documentType, account, fieldQuestion) {
   const dialog = document.getElementById('scanner-document-review');
   const title = document.getElementById('scanner-document-review-title');
@@ -1094,7 +1181,7 @@ async function reviewScannerDocument(documentFile, documentType, account, fieldQ
   for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
   const previewUrl = URL.createObjectURL(new Blob([bytes], { type: documentFile.mimeType || 'application/pdf' }));
   title.textContent = `Review generated ${documentType === 'cover_letter' ? 'cover letter' : 'resume'}`;
-  description.textContent = `${documentFile.fileName} for ${account.name || `Account ${account.u_id}`} — requested by: ${fieldQuestion}`;
+  description.textContent = `${documentFile.fileName} downloaded to ${documentFile.localPath || 'this computer'} for ${account.name || `Account ${account.u_id}`} — requested by: ${fieldQuestion}`;
   preview.src = previewUrl;
   dialog.returnValue = 'reject';
 
@@ -1119,9 +1206,294 @@ async function reviewScannerDocument(documentFile, documentType, account, fieldQ
   }
 }
 
+const SCANNER_OUTPUT_DIRECTORY_SETTING = 'scannerOutputDirectoryV2';
+
+async function getScannerOutputDirectoryHandle() {
+  const store = window.__qtsScannerDocumentStore;
+  if (!store?.getSetting) throw new Error('Scanner output-folder storage is unavailable. Reload the extension.');
+  const stored = await store.getSetting(SCANNER_OUTPUT_DIRECTORY_SETTING);
+  return stored?.value || null;
+}
+
+async function selectScannerOutputDirectory() {
+  if (typeof window.showDirectoryPicker !== 'function') {
+    throw new Error('This Chrome version does not support choosing a Scanner output folder.');
+  }
+  const handle = await window.showDirectoryPicker({ mode: 'readwrite', startIn: 'downloads' });
+  const permission = await handle.requestPermission({ mode: 'readwrite' });
+  if (permission !== 'granted') {
+    throw new Error('Write access was not granted for the selected Scanner output folder.');
+  }
+  await window.__qtsScannerDocumentStore.putSetting(SCANNER_OUTPUT_DIRECTORY_SETTING, handle);
+  updateScannerOutputFolderStatus(handle);
+}
+
+function updateScannerOutputFolderStatus(handle) {
+  const status = document.getElementById('scanner-output-folder-status');
+  if (!status) return;
+  status.classList.remove('hidden');
+  if (handle) {
+    status.textContent = `Generated files: ${handle.name}/QTS_Startup/${currentUser ? window.__qtsScannerOutputPaths.managerFolder(currentUser) : '<Manager name>'}/<Account name>/<date_time_job_company>/`;
+    return;
+  }
+  status.textContent = `Generated files: Chrome Downloads/QTS_Startup/${currentUser ? window.__qtsScannerOutputPaths.managerFolder(currentUser) : '<Manager name>'}/<Account name>/<date_time_job_company>/. Choose another folder only if needed.`;
+}
+
+async function restoreScannerOutputFolderStatus() {
+  const handle = await getScannerOutputDirectoryHandle();
+  updateScannerOutputFolderStatus(handle);
+}
+
+async function assertScannerOutputDirectoryReady() {
+  const handle = await getScannerOutputDirectoryHandle();
+  if (!handle) {
+    if (!chrome.downloads?.download || !chrome.downloads?.onChanged || !chrome.downloads?.search) {
+      throw new Error('Chrome Downloads access is unavailable. Reload the extension and allow its Downloads permission.');
+    }
+    return;
+  }
+  if (await handle.queryPermission({ mode: 'readwrite' }) !== 'granted') {
+    throw new Error('Scanner needs write access to the selected folder. Choose it again using “Choose files folder”.');
+  }
+}
+
+function waitForChromeDownload(downloadId) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      chrome.downloads.onChanged.removeListener(onChanged);
+      if (error) reject(error);
+      else resolve();
+    };
+    const inspect = (item) => {
+      if (item?.state === 'complete') finish();
+      else if (item?.state === 'interrupted') {
+        finish(new Error(`Chrome could not save Scanner output: ${item.error || 'download interrupted'}.`));
+      }
+    };
+    const onChanged = (delta) => {
+      if (delta.id !== downloadId) return;
+      if (delta.state?.current === 'complete') finish();
+      else if (delta.state?.current === 'interrupted' || delta.error?.current) {
+        finish(new Error(`Chrome could not save Scanner output: ${delta.error?.current || 'download interrupted'}.`));
+      }
+    };
+    const timeout = setTimeout(
+      () => finish(new Error('Timed out while waiting for Chrome to save Scanner output.')),
+      120000
+    );
+    chrome.downloads.onChanged.addListener(onChanged);
+    chrome.downloads.search({ id: downloadId }, (items) => {
+      const error = chrome.runtime.lastError;
+      if (error) {
+        finish(new Error(`Could not check Scanner download status: ${error.message}`));
+        return;
+      }
+      inspect(items?.[0]);
+    });
+  });
+}
+
+async function saveScannerFileToChromeDownloads(path, contents, mimeType) {
+  const blob = contents instanceof Blob ? contents : new Blob([contents], { type: mimeType });
+  const objectUrl = URL.createObjectURL(blob);
+  try {
+    const downloadId = await new Promise((resolve, reject) => {
+      chrome.downloads.download({
+        url: objectUrl,
+        filename: path,
+        saveAs: false,
+        conflictAction: 'overwrite',
+      }, (id) => {
+        const error = chrome.runtime.lastError;
+        if (error) reject(new Error(`Chrome could not start the Scanner download: ${error.message}`));
+        else resolve(id);
+      });
+    });
+    await waitForChromeDownload(downloadId);
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+async function createScannerOutputFile(taskId, account, jobContext, type, contents, mimeType) {
+  const handle = await getScannerOutputDirectoryHandle();
+  const outputPaths = window.__qtsScannerOutputPaths;
+  if (!outputPaths?.artifactName || !outputPaths?.downloadPath || !outputPaths?.relativePath) {
+    throw new Error('Scanner output filename helper is unavailable. Reload the extension and retry.');
+  }
+
+  const timestampKey = `qtsScannerOutputTimestamp:${taskId}`;
+  const storedTimestamp = await chrome.storage.local.get(timestampKey);
+  const timestamp = storedTimestamp[timestampKey] || new Date().toISOString();
+  if (!storedTimestamp[timestampKey]) {
+    await chrome.storage.local.set({ [timestampKey]: timestamp });
+  }
+  const fileName = outputPaths.artifactName(jobContext, type, account);
+  let localPath;
+  if (handle) {
+    const permission = await handle.queryPermission({ mode: 'readwrite' });
+    if (permission !== 'granted') {
+      throw new Error('Scanner no longer has write access to the selected folder. Choose it again and retry.');
+    }
+    const rootFolder = await handle.getDirectoryHandle('QTS_Startup', { create: true });
+    const managerFolderName = outputPaths.managerFolder(currentUser);
+    const managerFolderHandle = await rootFolder.getDirectoryHandle(managerFolderName, { create: true });
+    const accountFolderName = outputPaths.accountFolder(account);
+    const accountFolderHandle = await managerFolderHandle.getDirectoryHandle(accountFolderName, { create: true });
+    const jobFolderName = outputPaths.jobFolder(jobContext, timestamp);
+    const jobFolderHandle = await accountFolderHandle.getDirectoryHandle(jobFolderName, { create: true });
+    const fileHandle = await jobFolderHandle.getFileHandle(fileName, { create: true });
+    const writable = await fileHandle.createWritable();
+    try {
+      await writable.write(new Blob([contents], { type: mimeType }));
+    } catch (error) {
+      await writable.abort();
+      throw error;
+    }
+    await writable.close();
+    localPath = outputPaths.relativePath(handle.name, currentUser, account, jobContext, timestamp, type);
+  } else {
+    const downloadPath = outputPaths.downloadPath(currentUser, account, jobContext, timestamp, type);
+    await saveScannerFileToChromeDownloads(downloadPath, contents, mimeType);
+    localPath = outputPaths.relativePath('Downloads', currentUser, account, jobContext, timestamp, type);
+  }
+  return { fileName, localPath };
+}
+
+async function saveScannerJobContext(job, account, jobDescription = '') {
+  const contextStore = window.__qtsScannerJobContext;
+  if (!contextStore?.createSnapshot || !contextStore?.storageKey) {
+    throw new Error('Local Scanner job-context storage is unavailable. Reload the extension and retry.');
+  }
+  const current = contextStore.createSnapshot({
+    job,
+    account,
+    managerId: currentUser?.id,
+    jobDescription,
+  });
+  const key = contextStore.storageKey(current);
+  const stored = await chrome.storage.local.get(key);
+  const snapshot = contextStore.mergeSnapshot(stored[key], current);
+  await chrome.storage.local.set({ [key]: snapshot });
+  return snapshot;
+}
+
+async function resolveScannerJobContext(job, account, taskJobContext, jobDescription = '') {
+  const saved = await saveScannerJobContext(job, account, jobDescription);
+  const taskContext = taskJobContext || {};
+  const taskSnapshot = window.__qtsScannerJobContext.createSnapshot({
+    job: {
+      id: job.id || job.j_id || taskContext.jobId,
+      title: taskContext.jobTitle || job.title,
+      company: taskContext.company || job.company,
+      url: taskContext.jobUrl || job.url,
+      application_type: taskContext.platform || job.application_type,
+      description: taskContext.jobDescription || '',
+    },
+    account,
+    managerId: currentUser?.id,
+    jobDescription: taskContext.jobDescription || jobDescription,
+  });
+  const resolved = window.__qtsScannerJobContext.mergeSnapshot(saved, taskSnapshot);
+  const key = window.__qtsScannerJobContext.storageKey(resolved);
+  await chrome.storage.local.set({ [key]: resolved });
+  return resolved;
+}
+
+async function downloadScannerJobDetails(taskId, account, jobContext) {
+  const contextStore = window.__qtsScannerJobContext;
+  if (!contextStore?.formatText) throw new Error('Scanner job-details export helper is unavailable. Reload the extension and retry.');
+  return createScannerOutputFile(
+    taskId,
+    account,
+    jobContext,
+    'job_details',
+    `\uFEFF${contextStore.formatText(jobContext)}`,
+    'text/plain;charset=utf-8'
+  );
+}
+
+async function ensureScannerDocumentsDownloaded(taskId, packageData, tabId, statusElement, jobContext, account) {
+  if (!packageData?.documents?.resume || !packageData?.documents?.coverLetter) {
+    throw new Error('ChatGPT did not return both the resume and cover letter. The Scanner package cannot continue.');
+  }
+  const store = window.__qtsScannerDocumentStore;
+  if (!store?.get || !store?.put) {
+    throw new Error('Local Scanner document storage is unavailable. Reload the extension and retry.');
+  }
+  const packageHash = typeof packageData.submissionHash === 'string'
+    ? packageData.submissionHash
+    : '';
+
+  const documents = [];
+  const documentFiles = new Map();
+  for (const documentType of ['resume', 'cover_letter']) {
+    let document = await store.get(taskId, documentType);
+    if (!document?.base64 || !packageHash || document.packageHash !== packageHash) {
+      const fetched = await window.api.fetchManagerGptTaskDocument(taskId, documentType);
+      if (!fetched.success) {
+        throw new Error(fetched.message || `Could not generate the ${documentType} PDF.`);
+      }
+      document = {
+        taskId,
+        documentType,
+        fileName: fetched.fileName,
+        mimeType: fetched.mimeType || 'application/pdf',
+        base64: fetched.base64,
+        packageHash,
+        localPath: '',
+      };
+      await store.put(document);
+    }
+    if (!document.localPath || document.outputVersion !== 4) {
+      await notifyScannerStage(
+        tabId,
+        statusElement,
+        `Saving the generated ${documentType === 'cover_letter' ? 'cover letter' : 'resume'} to the selected folder…`
+      );
+      const binary = atob(document.base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+      const artifact = await createScannerOutputFile(
+        taskId,
+        account,
+        jobContext,
+        documentType,
+        new Blob([bytes], { type: document.mimeType || 'application/pdf' }),
+        document.mimeType || 'application/pdf'
+      );
+      document.fileName = artifact.fileName;
+      document.localPath = artifact.localPath;
+      document.outputVersion = 4;
+      await store.put(document);
+    }
+    documents.push({
+      documentType,
+      fileName: document.fileName,
+      localPath: document.localPath,
+    });
+    documentFiles.set(documentType, document);
+  }
+
+  const saved = await window.api.recordManagerGptTaskDownloads(
+    taskId,
+    documents.filter((document) => document.documentType === 'resume')
+  );
+  if (!saved.success) {
+    throw new Error(saved.message || 'The generated resume path could not be saved to the Scanner task.');
+  }
+  await notifyScannerStage(tabId, statusElement, 'Saving the job details TXT file beside the generated PDFs…');
+  await downloadScannerJobDetails(taskId, account, jobContext);
+  return documentFiles;
+}
+
 async function getScannerGptTaskResult(taskId) {
   const startedAt = Date.now();
-  const timeoutMs = 180000;
+  const timeoutMs = 270000;
   while (Date.now() - startedAt < timeoutMs) {
     const response = await window.api.getManagerGptTaskStatus(taskId);
     if (!response.success) throw new Error(response.message || 'Could not read the Scanner task status.');
@@ -1149,10 +1521,16 @@ async function runManagerScannerGptTask({ job, account, tabId, generatedFields, 
   if (!pageFields.length) return { fillFields: [], outcomes: [] };
   if (!window.__qtsScannerChatGpt?.buildPrompt) throw new Error('ChatGPT Scanner helper is not loaded.');
 
+  let jobContext = await resolveScannerJobContext(
+    job,
+    account,
+    {},
+    document.getElementById('f-desc')?.value?.trim() || ''
+  );
   await notifyScannerStage(tabId, statusElement, 'Preparing a job-specific Scanner task for the selected application…');
   const createResponse = await window.api.createManagerGptTaskForJob(job.id, {
     sourcePlatform: job.application_type,
-    jobDescription: document.getElementById('f-desc')?.value?.trim() || undefined,
+    jobDescription: jobContext.description || undefined,
   });
   const activeTaskReturned = createResponse._httpStatus === 409 && Boolean(createResponse.taskId);
   if ((!createResponse.success && !activeTaskReturned) || !createResponse.taskId) {
@@ -1161,6 +1539,7 @@ async function runManagerScannerGptTask({ job, account, tabId, generatedFields, 
   const taskId = createResponse.taskId;
   const currentTask = await window.api.getManagerGptTaskStatus(taskId);
   if (!currentTask.success) throw new Error(currentTask.message || 'Could not verify the selected job’s Scanner task.');
+  jobContext = await resolveScannerJobContext(job, account, currentTask.jobContext, jobContext.description);
 
   const tab = await chrome.tabs.get(tabId);
   const pageUrl = String(tab?.url || '');
@@ -1171,25 +1550,61 @@ async function runManagerScannerGptTask({ job, account, tabId, generatedFields, 
     throw new Error('Could not read the current application page URL for the Scanner task.');
   }
   const samePage = scannerTaskPageMatches(currentTask.page, normalizedPageUrl, pageFields);
+  let retryCurrentPage = false;
+  let acknowledgedPreviousPage = false;
   let result;
   if (currentTask.status === 'waiting_for_gpt') {
-    if (!samePage) {
-      throw new Error('This job already has an active ChatGPT request for a different page. Finish or review it before starting Scanner on another page.');
+    const existingPackage = currentTask.package || {};
+    const packageSubmitted = Array.isArray(existingPackage.answers)
+      || Array.isArray(existingPackage.unresolvedFields)
+      || Boolean(existingPackage.documents?.resume)
+      || Boolean(existingPackage.documents?.coverLetter);
+    if (!samePage && !packageSubmitted) {
+      const previousPage = currentTask.page?.pageTitle
+        ? `"${currentTask.page.pageTitle}"`
+        : `page ${Math.max(1, Number(currentTask.pageNumber || 1))}`;
+      throw new Error(
+        `This job still has a ChatGPT request for ${previousPage}, but no answer package has been saved yet. Return to that application page and wait for ChatGPT to finish before scanning another page.`
+      );
     }
-    await notifyScannerStage(
-      tabId,
-      statusElement,
-      `A ChatGPT request is already active for task ${taskId}. Waiting to receive its package…`,
-      'info',
-      6000,
-      true
-    );
-    result = await getScannerGptTaskResult(taskId);
-  } else if (currentTask.status === 'ready' && samePage) {
+    if (!samePage && packageSubmitted) {
+      const previousPage = currentTask.page?.pageTitle
+        ? `"${currentTask.page.pageTitle}"`
+        : `page ${Math.max(1, Number(currentTask.pageNumber || 1))}`;
+      if (!window.confirm(
+        `A ChatGPT package is saved for ${previousPage}, not the page currently open. Scanner will not apply that package to this page. Continuing will skip the previous page's answers and replace its active package when this page is scanned. Downloaded PDFs already saved in Downloads will remain there. To review or use the previous answers, cancel and return to that page. Skip the previous page and scan this one?`
+      )) {
+        throw new Error('The previous Scanner page was left unchanged. Return to it to review its saved ChatGPT package.');
+      }
+      const acknowledgeResponse = await window.api.acknowledgeManagerGptTaskPage(taskId);
+      if (!acknowledgeResponse.success) {
+        throw new Error(acknowledgeResponse.message || 'The previous Scanner page could not be acknowledged.');
+      }
+      acknowledgedPreviousPage = true;
+    } else if (packageSubmitted) {
+      result = currentTask;
+    } else {
+      if (!window.confirm(
+        'This Scanner task is still waiting for ChatGPT and has no saved package. Retry only if you confirmed the previous prompt was not submitted and ChatGPT is not generating. Scanner will reuse its prior ChatGPT tab when possible. If the send state is uncertain, choose Cancel to avoid a duplicate request.'
+      )) {
+        throw new Error('Scanner retry canceled. The active task was left unchanged; check ChatGPT before retrying.');
+      }
+      const acknowledgeResponse = await window.api.acknowledgeManagerGptTaskPage(taskId);
+      if (!acknowledgeResponse.success) {
+        throw new Error(acknowledgeResponse.message || 'The active Scanner task could not be reset for a confirmed unsent retry.');
+      }
+      retryCurrentPage = true;
+    }
+  }
+  if (!result && currentTask.status === 'ready' && samePage) {
     result = currentTask;
-  } else if (['waiting_for_page', 'ready'].includes(currentTask.status)) {
+  } else if (!result && (
+    ['waiting_for_page', 'ready'].includes(currentTask.status)
+    || retryCurrentPage
+    || acknowledgedPreviousPage
+  )) {
     let jobDescription = String(
-      currentTask.jobContext?.jobDescription || document.getElementById('f-desc')?.value || ''
+      jobContext.description || currentTask.jobContext?.jobDescription || document.getElementById('f-desc')?.value || ''
     ).trim();
     if (!jobDescription) {
       jobDescription = (window.prompt(
@@ -1197,11 +1612,19 @@ async function runManagerScannerGptTask({ job, account, tabId, generatedFields, 
       ) || '').trim();
     }
     if (!jobDescription) throw new Error('A job description is required for Generated Answers, resume, or cover-letter generation.');
+    jobContext = await resolveScannerJobContext(
+      job,
+      account,
+      { ...currentTask.jobContext, jobDescription },
+      jobDescription
+    );
 
     const pageResponse = await window.api.setManagerGptTaskPage(taskId, {
       pageUrl: normalizedPageUrl,
       pageTitle: String(tab?.title || job.title || 'Application form').slice(0, 500),
-      pageNumber: Math.max(1, Number(currentTask.pageNumber || 0) + 1),
+      pageNumber: retryCurrentPage
+        ? Math.max(1, Number(currentTask.pageNumber || 1))
+        : Math.max(1, Number(currentTask.pageNumber || 0) + 1),
       fields: pageFields,
       jobDescription,
     });
@@ -1211,7 +1634,7 @@ async function runManagerScannerGptTask({ job, account, tabId, generatedFields, 
     await notifyScannerStage(
       tabId,
       statusElement,
-      `Page context saved for task ${taskId}. Sending ${generatedFields.length} answer field(s) and ${documentFields.length} document request(s) to ChatGPT. Existing page-field contents are not sent.`,
+      `Page context saved for task ${taskId}. Sending ${generatedFields.length} answer field(s) and requesting a tailored resume and cover letter from ChatGPT. Existing page-field contents are not sent.`,
       'info',
       6000,
       true
@@ -1226,9 +1649,6 @@ async function runManagerScannerGptTask({ job, account, tabId, generatedFields, 
       jobTabId: tabId,
       prompt,
     });
-    if (!handoff?.ok || handoff?.handoff?.sent === false) {
-      throw new Error(handoff?.handoff?.error || handoff?.error || 'ChatGPT handoff failed.');
-    }
     await notifyScannerStage(
       tabId,
       statusElement,
@@ -1237,10 +1657,25 @@ async function runManagerScannerGptTask({ job, account, tabId, generatedFields, 
       6000,
       true
     );
-    result = await getScannerGptTaskResult(taskId);
-  } else {
+    const taskResult = getScannerGptTaskResult(taskId);
+    const dispatchError = handoff.dispatchWaiter.then(
+      () => new Promise(() => {}),
+      (error) => { throw error; }
+    );
+    result = await Promise.race([taskResult, dispatchError]);
+  } else if (!result) {
     throw new Error(`The selected job’s Scanner task is ${currentTask.status}; Scanner will not overwrite an active or closed task.`);
   }
+
+  await notifyScannerStage(tabId, statusElement, 'Preparing the generated resume and cover letter for local download and review…');
+  const generatedDocuments = await ensureScannerDocumentsDownloaded(
+    taskId,
+    result.package,
+    tabId,
+    statusElement,
+    jobContext,
+    account
+  );
 
   if (generatedFields.length || documentFields.length) {
     const answerCount = Array.isArray(result.package?.answers) ? result.package.answers.length : 0;
@@ -1248,7 +1683,7 @@ async function runManagerScannerGptTask({ job, account, tabId, generatedFields, 
     const resumeReady = Boolean(result.package?.documents?.resume);
     const coverLetterReady = Boolean(result.package?.documents?.coverLetter);
     const documentCount = Number(resumeReady) + Number(coverLetterReady);
-    const packageReceivedMessage = `Package received from ChatGPT for task ${taskId}: ${answerCount} answer(s), ${documentCount} requested document(s), ${unresolvedCount} unresolved field(s).`;
+    const packageReceivedMessage = `Package received from ChatGPT for task ${taskId}: ${answerCount} answer(s), ${documentCount} generated document(s) downloaded locally, ${unresolvedCount} unresolved field(s).`;
     if (statusElement) statusElement.textContent = packageReceivedMessage;
     await clearPageNotice(tabId, 'scanner-progress');
     await clearPageNotice(tabId, 'scanner-package-received');
@@ -1264,30 +1699,55 @@ async function runManagerScannerGptTask({ job, account, tabId, generatedFields, 
   const outcomes = [];
   const fillFields = [];
 
+  let generatedAnswerNumber = 0;
   for (const field of generatedFields) {
     const fieldId = String(field.stableFieldId || field.fieldId || '');
     const question = String(field.label || field.question || 'Application field').trim();
+    const options = scannerChoiceOptions(field);
     const generated = answers.get(fieldId);
-    if (!generated) {
+    if (field.status !== 'matched') {
+      const selectTypes = new Set(['select', 'combobox', 'listbox']);
+      const canConfirmDropdown = selectTypes.has(String(field.fieldType || '').toLowerCase())
+        && Boolean(field.selectorHints?.id)
+        && Array.isArray(field.options)
+        && field.options.length > 0;
+      const confirmedDropdown = canConfirmDropdown && window.confirm(
+        `Scanner found a dropdown for:\n${question}\n\nIts label/locator confidence is uncertain, but it has a stable element ID (${field.selectorHints.id}) and detected options. Verify that this is the exact dropdown shown for this question. If you continue, Scanner will review your answer and select only a unique matching option. Continue?`
+      );
+      if (!confirmedDropdown) {
+        outcomes.push(`${question}: field locator is uncertain; left unresolved.`);
+        continue;
+      }
+    }
+    if (!generated && !(field.required && options.length)) {
       outcomes.push(`${question}: GPT did not return an answer; left unresolved.`);
       continue;
     }
-    if (field.status !== 'matched') {
-      outcomes.push(`${question}: GPT answer is ready, but the field locator is uncertain; left unresolved.`);
+    if (scannerIsChoiceField(field) && !options.length) {
+      outcomes.push(`${question}: available choices were not captured; left unresolved rather than guessing.`);
       continue;
     }
-    if (String(field.currentValue || '').trim()
-      && !window.confirm(`This field already contains a value:\n${question}\n\nReplace it with this GPT answer?\n\n${generated}`)) {
-      outcomes.push(`${question}: kept existing page value.`);
-      continue;
-    }
-    const reviewed = window.prompt(`Review or edit the GPT answer for:\n${question}`, generated);
+    generatedAnswerNumber += 1;
+    await notifyScannerStage(
+      tabId,
+      statusElement,
+      `${generated ? 'Reviewing generated answer' : 'Choosing a required answer'} ${generatedAnswerNumber}: ${question}. Approve or skip it in the Scanner panel.`,
+      'info',
+      6000,
+      true
+    );
+    const reviewed = await reviewScannerAnswer(
+      question,
+      generated || '',
+      String(field.currentValue || '').trim(),
+      options
+    );
     if (reviewed == null || !reviewed.trim()) {
-      outcomes.push(`${question}: GPT answer was not approved.`);
+      outcomes.push(`${question}: answer was skipped or left blank.`);
       continue;
     }
     fillFields.push({ ...field, fillValue: reviewed.trim(), fillStatus: 'ready_to_fill' });
-    outcomes.push(`${question}: Manager-reviewed GPT answer queued.`);
+    outcomes.push(`${question}: ${generated ? 'Manager-reviewed GPT answer' : 'Manager-selected required option'} queued.`);
   }
 
   const returnedDocuments = result.package?.documents || {};
@@ -1308,8 +1768,8 @@ async function runManagerScannerGptTask({ job, account, tabId, generatedFields, 
       outcomes.push(`${question}: kept existing uploaded file.`);
       continue;
     }
-    const document = await window.api.fetchManagerGptTaskDocument(taskId, documentType);
-    if (!document.success) throw new Error(document.message || `Could not fetch the generated ${documentType} PDF.`);
+    const document = await generatedDocuments.get(documentType);
+    if (!document?.base64) throw new Error(`The locally saved generated ${documentType} PDF is unavailable.`);
     const approved = await reviewScannerDocument(document, documentType, account, question);
     if (!approved) {
       outcomes.push(`${question}: generated document was not approved.`);
@@ -1430,12 +1890,17 @@ async function runManagerScanner(tabId, statusElement, account, job) {
   for (const field of fields) {
     const fieldId = String(field.stableFieldId || field.fieldId || '');
     const question = String(field.label || field.question || 'Application field').trim();
+    const detectedOptions = scannerChoiceOptions(field);
     if (!fieldId) {
       outcomes.push(`${question}: skipped (no stable field identifier).`);
       continue;
     }
     if (field.fieldType === 'file') {
       documentFields.push(field);
+      continue;
+    }
+    if (scannerIsChoiceField(field) && !detectedOptions.length) {
+      outcomes.push(`${question}: available choices were not captured; left unresolved rather than guessing.`);
       continue;
     }
 
@@ -1480,8 +1945,11 @@ async function runManagerScanner(tabId, statusElement, account, job) {
 
     let strategy = rule?.strategy || '';
     if (isNewRule) {
+      const choiceContext = detectedOptions.length
+        ? `\n\nChoices detected on the page:\n${detectedOptions.map((option) => `• ${option}`).join('\n')}`
+        : '';
       const selected = window.prompt(
-        `Choose how to handle:\n${question}\n\n1 = Profile Answer (selected Account)\n2 = Reusable Answer (save Manager Q&A)\n3 = Generated Answer (GPT)\n4 = Manual / leave unresolved`,
+        `Choose how to handle:\n${question}${choiceContext}\n\n1 = Profile Answer (selected Account)\n2 = Reusable Answer (save Manager Q&A)\n3 = Generated Answer (GPT)\n4 = Manual / leave unresolved`,
         '1'
       );
       if (selected == null || !['1', '2', '3', '4'].includes(selected.trim())) {
@@ -1495,6 +1963,7 @@ async function runManagerScanner(tabId, statusElement, account, job) {
     let reusableAnswerId = rule?.reusable_answer_id == null ? null : Number(rule.reusable_answer_id);
     let reusableAnswer = typeof rule?.reusable_answer === 'string' ? rule.reusable_answer : '';
     let fillValue = '';
+    let optionReviewed = false;
 
     if (strategy === 'profile') {
       if (isNewRule || !profileFieldKey) {
@@ -1536,10 +2005,17 @@ async function runManagerScanner(tabId, statusElement, account, job) {
         outcomes.push(`${question}: left unresolved (reusable answer was not provided).`);
         continue;
       }
+      if (detectedOptions.length) {
+        const reviewed = await reviewScannerAnswer(question, reusableAnswer, String(field.currentValue || '').trim(), detectedOptions);
+        if (reviewed == null || !reviewed.trim()) {
+          outcomes.push(`${question}: reusable answer was skipped or left blank.`);
+          continue;
+        }
+        reusableAnswer = reviewed.trim();
+        optionReviewed = true;
+      }
     } else if (strategy === 'generated') {
       generatedFields.push(field);
-    } else {
-      outcomes.push(`${question}: left for manual completion.`);
     }
 
     if (isNewRule || changed) {
@@ -1577,12 +2053,36 @@ async function runManagerScanner(tabId, statusElement, account, job) {
       }
     }
 
+    if (strategy === 'manual') {
+      if (field.required && detectedOptions.length && field.status === 'matched') {
+        const reviewed = await reviewScannerAnswer(question, '', String(field.currentValue || '').trim(), detectedOptions);
+        if (reviewed && reviewed.trim()) {
+          fillFields.push({ ...field, fillValue: reviewed.trim(), fillStatus: 'ready_to_fill' });
+          outcomes.push(`${question}: Manager-selected required option queued.`);
+        } else {
+          outcomes.push(`${question}: required field left unresolved (no option selected).`);
+        }
+      } else {
+        outcomes.push(`${question}: left for manual completion.`);
+      }
+      continue;
+    }
+
     if (!['profile', 'reusable'].includes(strategy) || !fillValue && strategy === 'profile') {
       if (strategy === 'profile') outcomes.push(`${question}: profile value unavailable; used no persistent fallback.`);
       continue;
     }
     if (strategy === 'reusable' && !fillValue) fillValue = reusableAnswer;
     if (!fillValue) continue;
+    if (detectedOptions.length && !optionReviewed) {
+      const reviewed = await reviewScannerAnswer(question, fillValue, String(field.currentValue || '').trim(), detectedOptions);
+      if (reviewed == null || !reviewed.trim()) {
+        outcomes.push(`${question}: answer was skipped or left blank.`);
+        continue;
+      }
+      fillValue = reviewed.trim();
+      optionReviewed = true;
+    }
     if (String(field.currentValue || '').trim()) {
       const overwrite = window.confirm(
         `This field already contains a value:\n${question}\n\nReplace it with the confirmed ${strategy === 'profile' ? 'Account profile' : 'reusable'} answer?`
@@ -1601,7 +2101,7 @@ async function runManagerScanner(tabId, statusElement, account, job) {
       fillValue,
       fillStatus: 'ready_to_fill',
     });
-    outcomes.push(`${question}: queued from ${strategy === 'profile' ? 'Account profile' : 'reusable answer'}.`);
+    outcomes.push(`${question}: ${optionReviewed ? 'Manager-approved available option' : `queued from ${strategy === 'profile' ? 'Account profile' : 'reusable answer'}`}.`);
   }
 
   if (generatedFields.length || documentFields.length) {
@@ -1638,8 +2138,37 @@ async function runManagerScanner(tabId, statusElement, account, job) {
       throw new Error(fillResponse?.error || 'Confirmed Scanner answers could not be applied.');
     }
     const results = fillResponse?.fill?.results || [];
-    const filled = results.filter((item) => item.ok).length;
-    const failed = results.length - filled;
+    const resultByFieldId = new Map(results.map((item) => [String(item.stableFieldId || ''), item]));
+    const filled = fillFields.filter((field) => (
+      resultByFieldId.get(String(field.stableFieldId || field.fieldId || ''))?.ok
+    )).length;
+    const failed = fillFields.length - filled;
+    for (const field of fillFields) {
+      const fieldId = String(field.stableFieldId || field.fieldId || '');
+      const result = resultByFieldId.get(fieldId);
+      const question = String(field.label || field.question || 'Application field').trim();
+      const outcomeIndex = outcomes.findIndex((outcome) => outcome.startsWith(`${question}: `));
+      if (outcomeIndex < 0) continue;
+      if (!result?.ok) {
+        const reason = {
+          option_not_found: 'no matching option was available',
+          option_disabled: 'the matching option is disabled',
+          selection_not_applied: 'the page did not confirm the selected value',
+          value_not_applied: 'the page did not retain the value',
+          element_not_found: 'the field could not be located',
+        }[result?.reason] || 'the field could not be filled';
+        outcomes[outcomeIndex] = `${question}: could not be filled (${reason}); complete it manually.`;
+      } else if (outcomes[outcomeIndex].includes('queued from Account profile')) {
+        outcomes[outcomeIndex] = outcomes[outcomeIndex].replace('queued from Account profile', 'filled from Account profile');
+      } else if (outcomes[outcomeIndex].includes('Manager-reviewed GPT answer queued')) {
+        outcomes[outcomeIndex] = outcomes[outcomeIndex].replace('Manager-reviewed GPT answer queued', 'Manager-reviewed GPT answer filled');
+      } else if (outcomes[outcomeIndex].includes('Manager-approved generated document queued for upload')) {
+        outcomes[outcomeIndex] = outcomes[outcomeIndex].replace(
+          'Manager-approved generated document queued for upload',
+          'Manager-approved generated document uploaded'
+        );
+      }
+    }
     fillSummary = `Filled ${filled} field(s); ${failed} could not be filled.`;
   }
   if (gptResult.taskId) {
@@ -1792,7 +2321,7 @@ async function sendScannerChatGptTask({ taskId, jobTabId, prompt }) {
     if (!started?.started) {
       throw new Error(started?.error || 'Could not start the ChatGPT Scanner handoff.');
     }
-    return await dispatchWaiter;
+    return { dispatchWaiter };
   } catch (error) {
     const waiter = gptDispatchWaiters.get(taskId);
     if (waiter) {
@@ -2005,6 +2534,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('btn-discover-site-step')?.addEventListener('click', () => {
     scanAndSaveSiteDiscoveryStep();
   });
+  document.getElementById('btn-scanner-output-folder')?.addEventListener('click', () => {
+    selectScannerOutputDirectory().catch((error) => {
+      if (error?.name === 'AbortError') return;
+      const status = document.getElementById('scanner-output-folder-status');
+      if (status) {
+        status.classList.remove('hidden');
+        status.textContent = error?.message || 'Could not select the generated-files folder.';
+      }
+    });
+  });
   document.getElementById('btn-save-and-scan')?.addEventListener('click', () => {
     saveJobAndStartScanner().catch((error) => {
       const errorMessage = error?.message || 'Could not save and start Scanner.';
@@ -2156,6 +2695,20 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
       hideLoading(true);
       applyGptDispatchResult(msg);
+      sendResponse?.({ ok: true });
+      return;
+    }
+    if (msg.type === 'QTS_SCANNER_JOB_PROGRESS') {
+      if (Number(msg.jobTabId) === Number(targetTabId)) {
+        if (typeof msg.message === 'string') {
+          for (const id of ['scanner-save-status', 'site-discovery-status']) {
+            const status = document.getElementById(id);
+            if (!status) continue;
+            status.textContent = msg.message;
+            status.classList.remove('hidden');
+          }
+        }
+      }
       sendResponse?.({ ok: true });
       return;
     }
@@ -5376,6 +5929,15 @@ function showLogin() {
 function updateFeatureGatedControls(user) {
   const managerMode = user?.role === 'manager';
   const scannerUnavailable = managerMode && !managerExtensionFeatures.canUseScanner;
+  const outputFolderButton = document.getElementById('btn-scanner-output-folder');
+  outputFolderButton?.classList.toggle('hidden', !managerMode || scannerUnavailable);
+  if (managerMode && !scannerUnavailable) {
+    restoreScannerOutputFolderStatus().catch((error) => {
+      console.warn('Could not restore the Scanner output-folder setting:', error);
+    });
+  } else {
+    document.getElementById('scanner-output-folder-status')?.classList.add('hidden');
+  }
   const canManageHighlights = managerMode && managerExtensionFeatures.canManageTextHighlights;
   const scannerSection = document.getElementById('site-discovery');
   scannerSection?.classList.toggle('hidden', scannerUnavailable);

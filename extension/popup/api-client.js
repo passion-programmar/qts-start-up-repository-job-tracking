@@ -123,46 +123,6 @@ async function fetchApplicationDocument(applicationId, docType) {
     return { success: false, message: 'Cannot download document from server.' };
   }
 
-  async function fetchManagerGptTaskDocument(taskId, documentType) {
-    const [serverUrl, token] = await Promise.all([getServerUrl(), getToken()]);
-    const url = `${serverUrl.replace(/\/$/, '')}/api/v2/gpt-application-tasks/${encodeURIComponent(taskId)}/documents/${encodeURIComponent(documentType)}`;
-    let response;
-    try {
-      response = await fetch(url, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-    } catch {
-      return { success: false, message: 'Cannot download the generated document from server.' };
-    }
-
-    if (!response.ok) {
-      let message = `Generated document download failed (${response.status}).`;
-      try {
-        const err = await response.json();
-        if (err.message) message = err.message;
-      } catch {
-        // ignore
-      }
-      return { success: false, message };
-    }
-
-    const blob = await response.blob();
-    const bytes = new Uint8Array(await blob.arrayBuffer());
-    let binary = '';
-    const chunkSize = 0x8000;
-    for (let i = 0; i < bytes.length; i += chunkSize) {
-      binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
-    }
-    const disposition = response.headers.get('Content-Disposition') || '';
-    const match = disposition.match(/filename="?([^"]+)"?/i);
-    return {
-      success: true,
-      fileName: match?.[1] || (documentType === 'cover_letter' ? 'cover-letter.pdf' : 'resume.pdf'),
-      mimeType: blob.type || 'application/pdf',
-      base64: btoa(binary),
-    };
-  }
-
   if (!response.ok) {
     let message = `Document download failed (${response.status}).`;
     try {
@@ -194,6 +154,46 @@ async function fetchApplicationDocument(applicationId, docType) {
     fileName,
     mimeType: blob.type || 'application/pdf',
     base64,
+  };
+}
+
+async function fetchManagerGptTaskDocument(taskId, documentType) {
+  const [serverUrl, token] = await Promise.all([getServerUrl(), getToken()]);
+  const url = `${serverUrl.replace(/\/$/, '')}/api/v2/gpt-application-tasks/${encodeURIComponent(taskId)}/documents/${encodeURIComponent(documentType)}`;
+  let response;
+  try {
+    response = await fetch(url, {
+      headers: token ? { Authorization: 'Bearer ' + token } : {},
+    });
+  } catch {
+    return { success: false, message: 'Cannot download the generated document from server.' };
+  }
+
+  if (!response.ok) {
+    let message = `Generated document download failed (${response.status}).`;
+    try {
+      const err = await response.json();
+      if (err.message) message = err.message;
+    } catch {
+      // ignore
+    }
+    return { success: false, message };
+  }
+
+  const blob = await response.blob();
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  const disposition = response.headers.get('Content-Disposition') || '';
+  const match = disposition.match(/filename="?([^"]+)"?/i);
+  return {
+    success: true,
+    fileName: match?.[1] || (documentType === 'cover_letter' ? 'cover-letter.pdf' : 'resume.pdf'),
+    mimeType: blob.type || 'application/pdf',
+    base64: btoa(binary),
   };
 }
 
@@ -298,6 +298,10 @@ window.api = {
     apiRequest('POST', `/api/v2/gpt-application-tasks/${encodeURIComponent(taskId)}/scanner-acknowledge`, {}),
   getManagerGptTaskStatus: (taskId) =>
     apiRequest('GET', `/api/v2/gpt-application-tasks/${encodeURIComponent(taskId)}/extension-status`),
+  recordManagerGptTaskDownloads: (taskId, documents) =>
+    apiRequest('POST', `/api/v2/gpt-application-tasks/${encodeURIComponent(taskId)}/downloads`, { documents }),
+  getManagerGptTaskDownloads: (taskId) =>
+    apiRequest('GET', `/api/v2/gpt-application-tasks/${encodeURIComponent(taskId)}/downloads`),
   fetchManagerGptTaskDocument: (taskId, documentType) =>
     fetchManagerGptTaskDocument(taskId, documentType),
   fetchApplicationDocument: (applicationId, docType) =>

@@ -1,7 +1,8 @@
 // Shared ChatGPT unified-composer handoff (ProseMirror #prompt-textarea).
 // Loaded in content scripts and service worker (importScripts).
 (function initQtsChatGptComposerHandoff(global) {
-  if (global.__qtsChatGptComposerHandoff) return;
+  const HANDOFF_VERSION = 6;
+  if (global.__qtsChatGptComposerHandoff?.version === HANDOFF_VERSION) return;
 
   function cleanText(value) {
     return String(value || '').replace(/\s+/g, ' ').trim();
@@ -21,26 +22,24 @@
     return cleanText(editor.textContent || editor.innerText || '');
   }
 
-  function findUnifiedComposerEditor() {
-    const form = document.querySelector('form[data-type="unified-composer"]');
-    if (form) {
-      const editor = form.querySelector(
-        'div#prompt-textarea.ProseMirror[contenteditable="true"],' +
-        'div.ProseMirror#prompt-textarea[role="textbox"],' +
-        'div.ProseMirror[contenteditable="true"][role="textbox"]'
-      );
-      if (editor instanceof HTMLElement && isVisible(editor)) return editor;
-    }
-
+  function findUnifiedComposerEditor(expectedText = '') {
     const selectors = [
+      'div.ProseMirror[contenteditable="true"][role="textbox"][aria-label="Ask ChatGPT"]',
+      'div[contenteditable="true"][role="textbox"][aria-label="Ask ChatGPT"]',
+      'div.ProseMirror[contenteditable="true"][role="textbox"]',
       'div#prompt-textarea.ProseMirror[contenteditable="true"]',
       '#thread-bottom div#prompt-textarea[contenteditable="true"]',
       'form[data-type="unified-composer"] div[contenteditable="true"]',
       'div[role="textbox"][contenteditable="true"]#prompt-textarea',
     ];
+    const editors = new Set();
     for (const selector of selectors) {
-      const el = document.querySelector(selector);
-      if (el instanceof HTMLElement && el.isContentEditable && isVisible(el)) return el;
+      const nodes = document.querySelectorAll(selector);
+      for (const el of nodes) {
+        if (el instanceof HTMLElement && el.isContentEditable && isVisible(el)) {
+          editors.add(el);
+        }
+      }
     }
 
     const placeholder = document.querySelector(
@@ -48,10 +47,28 @@
     );
     if (placeholder instanceof HTMLElement) {
       const editable = placeholder.closest('[contenteditable="true"]');
-      if (editable instanceof HTMLElement && isVisible(editable)) return editable;
+      if (editable instanceof HTMLElement && editable.isContentEditable && isVisible(editable)) {
+        editors.add(editable);
+      }
     }
 
-    return null;
+    if (!editors.size) return null;
+
+    const candidates = [...editors];
+    const promptPrefix = cleanText(expectedText).slice(0, 32);
+    if (promptPrefix) {
+      const matchingEditor = candidates.find((editor) => readEditorText(editor).includes(promptPrefix));
+      if (matchingEditor) return matchingEditor;
+    }
+
+    const editorWithSendButton = candidates.find((editor) => findSendButton(editor));
+    return editorWithSendButton || candidates[candidates.length - 1];
+  }
+
+  function findAssistantMessages() {
+    const semanticMessages = [...document.querySelectorAll('[data-message-author-role="assistant"]')];
+    if (semanticMessages.length) return semanticMessages;
+    return [...document.querySelectorAll('[data-markdown-text-style="assistant-message"]')];
   }
 
   function activateComposer(editor) {
@@ -103,6 +120,38 @@
         data: text,
       }));
     }
+  }
+
+  function clearComposer(editor) {
+    activateComposer(editor);
+    try {
+      document.execCommand('selectAll', false, null);
+      document.execCommand('delete', false, null);
+    } catch {
+      // Continue to the fallback textarea and verify the editor was cleared.
+    }
+    dispatchInput(editor, '', 'deleteContent');
+    if (!readEditorText(editor)) return true;
+
+    const form = editor.closest('form[data-type="unified-composer"]');
+    const fallback = form?.querySelector('textarea[name="prompt-textarea"]');
+    if (fallback instanceof HTMLTextAreaElement) {
+      const nativeSetter = Object.getOwnPropertyDescriptor(
+        window.HTMLTextAreaElement.prototype,
+        'value'
+      )?.set;
+      if (nativeSetter) nativeSetter.call(fallback, '');
+      else fallback.value = '';
+      fallback.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        composed: true,
+        inputType: 'deleteContent',
+        data: null,
+      }));
+      fallback.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    editor.focus();
+    return !readEditorText(editor);
   }
 
   function syncFallbackTextarea(editor, text) {
@@ -245,13 +294,17 @@
     return syncFallbackTextarea(editor, text);
   }
 
-  function findSendButton() {
-    const form = document.querySelector('form[data-type="unified-composer"]');
+  function findSendButton(editor) {
+    const form = editor?.closest('form[data-chatgpt-composer], form[data-type="unified-composer"]')
+      || editor?.closest('form')
+      || document.querySelector('form[data-chatgpt-composer], form[data-type="unified-composer"]');
     const scope = form || document;
     const selectors = [
       'button[data-testid="send-button"]',
+      'button[aria-label="Send"]',
       'button[aria-label="Send prompt"]',
       'button[aria-label="Send message"]',
+      'button[type="submit"]',
       'button.composer-submit-button-color',
     ];
     for (const selector of selectors) {
@@ -260,7 +313,13 @@
         if (!(el instanceof HTMLButtonElement) || !isVisible(el) || el.disabled) continue;
         if (isVoiceOrDictationButton(el)) continue;
         const label = (el.getAttribute('aria-label') || '').toLowerCase();
-        if (label.includes('send') || el.getAttribute('data-testid') === 'send-button') return el;
+        if (
+          label.includes('send')
+          || el.getAttribute('data-testid') === 'send-button'
+          || (el.getAttribute('type') === 'submit' && form?.matches('[data-chatgpt-composer], [data-type="unified-composer"]'))
+        ) {
+          return el;
+        }
       }
     }
     return null;
@@ -276,8 +335,8 @@
 
   function trySubmit(editor) {
     let submitAttempted = false;
-    spinWait(() => Boolean(findSendButton()), 3000);
-    const sendBtn = findSendButton();
+    spinWait(() => Boolean(findSendButton(editor)), 3000);
+    const sendBtn = findSendButton(editor);
     if (sendBtn) {
       submitAttempted = true;
       sendBtn.click();
@@ -319,6 +378,196 @@
     return { sent: false, method: 'unified_needs_manual_send', submitAttempted };
   }
 
+  function isGenerating() {
+    return Boolean(
+      document.querySelector('[data-testid="stop-button"]')
+      || [...document.querySelectorAll('button')].some((button) =>
+        /stop generating|stop streaming/i.test(button.getAttribute('aria-label') || '')
+      )
+    );
+  }
+
+  function countUserMessages() {
+    const selectors = [
+      '[data-message-author-role="user"]',
+      '[data-markdown-text-tone="user-message"]',
+      'article[data-turn="user"]',
+      '[data-testid*="conversation-turn-user" i]',
+      '[data-testid="user-message"]',
+    ];
+    const messages = new Set();
+    for (const selector of selectors) {
+      document.querySelectorAll(selector).forEach((message) => messages.add(message));
+    }
+    return messages.size;
+  }
+
+  async function waitForSubmission(editor, initialUserMessageCount, timeoutMs) {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+      if (isGenerating()) return { sent: true, method: 'chatgpt_generating' };
+      if (countUserMessages() > initialUserMessageCount) {
+        return { sent: true, method: 'user_message_added' };
+      }
+      if (editor?.isConnected && !readEditorText(editor)) {
+        return { sent: true, method: 'composer_cleared' };
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 100));
+    }
+    return null;
+  }
+
+  async function trySubmitAsync(editor, initialUserMessageCount) {
+    const sendBtn = findSendButton(editor);
+    if (sendBtn) {
+      sendBtn.click();
+      const clickSubmission = await waitForSubmission(editor, initialUserMessageCount, 1500);
+      if (clickSubmission) return clickSubmission;
+
+      const form = editor.closest('form[data-chatgpt-composer], form[data-type="unified-composer"]')
+        || editor.closest('form');
+      if (
+        editor.isConnected
+        && readEditorText(editor)
+        && countUserMessages() === initialUserMessageCount
+        && !isGenerating()
+        && form instanceof HTMLFormElement
+        && typeof form.requestSubmit === 'function'
+      ) {
+        try {
+          form.requestSubmit(sendBtn);
+        } catch (error) {
+          console.warn('[QTS Scanner] ChatGPT form submission fallback failed:', error);
+          try {
+            form.requestSubmit();
+          } catch (fallbackError) {
+            console.warn('[QTS Scanner] ChatGPT form submission without a button failed:', fallbackError);
+          }
+        }
+        const formSubmission = await waitForSubmission(editor, initialUserMessageCount, 3000);
+        if (formSubmission) {
+          return { ...formSubmission, method: `form_${formSubmission.method}` };
+        }
+      }
+
+      return {
+        sent: false,
+        method: 'send_uncertain',
+        submitAttempted: true,
+        sendButtonFound: true,
+        sendButtonLabel: sendBtn.getAttribute('aria-label') || '',
+        sendButtonType: sendBtn.getAttribute('type') || '',
+      };
+    }
+
+    editor.focus();
+    for (const eventType of ['keydown', 'keypress', 'keyup']) {
+      editor.dispatchEvent(new KeyboardEvent(eventType, {
+        key: 'Enter',
+        code: 'Enter',
+        keyCode: 13,
+        which: 13,
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+      }));
+    }
+    return await waitForSubmission(editor, initialUserMessageCount, 3000)
+      || {
+        sent: false,
+        method: 'manual_send_required',
+        submitAttempted: true,
+        sendButtonFound: false,
+      };
+  }
+
+  async function runUnifiedComposerHandoffAsync(text, options = {}) {
+    const message = cleanText(text);
+    if (!message) {
+      return { ok: false, sent: false, phase: 'empty', error: 'Empty message.' };
+    }
+
+    const editor = findUnifiedComposerEditor(message);
+    if (!editor) {
+      return {
+        ok: false,
+        sent: false,
+        phase: 'no_editor',
+        error: 'Waiting for ChatGPT composer…',
+        pageUrl: location.href,
+      };
+    }
+
+    const prefix = message.slice(0, 8);
+    const before = readEditorText(editor);
+    if (before && before !== message && !clearComposer(editor)) {
+      return {
+        ok: false,
+        sent: false,
+        phase: 'clear_failed',
+        error: 'Could not clear the existing ChatGPT draft; the Scanner prompt was not sent.',
+        editorText: before,
+        pageUrl: location.href,
+      };
+    }
+    if (before !== message && !insertIntoProseMirror(editor, message)) {
+      return {
+        ok: false,
+        sent: false,
+        phase: 'insert_failed',
+        error: 'Could not type into ProseMirror composer.',
+        pageUrl: location.href,
+        editorText: readEditorText(editor),
+      };
+    }
+
+    const after = readEditorText(editor);
+    if (after !== message) {
+      return {
+        ok: false,
+        sent: false,
+        phase: 'insert_failed',
+        error: 'The complete Scanner prompt did not appear in the ChatGPT composer.',
+        pageUrl: location.href,
+        editorText: after,
+      };
+    }
+
+    const initialUserMessageCount = countUserMessages();
+    if (typeof options.onSending === 'function') {
+      try {
+        await options.onSending();
+      } catch (error) {
+        console.warn('[QTS Scanner] Could not show the sending progress update:', error);
+      }
+    }
+    const submit = await trySubmitAsync(editor, initialUserMessageCount);
+    if (!submit.sent) {
+      return {
+        ok: true,
+        sent: false,
+        needsManualSend: true,
+        method: submit.method,
+        phase: 'typed_needs_send',
+        submitAttempted: Boolean(submit.submitAttempted),
+        sendButtonFound: Boolean(submit.sendButtonFound),
+        sendButtonLabel: submit.sendButtonLabel || '',
+        sendButtonType: submit.sendButtonType || '',
+        editorText: readEditorText(editor),
+        pageUrl: location.href,
+      };
+    }
+
+    return {
+      ok: true,
+      sent: true,
+      method: submit.method,
+      phase: 'typed_and_sent',
+      submitAttempted: true,
+      pageUrl: location.href,
+    };
+  }
+
   function runUnifiedComposerHandoff(text) {
     const message = cleanText(text);
     if (!message) {
@@ -338,7 +587,17 @@
 
     const prefix = message.slice(0, 8);
     const before = readEditorText(editor);
-    if (!before.includes(prefix)) {
+    if (before && before !== message && !clearComposer(editor)) {
+      return {
+        ok: false,
+        sent: false,
+        phase: 'clear_failed',
+        error: 'Could not clear the existing ChatGPT draft; the Scanner prompt was not sent.',
+        editorText: before,
+        pageUrl: location.href,
+      };
+    }
+    if (before !== message) {
       if (!insertIntoProseMirror(editor, message)) {
         return {
           ok: false,
@@ -352,12 +611,12 @@
     }
 
     const after = readEditorText(editor);
-    if (!after.includes(prefix)) {
+    if (after !== message) {
       return {
         ok: false,
         sent: false,
         phase: 'insert_failed',
-        error: 'Text did not appear in composer.',
+        error: 'The complete Scanner prompt did not appear in the ChatGPT composer.',
         pageUrl: location.href,
         editorText: after,
       };
@@ -389,10 +648,16 @@
   }
 
   global.__qtsChatGptComposerHandoff = {
+    version: HANDOFF_VERSION,
     runUnifiedComposerHandoff,
+    runUnifiedComposerHandoffAsync,
     findUnifiedComposerEditor,
+    findAssistantMessages,
     insertIntoProseMirror,
     activateComposer,
     readEditorText,
   };
+  if (typeof module === 'object' && module.exports) {
+    module.exports = global.__qtsChatGptComposerHandoff;
+  }
 })(typeof self !== 'undefined' ? self : window);

@@ -31,7 +31,11 @@ Its main current product loop is:
 4. Scanner observes the form, asks the Manager to decide how fields should be
    handled, and may fill only confirmed fields on the current page.
 5. Regular ChatGPT may generate requested answers or documents for that
-   job-scoped task; the Manager reviews those outputs before Scanner uses them.
+   job-scoped task; the Manager reviews/edits each answer and approves documents
+   in the Scanner panel before Scanner uses them.
+   While ChatGPT works in a background tab, Scanner mirrors progress and
+   errors onto the application page so the Manager can keep the review panel
+   open.
 6. QTS does **not** automatically move to another page or submit the
    application. The Manager records the outcome in the job-tracking workflow.
 7. If an application is confirmed as submitted, the job moves into Bids, where
@@ -349,9 +353,12 @@ sequenceDiagram
     E->>G: Send generated task prompt
     G-->>E: Return JSON answer/document package
     E->>A: Submit package with Manager bearer token
-    A->>D: Validate fields, save package and task-scoped documents
-    E->>A: Poll task status / retrieve approved task output
-    A-->>E: Generated answers or document bytes
+    A->>D: Validate fields and save task package/document source JSON
+    E->>A: Retrieve generated resume and cover-letter PDFs
+    A-->>E: Rendered PDF bytes (not persisted on the server for Scanner)
+    E->>E: Download PDFs and cache bytes in extension IndexedDB
+    E->>A: Record browser-reported local file paths
+    A->>D: Save task-scoped download metadata
     M->>E: Review/edit answer; approve or reject each document
     E->>E: Fill only confirmed matched fields on the visible step
 ```
@@ -370,9 +377,57 @@ Important controls include:
   system-role instruction; without an assignment, the extension supplies its
   built-in default. Candidate profile data takes precedence over sample
   identity/contact details in an assigned prompt.
+- During the ChatGPT handoff, a persistent QTS status card on the ChatGPT page
+  reports opening, composer readiness, typing, sending, generation, response
+  parsing, and package saving. The handoff recognizes both the `#prompt-textarea`
+  composer and ChatGPT's current `Ask ChatGPT` ProseMirror editor inside
+  `form[data-chatgpt-composer]`, then locates the form's `Send` submit button.
+  ChatGPT opens in a background tab so the Scanner popup remains available to
+  review the returned answers/documents and apply approved values to the job
+  page. Leave the Scanner popup open while ChatGPT works; the job page also
+  shows progress notices.
+  The composer helper is versioned so an updated extension can replace an
+  earlier helper in an already-open ChatGPT tab. Sending is confirmed by
+  ChatGPT generation, a new user message, or the composer clearing after
+  submission. User-message detection supports both ChatGPT's legacy
+  `data-message-author-role="user"` marker and its
+  `data-markdown-text-tone="user-message"` rendering. If the
+  Send click produces no submission evidence and the prompt is still in the
+  composer, the helper tries the same composer form's native submit path once
+  before reporting an ambiguous send. Response reading supports both
+  ChatGPT's assistant-role message marker and its
+  `data-markdown-text-style="assistant-message"` rendering.
+  A retry reuses the task's existing ChatGPT tab, or finds an open tab with an
+  exact matching draft. If the selected composer contains different unsent
+  text, Scanner clears it, inserts the current prompt, and verifies the exact
+  prompt is present before sending. If clearing fails, Scanner stops without
+  sending. A task still waiting without a package can be retried only after the
+  Manager confirms the earlier prompt was not submitted and ChatGPT is not
+  generating.
+  If the send remains ambiguous, the extension does not retry automatically;
+  the card reports whether it found and clicked the Send button and asks the
+  Manager to check the conversation before taking action.
 - Resume experience bullets may contain `**bold**` keyword markup. The task
   PDF renderer converts that markup to bold text rather than printing the
   asterisks.
+- Each Scanner GPT task requests both a tailored resume and a cover letter,
+  even when the current form step has no document upload field. The API saves
+  the structured generated document data with the task and renders each PDF
+  on demand; it does not write new Scanner PDF bytes to the legacy
+  `gpt_application_task_documents` table. Existing legacy PDF rows are not
+  deleted.
+- By default, Chrome saves generated files in its configured Downloads folder;
+  the Manager may optionally choose Music or another accessible folder using
+  the extension's directory picker. Files are written under
+  `QTS_Startup/<Manager name>/<Account name>/<date_time_job title_company name>/`.
+  It names the resume `<Account name>.pdf`, the cover letter
+  `<Account name>_Cover_Letter.pdf`, and the job description
+  `<job title>_<company name>.txt`. The extension caches the PDF bytes in
+  IndexedDB and uses those same bytes for Manager-approved form uploads; the
+  browser does not provide a local absolute path for form upload. Only the
+  resume's local display path is recorded in
+  `gpt_application_task_document_downloads`. This is machine-specific
+  metadata, not a path the server can open or transfer to another computer.
 - A task already active or closed cannot be overwritten by a new Scanner page.
 - Task answers must reference fields on the current page, and the package is
   validated before it is stored.

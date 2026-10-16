@@ -344,7 +344,7 @@ const TABLES = {
   },
   gpt_application_task_documents: {
     label: 'GPT application documents',
-    description: 'Generated resume and cover-letter files. Binary file content is protected from direct editing here.',
+    description: 'Legacy generated resume and cover-letter PDF files. New Scanner documents are rendered on demand and are not stored here.',
     columns: ['task_id', 'document_type', 'file_name', 'content', 'updated_at'],
     searchColumns: ['task_id', 'document_type', 'file_name'],
     orderBy: 'updated_at',

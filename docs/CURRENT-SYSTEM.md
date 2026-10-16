@@ -120,7 +120,14 @@ tables listed above are kept. Legacy tables are not recreated by migrations.
   its unresolved-field notes into the new page context. Scanner claims only
   the selected Account's exact `todo` row through the existing Apply-run lock;
   later step scans resume that same Scanner run rather than starting another
-  one. These boundaries also apply to Workable.
+  one. These boundaries also apply to Workable. By default, Chrome saves the
+  generated files under
+  `Downloads/QTS_Startup/<Manager name>/<Account name>/<date_time_job title_company name>/`.
+  The resume is named `<Account name>.pdf`, the cover letter
+  `<Account name>_Cover_Letter.pdf`, and the job description
+  `<job title>_<company name>.txt`. Managers may optionally select another
+  local folder. The extension caches generated PDF bytes for review and form
+  upload; only the resume path is recorded in the task database.
 - Generic read-only site-template discovery remains available to other
   extension users. It records structural field/step checkpoints only; it does
   not save typed answers, fill fields, navigate, or submit.

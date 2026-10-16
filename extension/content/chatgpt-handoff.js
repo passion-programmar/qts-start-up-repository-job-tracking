@@ -509,6 +509,17 @@
     { id: 'finished', label: 'Task finished' },
   ];
 
+  const SCANNER_PIPELINE_STEPS = [
+    { id: 'scanner-opening', label: 'Opening ChatGPT' },
+    { id: 'scanner-composer', label: 'Waiting for ChatGPT composer' },
+    { id: 'scanner-typing', label: 'Typing Scanner prompt' },
+    { id: 'scanner-sending', label: 'Sending prompt' },
+    { id: 'scanner-generating', label: 'Waiting for ChatGPT response' },
+    { id: 'scanner-reading', label: 'Reading response' },
+    { id: 'scanner-saving', label: 'Saving answer package' },
+    { id: 'scanner-complete', label: 'Answer package saved' },
+  ];
+
   const GPT_PHASE_STEP_INDEX = {
     loading: 0,
     loaded: 0,
@@ -520,6 +531,14 @@
     running: 4,
     finished: 5,
     error: -1,
+    'scanner-opening': 0,
+    'scanner-composer': 1,
+    'scanner-typing': 2,
+    'scanner-sending': 3,
+    'scanner-generating': 4,
+    'scanner-reading': 5,
+    'scanner-saving': 6,
+    'scanner-complete': 7,
   };
 
   const GPT_STATUS_PHASES = {
@@ -533,6 +552,15 @@
     running: { message: 'Running GPT Actions…', type: 'info', label: 'Running' },
     finished: { message: 'Task finished successfully', type: 'success', label: 'Done' },
     error: { message: 'Task failed', type: 'error', label: 'Error' },
+    'scanner-opening': { message: 'Opening ChatGPT…', type: 'info', label: 'Scanner' },
+    'scanner-composer': { message: 'Waiting for ChatGPT composer…', type: 'info', label: 'Scanner' },
+    'scanner-typing': { message: 'Typing Scanner prompt…', type: 'info', label: 'Scanner' },
+    'scanner-sending': { message: 'Sending Scanner prompt…', type: 'info', label: 'Scanner' },
+    'scanner-generating': { message: 'ChatGPT is generating a response…', type: 'info', label: 'Scanner' },
+    'scanner-reading': { message: 'Reading ChatGPT response…', type: 'info', label: 'Scanner' },
+    'scanner-saving': { message: 'Saving answer package…', type: 'info', label: 'Scanner' },
+    'scanner-complete': { message: 'Answer package saved. Return to the application to review it.', type: 'success', label: 'Scanner' },
+    'scanner-error': { message: 'Scanner could not complete the ChatGPT step.', type: 'error', label: 'Scanner error' },
   };
 
   let gptStatusFinishTimer = null;
@@ -552,6 +580,12 @@
     return GPT_PHASE_STEP_INDEX[String(phase || '').toLowerCase()] ?? 0;
   }
 
+  function getStatusPipeline(phase) {
+    return String(phase || '').startsWith('scanner-')
+      ? SCANNER_PIPELINE_STEPS
+      : GPT_PIPELINE_STEPS;
+  }
+
   function syncCompletedSteps(phase, taskId) {
     if (taskId && taskId !== gptStatusTaskId) {
       gptStatusTaskId = taskId;
@@ -561,18 +595,19 @@
         window.__qtsGptToastedPhases.clear();
       }
     }
+    const pipeline = getStatusPipeline(phase);
     const idx = getPhaseStepIndex(phase);
-    if (phase === 'finished') {
-      gptStatusActiveIndex = GPT_PIPELINE_STEPS.length - 1;
-      GPT_PIPELINE_STEPS.forEach((step) => gptCompletedSteps.add(step.id));
+    if (phase === 'finished' || phase === 'scanner-complete') {
+      gptStatusActiveIndex = pipeline.length - 1;
+      pipeline.forEach((step) => gptCompletedSteps.add(step.id));
       return gptStatusActiveIndex;
     }
-    if (phase === 'error') {
+    if (phase === 'error' || phase === 'scanner-error') {
       return gptStatusActiveIndex;
     }
     gptStatusActiveIndex = Math.max(gptStatusActiveIndex, idx);
     for (let i = 0; i < idx; i += 1) {
-      gptCompletedSteps.add(GPT_PIPELINE_STEPS[i].id);
+      gptCompletedSteps.add(pipeline[i].id);
     }
     return idx;
   }
@@ -601,11 +636,14 @@
   }
 
   function renderStepList(phase, message) {
-    const idx = phase === 'error' ? gptStatusActiveIndex : getPhaseStepIndex(phase);
-    const isFinished = phase === 'finished';
-    const isError = phase === 'error';
+    const pipeline = getStatusPipeline(phase);
+    const idx = phase === 'error' || phase === 'scanner-error'
+      ? gptStatusActiveIndex
+      : getPhaseStepIndex(phase);
+    const isFinished = phase === 'finished' || phase === 'scanner-complete';
+    const isError = phase === 'error' || phase === 'scanner-error';
 
-    const items = GPT_PIPELINE_STEPS.map((step, stepIdx) => {
+    const items = pipeline.map((step, stepIdx) => {
       let state = 'pending';
       if (isFinished || gptCompletedSteps.has(step.id)) {
         state = 'done';
@@ -617,7 +655,7 @@
         state = 'done';
       }
 
-      const label = state === 'active' && message ? message : step.label;
+      const label = (state === 'active' || state === 'error') && message ? message : step.label;
       return `<li class="qts-gpt-step qts-gpt-step--${state}">
         ${renderStepIcon(state)}
         <span class="qts-gpt-step-text">${escapeHtml(label)}</span>
@@ -653,6 +691,13 @@
         transform: translateY(0);
       }
       #${GPT_STATUS_HOST_ID} .qts-gpt-status-body { min-width: 0; }
+      #${GPT_STATUS_HOST_ID} .qts-gpt-status-summary {
+        margin-top: 10px;
+        padding-top: 9px;
+        border-top: 1px solid rgba(255,255,255,0.3);
+        font-size: 13px;
+        font-weight: 600;
+      }
       #${GPT_STATUS_HOST_ID} .qts-gpt-status-label {
         font-size: 11px;
         font-weight: 700;
@@ -757,6 +802,7 @@
     const taskId = cleanText(options.taskId || '');
     const persistent = options.persistent !== false
       && phase !== 'finished'
+      && phase !== 'scanner-complete'
       && phase !== 'error'
       && phase !== 'thinking'
       && phase !== 'allowing'
@@ -788,8 +834,11 @@
     host.className = `qts-gpt-status--${type}`;
     host.innerHTML = `
       <div class="qts-gpt-status-body">
-        <div class="qts-gpt-status-label">QTS Job Tracking${taskId ? ` · ${escapeHtml(taskId)}` : ''}</div>
+        <div class="qts-gpt-status-label">QTS Job Tracking${label && label !== 'QTS' ? ` · ${escapeHtml(label)}` : ''}${taskId ? ` · ${escapeHtml(taskId)}` : ''}</div>
         ${renderStepList(phase, message)}
+        ${phase === 'finished' || phase === 'scanner-complete'
+          ? `<div class="qts-gpt-status-summary">${escapeHtml(message)}</div>`
+          : ''}
       </div>
     `;
 

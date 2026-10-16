@@ -32,7 +32,14 @@ Scanner-generated resume PDFs render
 `**bold**` emphasis in experience bullets as bold text.
 Scanner packages can include generated resumes and cover letters even when the
 current application step has no document upload fields; the Manager can review
-the documents for later steps.
+the documents for later steps. By default, Chrome saves all three Scanner
+artifacts under
+`Downloads/QTS_Startup/<Manager name>/<Account name>/<date_time_job title_company name>/`.
+The resume is named `<Account name>.pdf`, the cover letter
+`<Account name>_Cover_Letter.pdf`, and the job description
+`<job title>_<company name>.txt`. The Manager can optionally choose another
+local output folder. The extension caches generated PDF bytes for review and
+form upload, while only the resume path is recorded in the task database.
 The retired Manager Apply queue and
 Workable-specific application handler are not part of this workflow.
 

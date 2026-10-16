@@ -19,6 +19,7 @@ test('prompt includes assigned instructions, scoped task context, and package co
   assert.match(prompt, /never copy sample names\/contact details/);
   assert.match(prompt, /Original Title \| two relevant keywords/);
   assert.match(prompt, /double asterisks/);
+  assert.match(prompt, /Always return both resume and coverLetter/);
 });
 
 test('prompt supplies a safe built-in instruction when no Manager prompt is assigned', () => {
@@ -62,4 +63,11 @@ test('extracts raw and fenced JSON packages, including braces inside strings', (
 test('rejects responses without a valid answers array', () => {
   assert.throws(() => scannerChatGpt.extractPackage('not JSON'), /valid JSON answer package/);
   assert.throws(() => scannerChatGpt.extractPackage('{"unresolvedFields":[]}'), /answers array/);
+});
+
+test('rejects an incomplete JSON response while ChatGPT is still generating', () => {
+  assert.throws(
+    () => scannerChatGpt.extractPackage('{"answers":[{"stableFieldId":"field-1","answer":"Draft'),
+    /valid JSON answer package/
+  );
 });

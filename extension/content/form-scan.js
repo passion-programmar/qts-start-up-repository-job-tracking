@@ -11,7 +11,9 @@
     '[role="textbox"]:not([aria-disabled="true"])',
     '[role="combobox"]:not([aria-disabled="true"])',
     '[role="listbox"]:not([aria-disabled="true"])',
+    '[aria-haspopup="listbox"]:not([aria-disabled="true"])',
     '[role="spinbutton"]:not([aria-disabled="true"])',
+    '[role="radio"]:not([aria-disabled="true"])',
     '[role="checkbox"]:not([aria-disabled="true"])',
     '[role="switch"]:not([aria-disabled="true"])',
   ].join(',');
@@ -211,6 +213,44 @@
     return '';
   }
 
+  function getRadioGroupMembers(el) {
+    const role = cleanText(el.getAttribute('role')).toLowerCase();
+    if (role === 'radio') {
+      const group = el.closest('[role="radiogroup"]');
+      return group
+        ? Array.from(group.querySelectorAll('[role="radio"]'))
+        : Array.from(el.parentElement?.querySelectorAll('[role="radio"]') || [el]);
+    }
+    const name = cleanText(el.name);
+    if (el.type === 'radio' && name) {
+      const scope = el.form || document;
+      return Array.from(scope.querySelectorAll(`input[type="radio"][name="${CSS.escape(name)}"]`));
+    }
+    return [el];
+  }
+
+  function getRadioGroupLabel(el) {
+    const group = el.closest('fieldset, [role="radiogroup"]');
+    if (group) {
+      const legend = group.querySelector('legend');
+      if (legend) return getReadableText(legend);
+      const labelledBy = getAriaLabelledBy(group);
+      if (labelledBy) return labelledBy;
+      const ariaLabel = getAriaLabel(group);
+      if (ariaLabel) return ariaLabel;
+    }
+
+    let node = group || el.parentElement;
+    for (let depth = 0; node && depth < 4; depth += 1) {
+      const clone = node.cloneNode(true);
+      clone.querySelectorAll('input[type="radio"], [role="radio"], label').forEach((child) => child.remove());
+      const text = getReadableText(clone);
+      if (text) return text.slice(0, 220);
+      node = node.parentElement;
+    }
+    return '';
+  }
+
   function getSectionHeading(el) {
     const fieldset = el.closest('fieldset');
     if (fieldset) {
@@ -235,6 +275,13 @@
   }
 
   function resolveLabel(el) {
+    if (inferFieldType(el) === 'radio') {
+      return getRadioGroupLabel(el)
+        || getLabelFromFor(el)
+        || getAriaLabel(el)
+        || getAriaLabelledBy(el)
+        || getNearbyText(el);
+    }
     return getLabelFromFor(el)
       || getAriaLabel(el)
       || getAriaLabelledBy(el)
@@ -245,6 +292,8 @@
 
   function detectRequired(el, label) {
     if (el.required || el.getAttribute('aria-required') === 'true') return true;
+    const radioGroup = el.closest('fieldset, [role="radiogroup"]');
+    if (radioGroup?.required || radioGroup?.getAttribute('aria-required') === 'true') return true;
     const text = `${label} ${el.getAttribute('placeholder') || ''}`;
     if (/\brequired\b|\*/i.test(text)) return true;
     const describedBy = cleanText(el.getAttribute('aria-describedby'));
@@ -301,6 +350,7 @@
 
     if (role === 'switch') return 'switch';
     if (role === 'checkbox') return 'checkbox';
+    if (role === 'radio') return 'radio';
     if (tag === 'textarea') return 'textarea';
     if (tag === 'select') return 'select';
     if (type === 'checkbox' && isSwitchControl(el)) return 'switch';
@@ -308,7 +358,7 @@
     if (type === 'radio') return 'radio';
     if (type === 'file') return 'file';
     if (el.isContentEditable) return 'contenteditable';
-    if (role === 'combobox') return 'combobox';
+    if (role === 'combobox' || el.getAttribute('aria-haspopup') === 'listbox') return 'combobox';
     if (role === 'listbox') return 'listbox';
     if (role === 'textbox') return 'textbox';
     if (type) return type;
@@ -319,14 +369,25 @@
     const tag = el.tagName.toLowerCase();
     if (tag === 'select') {
       return Array.from(el.options || [])
+        .filter((opt) => (
+          !opt.disabled
+          && !opt.parentElement?.disabled
+          && opt.getAttribute?.('aria-disabled') !== 'true'
+          && String(opt.value || '').trim() !== ''
+        ))
         .map((opt) => cleanText(opt.textContent || opt.value))
         .filter(Boolean);
     }
+    if (['combobox', 'listbox'].includes(inferFieldType(el))) {
+      return getCustomSelectOptions(el, false)
+        .filter((option) => !option.disabled && option.getAttribute('aria-disabled') !== 'true')
+        .map((option) => cleanText(option.textContent || option.getAttribute('aria-label') || option.getAttribute('data-value')))
+        .filter(Boolean);
+    }
     if (inferFieldType(el) === 'radio') {
-      const name = el.name;
-      if (!name) return [];
-      return Array.from(document.querySelectorAll(`input[type="radio"][name="${CSS.escape(name)}"]`))
-        .map((input) => resolveLabel(input) || cleanText(input.value))
+      return getRadioGroupMembers(el)
+        .filter((input) => !input.disabled && input.getAttribute('aria-disabled') !== 'true')
+        .map((input) => getRadioOptionLabel(input))
         .filter(Boolean);
     }
     return [];
@@ -338,9 +399,17 @@
       const checked = el.checked || el.getAttribute('aria-checked') === 'true';
       return checked ? 'true' : 'false';
     }
-    if (type === 'radio') return el.checked ? cleanText(el.value) : '';
+    if (type === 'radio') {
+      const selected = getRadioGroupMembers(el).find((input) => (
+        input.checked || input.getAttribute('aria-checked') === 'true'
+      ));
+      return selected ? getRadioOptionLabel(selected) : '';
+    }
     if (type === 'file') return el.files?.[0]?.name || '';
     if (type === 'contenteditable') return cleanText(el.textContent);
+    if (type === 'combobox' || type === 'listbox') {
+      return cleanText(el.getAttribute('aria-valuetext') || el.value || el.textContent);
+    }
     return cleanText(el.value);
   }
 
@@ -356,6 +425,14 @@
       hints.accept = el.getAttribute('accept');
     }
     return hints;
+  }
+
+  function getRadioOptionLabel(el) {
+    return getLabelFromFor(el)
+      || getAriaLabel(el)
+      || getAriaLabelledBy(el)
+      || cleanText(el.value)
+      || getReadableText(el);
   }
 
   function buildDomEvidence(el) {
@@ -587,9 +664,12 @@
   }
 
   function shouldSkipRadio(el) {
-    return inferFieldType(el) === 'radio'
-      && !el.checked
-      && document.querySelectorAll(`input[type="radio"][name="${CSS.escape(el.name || '')}"]`).length > 1;
+    if (inferFieldType(el) !== 'radio') return false;
+    const members = getRadioGroupMembers(el);
+    const representative = members.find((member) => (
+      member.checked || member.getAttribute('aria-checked') === 'true'
+    )) || members[0];
+    return representative !== el;
   }
 
   function getLabelMatchMethod(el) {
@@ -788,7 +868,74 @@
     el.dispatchEvent(new Event('change', { bubbles: true }));
   }
 
-  function fillFieldElement(el, field) {
+  function normalizeOptionValue(value) {
+    return cleanText(value).normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  }
+
+  function getCustomSelectOptions(el, visibleOnly = true) {
+    const ids = [
+      el.getAttribute('aria-controls'),
+      el.getAttribute('aria-owns'),
+    ].flatMap((value) => cleanText(value).split(/\s+/)).filter(Boolean);
+    const roots = ids.map((id) => document.getElementById(id)).filter(Boolean);
+    const listbox = el.closest?.('[role="listbox"]');
+    if (listbox) roots.push(listbox);
+    if (!roots.length) {
+      document.querySelectorAll('[role="listbox"]').forEach((root) => roots.push(root));
+    }
+    const candidates = roots.length
+      ? roots.flatMap((root) => Array.from(root.querySelectorAll('[role="option"], option')))
+      : Array.from(document.querySelectorAll('[role="option"]'));
+    return [...new Set(candidates)].filter((option) => !visibleOnly || isVisible(option));
+  }
+
+  function matchOption(options, value) {
+    const requested = normalizeOptionValue(value);
+    if (!requested) return null;
+    const candidates = options.map((option) => ({
+      option,
+      text: normalizeOptionValue(option.textContent || option.getAttribute?.('aria-label')),
+      value: normalizeOptionValue(option.value || option.getAttribute?.('data-value')),
+    }));
+    const exact = candidates.filter((candidate) => candidate.text === requested || candidate.value === requested);
+    if (exact.length === 1) return exact[0].option;
+    if (exact.length > 1) return null;
+    const partial = candidates.filter((candidate) => (
+      (candidate.text && candidate.text.includes(requested))
+      || (candidate.value && candidate.value === requested)
+    ));
+    return partial.length === 1 ? partial[0].option : null;
+  }
+
+  async function fillCustomSelect(el, value) {
+    let options = getCustomSelectOptions(el);
+    if (!options.length) {
+      if (el.getAttribute('aria-expanded') !== 'true') el.click?.();
+      const deadline = Date.now() + 1000;
+      do {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        options = getCustomSelectOptions(el);
+      } while (!options.length && Date.now() < deadline);
+    }
+    const option = matchOption(options, value);
+    if (!option || option.disabled || option.getAttribute('aria-disabled') === 'true') {
+      return { ok: false, reason: option ? 'option_disabled' : 'option_not_found' };
+    }
+    const optionText = cleanText(option.textContent || option.getAttribute('aria-label'));
+    const optionValue = cleanText(option.value || option.getAttribute('data-value'));
+    option.click?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const currentValue = normalizeOptionValue(getCurrentValue(el));
+    const requestedValue = normalizeOptionValue(optionText || optionValue);
+    const selected = option.getAttribute('aria-selected') === 'true'
+      || currentValue === requestedValue
+      || Boolean(optionValue && currentValue === normalizeOptionValue(optionValue));
+    return selected
+      ? { ok: true }
+      : { ok: false, reason: 'selection_not_applied' };
+  }
+
+  async function fillFieldElement(el, field) {
     const value = field.fillValue;
     if (value == null || value === '') return { ok: false, reason: 'empty_value' };
 
@@ -805,37 +952,51 @@
         }
         dispatchInputEvents(el);
       }
-      return { ok: true };
+      return (el.checked === true || el.getAttribute('aria-checked') === 'true') === shouldCheck
+        ? { ok: true }
+        : { ok: false, reason: 'selection_not_applied' };
     }
 
     if (fieldType === 'radio') {
-      const name = el.name;
-      const group = name
-        ? Array.from(document.querySelectorAll(`input[type="radio"][name="${CSS.escape(name)}"]`))
-        : [el];
-      const target = group.find((input) => cleanText(input.value).toLowerCase() === String(value).toLowerCase())
-        || group.find((input) => resolveLabel(input).toLowerCase().includes(String(value).toLowerCase()));
+      const target = getRadioGroupMembers(el).find((input) => (
+        normalizeOptionValue(getRadioOptionLabel(input)) === normalizeOptionValue(value)
+        || normalizeOptionValue(input.value) === normalizeOptionValue(value)
+      ));
       if (!target) return { ok: false, reason: 'radio_not_found' };
-      target.checked = true;
+      if (target.getAttribute('role') === 'radio') target.click?.();
+      else target.checked = true;
       dispatchInputEvents(target);
-      return { ok: true };
+      return (target.checked === true || target.getAttribute('aria-checked') === 'true')
+        ? { ok: true }
+        : { ok: false, reason: 'selection_not_applied' };
     }
 
     if (fieldType === 'select') {
       const options = Array.from(el.options || []);
-      const match = options.find((opt) => cleanText(opt.textContent).toLowerCase() === String(value).toLowerCase())
-        || options.find((opt) => cleanText(opt.value).toLowerCase() === String(value).toLowerCase())
-        || options.find((opt) => cleanText(opt.textContent).toLowerCase().includes(String(value).toLowerCase()));
+      const match = matchOption(options, value);
       if (!match) return { ok: false, reason: 'option_not_found' };
-      el.value = match.value;
+      if (match.disabled || match.getAttribute?.('aria-disabled') === 'true') {
+        return { ok: false, reason: 'option_disabled' };
+      }
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set;
+      if (setter) setter.call(el, match.value);
+      else el.value = match.value;
       dispatchInputEvents(el);
-      return { ok: true };
+      return el.value === match.value
+        ? { ok: true }
+        : { ok: false, reason: 'selection_not_applied' };
+    }
+
+    if (fieldType === 'combobox' || fieldType === 'listbox') {
+      return fillCustomSelect(el, value);
     }
 
     if (fieldType === 'contenteditable') {
       el.textContent = String(value);
       dispatchInputEvents(el);
-      return { ok: true };
+      return cleanText(el.textContent) === cleanText(value)
+        ? { ok: true }
+        : { ok: false, reason: 'value_not_applied' };
     }
 
     if (fieldType === 'file') {
@@ -858,7 +1019,9 @@
         transfer.items.add(file);
         el.files = transfer.files;
         dispatchInputEvents(el);
-        return { ok: true };
+        return el.files?.[0]?.name === file.name
+          ? { ok: true }
+          : { ok: false, reason: 'file_upload_failed' };
       } catch {
         return { ok: false, reason: 'file_upload_failed' };
       }
@@ -866,10 +1029,12 @@
 
     setNativeValue(el, String(value));
     dispatchInputEvents(el);
-    return { ok: true };
+    return cleanText(getCurrentValue(el)) === cleanText(value)
+      ? { ok: true }
+      : { ok: false, reason: 'value_not_applied' };
   }
 
-  function fillApplicationFields(fields) {
+  async function fillApplicationFields(fields) {
     const results = [];
     for (const field of fields || []) {
       if (!canFillField(field)) {
@@ -881,7 +1046,7 @@
         results.push({ stableFieldId: field.stableFieldId, ok: false, reason: 'element_not_found' });
         continue;
       }
-      const outcome = fillFieldElement(el, field);
+      const outcome = await fillFieldElement(el, field);
       results.push({ stableFieldId: field.stableFieldId, ...outcome });
     }
     return { results };

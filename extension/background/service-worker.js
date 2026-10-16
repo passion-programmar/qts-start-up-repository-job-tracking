@@ -14,7 +14,8 @@ importScripts(
   '../shared/field-classifier.js',
   '../shared/candidate-matcher.js',
   '../shared/fill-policy.js',
-  '../shared/auto-application-pipeline.js'
+  '../shared/auto-application-pipeline.js',
+  '../shared/chatgpt-composer-handoff.js'
 );
 
 function isExtractablePageUrl(url) {
@@ -1443,11 +1444,71 @@ async function waitForScannerChatGptTab(tabId, timeoutMs = 45000) {
     });
   }
 
+  async function showScannerChatGptStatus(tabId, taskId, phase, message, type = 'info') {
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      try {
+        const result = await chrome.tabs.sendMessage(tabId, {
+          type: 'QTS_GPT_SET_STATUS',
+          taskId,
+          phase,
+          message,
+          statusType: type,
+          label: `v${chrome.runtime.getManifest().version} · handoff ${self.__qtsChatGptComposerHandoff?.version || 'unknown'}`,
+          persistent: phase !== 'scanner-complete',
+        });
+        if (result?.ok) return;
+      } catch (error) {
+        if (attempt === 9) {
+          console.warn('[QTS Scanner] Could not update ChatGPT progress card:', error);
+          return;
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+    console.warn('[QTS Scanner] ChatGPT progress card did not acknowledge the status update.');
+  }
+
+  async function showScannerJobPageStatus(jobTabId, taskId, message, type = 'info') {
+    if (!Number.isInteger(jobTabId)) return;
+
+    chrome.runtime.sendMessage({
+      type: 'QTS_SCANNER_JOB_PROGRESS',
+      jobTabId,
+      taskId,
+      message,
+    }).catch(() => {});
+
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: jobTabId },
+        files: ['content/capture-panel.js'],
+      });
+      await chrome.tabs.sendMessage(jobTabId, {
+        type: 'QTS_CLEAR_PAGE_ALERT',
+        alertId: 'scanner-progress',
+      });
+      const result = await chrome.tabs.sendMessage(jobTabId, {
+        type: 'QTS_SHOW_PAGE_TOAST',
+        message,
+        toastType: type,
+        durationMs: 6000,
+        persistUntilCleared: true,
+        alertId: 'scanner-progress',
+      });
+      if (!result?.ok) {
+        throw new Error(result?.error || 'The application page did not acknowledge the progress update.');
+      }
+    } catch (error) {
+      console.warn('[QTS Scanner] Could not update application-page progress:', error);
+    }
+  }
+
   async function scannerChatGptSnapshot(tabId, baseline) {
     const results = await chrome.scripting.executeScript({
       target: { tabId },
       func: (initial) => {
-        const messages = [...document.querySelectorAll('[data-message-author-role="assistant"]')];
+        const messages = globalThis.__qtsChatGptComposerHandoff?.findAssistantMessages?.()
+          || [...document.querySelectorAll('[data-message-author-role="assistant"], [data-markdown-text-style="assistant-message"]')];
         const last = messages[messages.length - 1];
         const text = String(last?.innerText || last?.textContent || '').trim();
         const generating = Boolean(
@@ -1476,106 +1537,222 @@ async function waitForScannerChatGptTab(tabId, timeoutMs = 45000) {
     if (!self.__qtsScannerChatGpt?.extractPackage) {
       throw new Error('The ChatGPT Scanner response parser is unavailable.');
     }
+    const jobTabId = Number(msg?.jobTabId);
 
-    const chatTab = await chrome.tabs.create({ url: 'https://chatgpt.com/', active: true });
-    if (chatTab?.id == null) throw new Error('Could not open a ChatGPT tab.');
+    const tabStorageKey = `qtsScannerChatGptTab:${taskId}`;
+    const storedTab = await chrome.storage.local.get(tabStorageKey);
+    let chatTab = null;
+    const storedTabId = Number(storedTab[tabStorageKey]);
+    if (Number.isInteger(storedTabId) && storedTabId > 0) {
+      const tabs = await chrome.tabs.query({});
+      chatTab = tabs.find((tab) => tab.id === storedTabId && isChatGptHost(tab.url)) || null;
+      if (!chatTab) await chrome.storage.local.remove(tabStorageKey);
+    }
+    if (!chatTab) {
+      const existingChatTabs = await chrome.tabs.query({
+        url: ['https://chatgpt.com/*', 'https://chat.openai.com/*'],
+      });
+      existingChatTabs.sort((left, right) => Number(right.lastAccessed || 0) - Number(left.lastAccessed || 0));
+      for (const candidate of existingChatTabs) {
+        if (candidate.id == null) continue;
+        try {
+          await chrome.scripting.executeScript({
+            target: { tabId: candidate.id },
+            files: ['shared/chatgpt-composer-handoff.js'],
+          });
+          const matchingDraft = await chrome.scripting.executeScript({
+            target: { tabId: candidate.id },
+            func: (expectedPrompt) => {
+              const composer = globalThis.__qtsChatGptComposerHandoff;
+              const editor = composer?.findUnifiedComposerEditor?.(expectedPrompt);
+              const expected = String(expectedPrompt || '').replace(/\s+/g, ' ').trim();
+              return Boolean(editor && composer.readEditorText?.(editor) === expected);
+            },
+            args: [prompt],
+          });
+          if (matchingDraft[0]?.result) {
+            chatTab = candidate;
+            break;
+          }
+        } catch (error) {
+          console.warn('[QTS Scanner] Could not inspect an existing ChatGPT tab for this task:', error);
+        }
+      }
+    }
+    if (!chatTab) {
+      chatTab = await chrome.tabs.create({ url: 'https://chatgpt.com/', active: false });
+      if (chatTab?.id == null) throw new Error('Could not open a ChatGPT tab.');
+      await chrome.storage.local.set({ [tabStorageKey]: chatTab.id });
+    }
 
     const tabId = chatTab.id;
-    await waitForScannerChatGptTab(tabId);
-    if (chatTab.windowId != null) {
-      await chrome.windows.update(chatTab.windowId, { focused: true, drawAttention: true });
-    }
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      files: ['shared/chatgpt-composer-handoff.js'],
-    });
-    const handoffResults = await chrome.scripting.executeScript({
-      target: { tabId },
-      func: async (message) => {
-        const composer = globalThis.__qtsChatGptComposerHandoff;
-        if (!composer?.runUnifiedComposerHandoff) {
-          return { ok: false, error: 'The ChatGPT composer helper is unavailable.' };
-        }
-        const startedAt = Date.now();
-        while (Date.now() - startedAt < 45000) {
-          const editor = composer.findUnifiedComposerEditor?.();
-          if (!editor) {
-            await new Promise((resolve) => setTimeout(resolve, 300));
-            continue;
+    try {
+      await showScannerChatGptStatus(tabId, taskId, 'scanner-opening', 'Opening ChatGPT for this Scanner task…');
+      await showScannerJobPageStatus(
+        jobTabId,
+        taskId,
+        'Opening ChatGPT in a background tab. Scanner is working; keep this application page open and wait for the review prompt.'
+      );
+      await waitForScannerChatGptTab(tabId);
+      await showScannerChatGptStatus(tabId, taskId, 'scanner-composer', 'Waiting for the ChatGPT message box…');
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        files: ['shared/chatgpt-composer-handoff.js', 'content/chatgpt-handoff.js'],
+      });
+      await showScannerChatGptStatus(tabId, taskId, 'scanner-typing', 'Checking the ChatGPT composer and sending the Scanner prompt…');
+      const handoffResults = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: async (message, taskId) => {
+          const composer = globalThis.__qtsChatGptComposerHandoff;
+          if (!composer?.runUnifiedComposerHandoffAsync) {
+            return { ok: false, error: 'The asynchronous ChatGPT composer helper is unavailable.' };
           }
-          if (composer.readEditorText?.(editor).trim()) {
-            return { ok: false, error: 'The ChatGPT message box already contains unsent text. Clear or send it, then try again.' };
+          const startedAt = Date.now();
+          while (Date.now() - startedAt < 45000) {
+            const editor = composer.findUnifiedComposerEditor?.();
+            if (!editor) {
+              await new Promise((resolve) => setTimeout(resolve, 300));
+              continue;
+            }
+            const generating = Boolean(
+              document.querySelector('[data-testid="stop-button"]')
+              || [...document.querySelectorAll('button')].some((button) =>
+                /stop generating|stop streaming/i.test(button.getAttribute('aria-label') || '')
+              )
+            );
+            if (generating) {
+              return { ok: false, error: 'ChatGPT is already generating a response. Wait for it to finish, then retry.' };
+            }
+            const assistantMessages = composer.findAssistantMessages?.()
+              || [...document.querySelectorAll('[data-message-author-role="assistant"], [data-markdown-text-style="assistant-message"]')];
+            const baseline = {
+              messageCount: assistantMessages.length,
+              lastText: String(assistantMessages[assistantMessages.length - 1]?.innerText || '').trim(),
+            };
+            const result = await composer.runUnifiedComposerHandoffAsync(message, {
+              onSending: () => chrome.runtime.sendMessage({
+                type: 'QTS_SCANNER_CHATGPT_PROGRESS',
+                taskId,
+                phase: 'scanner-sending',
+                message: 'Prompt typed. Sending it to ChatGPT…',
+              }),
+            });
+            if (result.phase === 'no_editor') {
+              await new Promise((resolve) => setTimeout(resolve, 300));
+              continue;
+            }
+            return { ...result, baseline };
           }
-          const generating = Boolean(
-            document.querySelector('[data-testid="stop-button"]')
-            || [...document.querySelectorAll('button')].some((button) =>
-              /stop generating|stop streaming/i.test(button.getAttribute('aria-label') || '')
-            )
-          );
-          if (generating) {
-            return { ok: false, error: 'ChatGPT is already generating a response. Wait for it to finish, then retry.' };
-          }
-          const assistantMessages = [...document.querySelectorAll('[data-message-author-role="assistant"]')];
-          const baseline = {
-            messageCount: assistantMessages.length,
-            lastText: String(assistantMessages[assistantMessages.length - 1]?.innerText || '').trim(),
-          };
-          const result = composer.runUnifiedComposerHandoff(message);
-          if (result.phase === 'no_editor') {
-            await new Promise((resolve) => setTimeout(resolve, 300));
-            continue;
-          }
-          return { ...result, baseline };
-        }
-        return { ok: false, error: 'Timed out waiting for the ChatGPT message box.' };
-      },
-      args: [prompt],
-    });
-    const handoff = handoffResults[0]?.result;
-    if (!handoff?.ok || !handoff.sent) {
-      throw new Error(handoff?.error || 'ChatGPT did not send the Scanner prompt.');
-    }
+          return { ok: false, error: 'Timed out waiting for the ChatGPT message box.' };
+        },
+        args: [prompt, taskId],
+      });
+      const handoff = handoffResults[0]?.result;
+      if (!handoff?.ok || !handoff.sent) {
+        const detail = handoff?.error
+          || (handoff?.method === 'send_uncertain'
+            ? `The ChatGPT Send button${handoff.sendButtonFound ? ` (${handoff.sendButtonLabel || handoff.sendButtonType || 'submit'})` : ''} was clicked, but submission was not confirmed. Check whether the prompt remains in the composer before taking action. Do not start Scanner again until you confirm the message state.`
+            : 'ChatGPT send status is ambiguous. Check the conversation before taking action. If the prompt is still in the composer and no new user message or generation started, click Send once. Do not start Scanner again until you confirm the message state.');
+        throw new Error(detail);
+      }
 
-    const startedAt = Date.now();
-    const timeoutMs = 240000;
-    let previousText = '';
-    let stableSince = 0;
-    let responseText = '';
-    while (Date.now() - startedAt < timeoutMs) {
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-      const snapshot = await scannerChatGptSnapshot(tabId, handoff.baseline);
-      if (!snapshot?.isNew || !snapshot.text || snapshot.generating) {
-        previousText = '';
-        stableSince = 0;
-        continue;
+      await showScannerChatGptStatus(
+        tabId,
+        taskId,
+        'scanner-sending',
+        'ChatGPT accepted the prompt. Confirming the response has started…'
+      );
+      await showScannerJobPageStatus(
+        jobTabId,
+        taskId,
+        'ChatGPT accepted the prompt. Waiting for its answer package; keep this application page open.'
+      );
+      const startedAt = Date.now();
+      const timeoutMs = 240000;
+      let previousText = '';
+      let stableSince = 0;
+      let responseText = '';
+      let packageData = null;
+      let lastPackageError = null;
+      let generationStatusShown = false;
+      while (Date.now() - startedAt < timeoutMs) {
+        await new Promise((resolve) => setTimeout(resolve, 750));
+        const snapshot = await scannerChatGptSnapshot(tabId, handoff.baseline);
+        if (snapshot?.generating && !generationStatusShown) {
+          generationStatusShown = true;
+          await showScannerChatGptStatus(tabId, taskId, 'scanner-generating', 'ChatGPT is generating the Scanner response…');
+          await showScannerJobPageStatus(jobTabId, taskId, 'ChatGPT is generating the Scanner response…');
+        }
+        if (!snapshot?.isNew || !snapshot.text || snapshot.generating) {
+          previousText = '';
+          stableSince = 0;
+          continue;
+        }
+        if (snapshot.text !== previousText) {
+          previousText = snapshot.text;
+          stableSince = Date.now();
+          await showScannerChatGptStatus(tabId, taskId, 'scanner-reading', 'ChatGPT finished. Waiting for the response text to settle…');
+          continue;
+        }
+        if (Date.now() - stableSince >= 5000) {
+          try {
+            packageData = self.__qtsScannerChatGpt.extractPackage(snapshot.text);
+            responseText = snapshot.text;
+            break;
+          } catch (error) {
+            lastPackageError = error instanceof Error ? error.message : String(error);
+          }
+        }
       }
-      if (snapshot.text !== previousText) {
-        previousText = snapshot.text;
-        stableSince = Date.now();
-        continue;
+      if (!responseText) {
+        const parseDetail = lastPackageError
+          ? ` The latest response was not yet a complete valid package: ${lastPackageError}`
+          : '';
+        throw new Error(`Timed out waiting for ChatGPT to finish its Scanner response. Check the ChatGPT tab; do not resend while a response may still be generating.${parseDetail}`);
       }
-      if (Date.now() - stableSince >= 5000) {
-        responseText = snapshot.text;
-        break;
-      }
-    }
-    if (!responseText) throw new Error('Timed out waiting for ChatGPT to finish its Scanner response.');
 
-    const packageData = self.__qtsScannerChatGpt.extractPackage(responseText);
-    const submission = await workerApiRequest(
-      'POST',
-      `/api/v2/gpt-application-tasks/${encodeURIComponent(taskId)}/package`,
-      packageData
-    );
-    if (!submission.success) {
-      throw new Error(submission.message || "The server rejected ChatGPT's Scanner package.");
+      await showScannerChatGptStatus(tabId, taskId, 'scanner-reading', 'Extracting the structured answer package from ChatGPT’s response…');
+      await showScannerJobPageStatus(jobTabId, taskId, 'ChatGPT finished. Reading the structured answer package…');
+      await showScannerChatGptStatus(tabId, taskId, 'scanner-saving', 'Saving ChatGPT’s answer package to this Scanner task…');
+      await showScannerJobPageStatus(jobTabId, taskId, 'Saving ChatGPT’s answer package to this Scanner task…');
+      const submission = await workerApiRequest(
+        'POST',
+        `/api/v2/gpt-application-tasks/${encodeURIComponent(taskId)}/package`,
+        packageData
+      );
+      if (!submission.success) {
+        throw new Error(submission.message || "The server rejected ChatGPT's Scanner package.");
+      }
+      await showScannerChatGptStatus(
+        tabId,
+        taskId,
+        'scanner-complete',
+        'Answer package saved. Return to the application page to review answers and documents.',
+        'success'
+      );
+      await showScannerJobPageStatus(
+        jobTabId,
+        taskId,
+        'Answer package saved. Review the generated answers and documents in the Scanner panel.',
+        'success'
+      );
+      try {
+        await chrome.storage.local.remove(tabStorageKey);
+      } catch (error) {
+        console.warn('[QTS Scanner] Could not clear the completed ChatGPT tab mapping:', error);
+      }
+      return {
+        ok: true,
+        taskId,
+        handoff: { ok: true, sent: true, accepted: true, status: submission.status },
+        package: submission,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Scanner could not complete the ChatGPT step.';
+      await showScannerChatGptStatus(tabId, taskId, 'scanner-error', message, 'error');
+      await showScannerJobPageStatus(jobTabId, taskId, `Scanner could not finish the ChatGPT step: ${message}`, 'error');
+      throw error;
     }
-    return {
-      ok: true,
-      taskId,
-      handoff: { ok: true, sent: true, accepted: true, status: submission.status },
-      package: submission,
-    };
   }
 
 async function runSendGptTask(msg) {
@@ -2057,6 +2234,25 @@ chrome.runtime.onConnect.addListener((port) => {
 });
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.type === 'QTS_SCANNER_CHATGPT_PROGRESS') {
+    const tabId = sender.tab?.id;
+    if (tabId == null || !String(msg.taskId || '').trim()) {
+      sendResponse({ ok: false, error: 'Scanner ChatGPT progress is missing its task or tab.' });
+      return false;
+    }
+    showScannerChatGptStatus(
+      tabId,
+      String(msg.taskId),
+      String(msg.phase || 'scanner-sending'),
+      String(msg.message || 'Sending Scanner prompt…')
+    )
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => {
+        console.warn('[QTS Scanner] Could not update the ChatGPT progress card:', error);
+        sendResponse({ ok: false, error: error?.message || 'Could not update ChatGPT progress.' });
+      });
+    return true;
+  }
   if (msg.type === 'GET_GLOBAL_TEXT_HIGHLIGHTS') {
     refreshGlobalTextHighlights()
       .then(sendResponse)

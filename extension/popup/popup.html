@@ -357,6 +357,39 @@
     #scanner-document-review::backdrop {
       background: rgba(15, 23, 42, 0.58);
     }
+    #scanner-answer-review {
+      width: min(380px, calc(100% - 24px));
+      max-width: 100%;
+      max-height: calc(100vh - 24px);
+      padding: 16px;
+      border: 1px solid #cbd5e1;
+      border-radius: 12px;
+      box-shadow: 0 16px 40px rgba(15, 23, 42, 0.24);
+    }
+    #scanner-answer-review::backdrop {
+      background: rgba(15, 23, 42, 0.58);
+    }
+    #scanner-answer-review-description {
+      color: #475569;
+      font-size: 12px;
+      line-height: 1.45;
+      overflow-wrap: anywhere;
+    }
+    #scanner-answer-review-value {
+      box-sizing: border-box;
+      width: 100%;
+      min-height: 140px;
+      resize: vertical;
+    }
+    #scanner-answer-review-options {
+      box-sizing: border-box;
+      width: 100%;
+      min-height: 38px;
+    }
+    #scanner-answer-review-value[hidden],
+    #scanner-answer-review-options[hidden] {
+      display: none;
+    }
     #scanner-document-preview {
       width: 100%;
       height: min(62vh, 620px);
@@ -574,6 +607,18 @@
       </form>
     </dialog>
 
+    <dialog id="scanner-answer-review" aria-labelledby="scanner-answer-review-title" aria-describedby="scanner-answer-review-description">
+      <h2 id="scanner-answer-review-title">Review application answer</h2>
+      <p id="scanner-answer-review-description"></p>
+      <label id="scanner-answer-review-label" for="scanner-answer-review-value">Edit the answer if needed, then approve it to fill this field.</label>
+      <textarea id="scanner-answer-review-value" rows="7"></textarea>
+      <select id="scanner-answer-review-options" hidden></select>
+      <form method="dialog" class="scanner-document-review-actions">
+        <button class="btn btn-ghost" type="submit" value="skip">Skip this field</button>
+        <button class="btn btn-primary" type="submit" value="approve">Approve selection</button>
+      </form>
+    </dialog>
+
     <!-- Job Form -->
     <div id="job-section" class="hidden">
       <div class="job-mode-actions">
@@ -717,6 +762,8 @@
         <textarea id="f-desc" class="desc-textbox" placeholder="Full job description…" spellcheck="true"></textarea>
         <div class="field-error" id="err-desc">Could not save the description.</div>
       </div>
+      <button class="btn btn-ghost hidden" id="btn-scanner-output-folder" type="button">Choose another files folder (optional)</button>
+      <p class="site-discovery-status hidden" id="scanner-output-folder-status" role="status" aria-live="polite"></p>
       <p class="site-discovery-status hidden" id="scanner-save-status" role="status" aria-live="polite"></p>
     </div>
     </div>
@@ -761,6 +808,9 @@
   <script src="../shared/custom-gpt.js"></script>
   <script src="../shared/account-auth-storage.js"></script>
   <script src="../shared/apply-session-store.js"></script>
+  <script src="../shared/scanner-document-store.js"></script>
+  <script src="../shared/scanner-job-context.js"></script>
+  <script src="../shared/scanner-output-paths.js"></script>
   <script src="api-client.js"></script>
   <script src="learning-review-panel.js"></script>
   <script src="popup.js"></script>
