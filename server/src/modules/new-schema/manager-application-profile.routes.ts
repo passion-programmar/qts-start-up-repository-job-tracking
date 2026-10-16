@@ -68,8 +68,8 @@ const scannerInputValidationSchema = z.object({
   max: z.string().max(500).optional(),
   step: z.string().max(500).optional(),
   pattern: z.string().max(500).optional(),
-  minLength: z.number().int().min(0).max(100000).optional(),
-  maxLength: z.number().int().min(0).max(100000).optional(),
+  minLength: z.number().int().min(0).max(2147483647).optional(),
+  maxLength: z.number().int().min(0).max(2147483647).optional(),
 }).strict();
 
 const scannerFieldObservationSchema = z.object({

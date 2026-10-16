@@ -183,7 +183,12 @@ it('saves reusable question/answers with Manager-scoped template rules and keeps
     fieldType: 'select',
     required: true,
     options: ['Yes', 'No'],
-    validation: { inputType: 'select', inputMode: '', numericOnly: false },
+    validation: {
+      inputType: 'select',
+      inputMode: '',
+      numericOnly: false,
+      maxLength: 524288,
+    },
     section: 'Location',
     selectorHints: { tag: 'select', name: 'relocation' },
     domEvidence: {
@@ -209,7 +214,12 @@ it('saves reusable question/answers with Manager-scoped template rules and keeps
         fieldType: 'select',
         required: true,
         options: ['Yes', 'No'],
-        validation: { inputType: 'select', inputMode: '', numericOnly: false },
+        validation: {
+          inputType: 'select',
+          inputMode: '',
+          numericOnly: false,
+          maxLength: 524288,
+        },
         section: 'Location',
         selectorHints: { tag: 'select', name: 'relocation' },
         domEvidence: {
@@ -379,6 +389,45 @@ it('rejects non-Manager writes and prevents reading another Manager’s rules', 
   assert.deepEqual(response.rules, []);
 });
 
+it('accepts native maximum-length constraints above 100000 in Scanner GPT page context', async () => {
+  const createResponse = await fetch(`${serverUrl}/api/v2/gpt-application-tasks/jobs/${processingJobId}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${managerToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ sourcePlatform: 'scanner.example' }),
+  });
+  assert.equal(createResponse.status, 201);
+  const created = await createResponse.json() as { taskId: string };
+
+  const pageResponse = await fetch(`${serverUrl}/api/v2/gpt-application-tasks/${created.taskId}/page`, {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${managerToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      pageUrl: 'https://scanner.example/apply',
+      pageTitle: 'Scanner Test Job',
+      pageNumber: 1,
+      fields: [{
+        stableFieldId: 'scanner-large-maxlength',
+        label: 'Application response',
+        fieldType: 'text',
+        required: false,
+        validation: {
+          inputType: 'text',
+          inputMode: '',
+          numericOnly: false,
+          maxLength: 524288,
+        },
+      }],
+    }),
+  });
+  assert.equal(pageResponse.status, 200);
+});
+
 it('keeps Scanner GPT generation scoped to the selected job and accepts documents without page upload fields', async () => {
   const createResponse = await fetch(`${serverUrl}/api/v2/gpt-application-tasks/jobs/${processingJobId}`, {
     method: 'POST',
@@ -421,6 +470,7 @@ it('keeps Scanner GPT generation scoped to the selected job and accepts document
         min: '1000',
         max: '10000',
         step: '500',
+        maxLength: 524288,
       },
       reusableAnswerContext: {
         question: 'What are your compensation requirements?',

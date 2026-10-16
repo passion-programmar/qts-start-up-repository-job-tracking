@@ -14,3 +14,6 @@
   instead of returning only a generic message.
 - Accepted and regression-tested the Manager-confirmed field-identity flag in
   strict Scanner rule snapshots.
+- Aligned saved Manager-rule and GPT page-context validation schemas with the
+  browser's supported maximum-length range and tested a native `maxLength` of
+  524288 through both API paths.
