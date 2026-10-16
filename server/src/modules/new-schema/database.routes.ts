@@ -356,6 +356,21 @@ const TABLES = {
       content: { type: 'binary', required: true },
     },
   },
+  gpt_application_task_document_downloads: {
+    label: 'Scanner document download paths',
+    description: 'Local file paths reported by the Manager extension after downloading generated documents. Paths refer to that Manager’s computer.',
+    columns: ['task_id', 'document_type', 'file_name', 'local_path', 'downloaded_at'],
+    searchColumns: ['task_id', 'document_type', 'file_name', 'local_path'],
+    orderBy: 'downloaded_at',
+    primaryKey: ['task_id', 'document_type'],
+    fields: {
+      task_id: { type: 'text', required: true, primaryKey: true, maxLength: 100 },
+      document_type: { type: 'enum', required: true, primaryKey: true, options: ['resume', 'cover_letter'] },
+      file_name: { type: 'text', required: true, maxLength: 500 },
+      local_path: { type: 'text', required: true, maxLength: 2048 },
+      downloaded_at: { type: 'datetime', required: true },
+    },
+  },
 } as const;
 
 type TableName = keyof typeof TABLES;

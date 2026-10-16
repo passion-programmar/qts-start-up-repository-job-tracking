@@ -558,6 +558,48 @@ it('keeps Scanner GPT generation scoped to the selected job and accepts document
     assert.ok((await documentResponse.arrayBuffer()).byteLength > 0);
   }
 
+  const downloadPaths = [
+    {
+      documentType: 'resume',
+      fileName: 'Scanner_Test_Account_Resume.pdf',
+      localPath: 'C:\\Users\\Scanner\\Downloads\\QTS_Startup\\Scanner Generated Documents\\Scanner_Test_Account_Resume.pdf',
+    },
+    {
+      documentType: 'cover_letter',
+      fileName: 'Scanner_Test_Account_Cover_Letter.pdf',
+      localPath: 'C:\\Users\\Scanner\\Downloads\\QTS_Startup\\Scanner Generated Documents\\Scanner_Test_Account_Cover_Letter.pdf',
+    },
+  ];
+  const saveDownloadPathsResponse = await fetch(
+    `${serverUrl}/api/v2/gpt-application-tasks/${created.taskId}/downloads`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${managerToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ documents: downloadPaths }),
+    }
+  );
+  assert.equal(saveDownloadPathsResponse.status, 200);
+  const savedDownloadPathsResponse = await fetch(
+    `${serverUrl}/api/v2/gpt-application-tasks/${created.taskId}/downloads`,
+    { headers: { Authorization: `Bearer ${managerToken}` } }
+  );
+  const savedDownloadPaths = await savedDownloadPathsResponse.json() as {
+    success: boolean;
+    downloads: Array<{ document_type: string; local_path: string }>;
+  };
+  assert.equal(savedDownloadPathsResponse.status, 200);
+  assert.equal(savedDownloadPaths.success, true);
+  assert.deepEqual(
+    savedDownloadPaths.downloads.map(({ document_type, local_path }) => ({ document_type, local_path })),
+    downloadPaths.map(({ documentType, localPath }) => ({
+      document_type: documentType,
+      local_path: localPath,
+    }))
+  );
+
   const acknowledgeResponse = await fetch(`${serverUrl}/api/v2/gpt-application-tasks/${created.taskId}/scanner-acknowledge`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${managerToken}` },

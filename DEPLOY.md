@@ -105,7 +105,8 @@ removes retired legacy tables using `CASCADE`; this permanently deletes their
 contents and dependent objects. The active tables retained include
 `categories`, `users`, `job_list`, `bids`, `interviews`, `app_settings`,
 `prompts`, Manager application-answer tables, Account application profiles,
-Account-specific job rows, GPT application tasks, and generated task documents.
+Account-specific job rows, GPT application tasks, generated task documents,
+and Scanner document download-path metadata.
 The API's daily cleanup cron requires `CRON_SECRET`.
 Use Neon's pooled connection string to keep database connections within the
 provider's limits.

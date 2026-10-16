@@ -33,6 +33,7 @@ The API retains only the new-schema tables:
 - `account_custom_application_answers`
 - `gpt_application_tasks`
 - `gpt_application_task_documents`
+- `gpt_application_task_document_downloads`
 - `custom_gpts`
 - `manager_custom_gpt_assignments`
 

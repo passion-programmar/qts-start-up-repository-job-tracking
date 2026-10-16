@@ -757,6 +757,16 @@ async function runMigrations(): Promise<void> {
     )
   `);
   await execute(`
+    CREATE TABLE IF NOT EXISTS gpt_application_task_document_downloads (
+      task_id TEXT NOT NULL REFERENCES gpt_application_tasks(task_id) ON DELETE CASCADE,
+      document_type TEXT NOT NULL CHECK (document_type IN ('resume', 'cover_letter')),
+      file_name TEXT NOT NULL,
+      local_path TEXT NOT NULL,
+      downloaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (task_id, document_type)
+    )
+  `);
+  await execute(`
     ALTER TABLE gpt_application_tasks
     ADD COLUMN IF NOT EXISTS answers JSONB NOT NULL DEFAULT '[]'::jsonb
   `);
@@ -1152,6 +1162,7 @@ async function runLogicalBackup(destination: string): Promise<void> {
     'manager_application_profiles', 'manager_salary_answers', 'manager_custom_application_answers',
     'account_application_profiles', 'account_custom_application_answers',
     'gpt_application_tasks', 'gpt_application_task_documents',
+    'gpt_application_task_document_downloads',
   ] as const;
   const lines: string[] = [
     `-- ${APP_NAME} PostgreSQL logical backup`,

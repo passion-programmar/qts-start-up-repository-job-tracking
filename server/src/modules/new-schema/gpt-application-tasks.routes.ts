@@ -70,6 +70,20 @@ const taskPackageSchema = z.object({
   notes: z.string().max(2000).optional(),
 }).strict();
 
+const taskDocumentDownloadsSchema = z.object({
+  documents: z.array(z.object({
+    documentType: z.enum(['resume', 'cover_letter']),
+    fileName: z.string().trim().min(1).max(500)
+      .refine((value) => value.toLowerCase().endsWith('.pdf') && !/[\\/]/.test(value)),
+    localPath: z.string().trim().min(1).max(2048)
+      .refine((value) => !/[\r\n\0]/.test(value)
+        && (/^[a-zA-Z]:\\/.test(value) || value.startsWith('\\\\') || value.startsWith('/'))),
+  }).strict()).length(2).refine(
+    (documents) => new Set(documents.map((document) => document.documentType)).size === 2,
+    'Provide one downloaded path for each generated document.'
+  ),
+}).strict();
+
 type TaskRow = {
   task_id: string;
   job_id: number;
@@ -894,6 +908,65 @@ router.get('/:taskId/documents/:documentType', requireNewSchemaAuth, async (req:
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `attachment; filename="${document.file_name.replace(/["\\\r\n]/g, '_')}"`);
   res.send(document.content);
+});
+
+router.get('/:taskId/downloads', requireNewSchemaAuth, async (req: NewSchemaAuthRequest, res: Response) => {
+  if (!(await isScannerManager(req, res))) return;
+  const task = await loadManagerTask(req, res, req.params.taskId);
+  if (!task) return;
+  const downloads = await queryAll<{
+    document_type: 'resume' | 'cover_letter';
+    file_name: string;
+    local_path: string;
+    downloaded_at: Date | string;
+  }>(
+    `SELECT document_type, file_name, local_path, downloaded_at
+     FROM gpt_application_task_document_downloads
+     WHERE task_id = $1
+     ORDER BY CASE document_type WHEN 'resume' THEN 1 ELSE 2 END`,
+    [task.task_id]
+  );
+  res.json({ success: true, taskId: task.task_id, downloads });
+});
+
+router.post('/:taskId/downloads', requireNewSchemaAuth, async (req: NewSchemaAuthRequest, res: Response) => {
+  if (!(await isScannerManager(req, res))) return;
+  const task = await loadManagerTask(req, res, req.params.taskId);
+  if (!task) return;
+  const parsed = taskDocumentDownloadsSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({
+      success: false,
+      message: 'Provide the downloaded resume and cover-letter file paths.',
+      errors: parsed.error.issues.map((issue) => ({
+        field: issue.path.join('.'),
+        message: issue.message,
+      })),
+    });
+    return;
+  }
+  const documentFlags = task.package.documents;
+  if (!documentFlags || typeof documentFlags !== 'object'
+      || !('resume' in documentFlags) || !documentFlags.resume
+      || !('coverLetter' in documentFlags) || !documentFlags.coverLetter) {
+    res.status(409).json({ success: false, message: 'Both generated documents must be ready before recording download paths.' });
+    return;
+  }
+  await withTransaction(async (tx) => {
+    for (const document of parsed.data.documents) {
+      await tx.query(
+        `INSERT INTO gpt_application_task_document_downloads
+           (task_id, document_type, file_name, local_path, downloaded_at)
+         VALUES ($1, $2, $3, $4, NOW())
+         ON CONFLICT (task_id, document_type)
+         DO UPDATE SET file_name = EXCLUDED.file_name,
+                       local_path = EXCLUDED.local_path,
+                       downloaded_at = NOW()`,
+        [task.task_id, document.documentType, document.fileName, document.localPath]
+      );
+    }
+  });
+  res.json({ success: true, taskId: task.task_id, saved: parsed.data.documents.length });
 });
 
 router.delete('/:taskId/documents/:documentType', requireNewSchemaAuth, async (req: NewSchemaAuthRequest, res: Response) => {
