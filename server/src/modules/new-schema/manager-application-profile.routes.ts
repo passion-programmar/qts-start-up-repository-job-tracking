@@ -114,6 +114,7 @@ const scannerFieldSnapshotSchema = z.object({
   captureCount: z.number().int().min(1).max(2).optional(),
   captureVerified: z.boolean().optional(),
   managerReviewed: z.boolean().optional(),
+  fieldIdentityConfirmed: z.boolean().optional(),
   observations: z.array(scannerLocatorEvidenceSchema.nullable()).max(2).optional(),
   fieldSnapshots: z.array(scannerFieldObservationSchema.nullable()).max(2).optional(),
 }).strict().superRefine((snapshot, context) => {

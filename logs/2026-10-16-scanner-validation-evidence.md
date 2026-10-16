@@ -12,3 +12,5 @@
 - Raised the accepted native length-constraint range to match browser input
   limits, and included safe field-path details in template validation errors
   instead of returning only a generic message.
+- Accepted and regression-tested the Manager-confirmed field-identity flag in
+  strict Scanner rule snapshots.

@@ -219,6 +219,7 @@ it('saves reusable question/answers with Manager-scoped template rules and keeps
         captureCount: 2,
         captureVerified: true,
         managerReviewed: false,
+        fieldIdentityConfirmed: true,
         observations: [
           {
             selectorHints: { tag: 'select', name: 'relocation' },
@@ -245,12 +246,13 @@ it('saves reusable question/answers with Manager-scoped template rules and keeps
     rule: {
       reusable_answer_id: number;
       semantic_key: string;
-      field_snapshot: { validation?: { inputType: string } };
+      field_snapshot: { validation?: { inputType: string }; fieldIdentityConfirmed?: boolean };
     };
   };
   assert.equal(created.success, true);
   assert.ok(created.rule.reusable_answer_id > 0);
   assert.equal(created.rule.field_snapshot.validation?.inputType, 'select');
+  assert.equal(created.rule.field_snapshot.fieldIdentityConfirmed, true);
 
   const updateResponse = await fetch(`${serverUrl}/api/v2/manager-application-profile/scanner-rules`, {
     method: 'POST',
@@ -306,6 +308,7 @@ it('saves reusable question/answers with Manager-scoped template rules and keeps
         required: true,
         options: ['Yes', 'No'],
         section: 'Location',
+        fieldIdentityConfirmed: true,
         selectorHints: { tag: 'select', name: 'relocation' },
         domEvidence: {
           control: { tag: 'select', role: '', classNames: ['application-select-v2'], testId: '', automationId: '' },
